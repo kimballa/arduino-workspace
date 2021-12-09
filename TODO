@@ -1,4 +1,8 @@
 
 arduino.mk:
-  * Handle .S -> .o assembler rule for core file. (and copy .S from core_dir to build/core/)
-  * $(AR) rules from .o -> .a
+  * can we figure out the size of the board and compare used mem to available mem?
+  * upload rule using avrdude.
+  * `make ctags` rule.
+    /home/aaron/share/arduino-1.8.16/tools-builder/ctags/5.8-arduino11/ctags -u --language-force=c++
+    -f - --c++-kinds=svpf --fields=KSTtzns --line-directives
+    /tmp/arduino_build_188665/preproc/ctags_target_for_gcc_minus_e.cpp
