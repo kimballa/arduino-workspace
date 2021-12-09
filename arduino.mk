@@ -239,19 +239,33 @@ obj_files = $(patsubst %.cpp,%.o,$(src_files))
 eeprom_file = $(build_dir)/$(prog_name).eep
 hex_file = $(build_dir)/$(prog_name).hex
 
+max_sketch_size := $(strip $(shell grep -e "^$(VARIANT).upload.maximum_size" $(boards_txt) \
+	| cut -d '=' -f 2 | tr -s ' '))
+user_ram := $(strip $(shell grep -e "^$(VARIANT).upload.maximum_data_size" $(boards_txt) \
+	| cut -d '=' -f 2 | tr -s ' '))
+
+
+size_report_file = $(build_dir)/size_stats.txt
+
 # A short bash script that uses the size(1) command to calculate the memory consumption of the
 # compiled image:
 define SIZE_SCRIPT
-DATA=`grep $(build_dir)/size_stats.txt -e "^.data" | tr -s " " | cut -d " " -f 2`; \
-TEXT=`grep $(build_dir)/size_stats.txt -e "^.text" | tr -s " " | cut -d " " -f 2`; \
-BSS=`grep $(build_dir)/size_stats.txt -e "^.bss" | tr -s " " | cut -d " " -f 2`; \
-echo "Global memory used: $$[DATA+BSS] bytes"; \
-echo "Sketch size: $$[DATA+TEXT] bytes"
+DATA=`grep $(size_report_file) -e "^.data" | tr -s " " | cut -d " " -f 2`; \
+TEXT=`grep $(size_report_file) -e "^.text" | tr -s " " | cut -d " " -f 2`; \
+BSS=`grep $(size_report_file)  -e "^.bss"  | tr -s " " | cut -d " " -f 2`; \
+SKETCH_SZ=$$[DATA + TEXT]; \
+RAM_USED=$$[DATA + BSS]; \
+MAX_SKETCH=$(max_sketch_size); \
+MAX_RAM=$(user_ram); \
+RAM_USE_PCT=$$[100 * RAM_USED / MAX_RAM]; \
+SKETCH_PCT=$$[100 * SKETCH_SZ / MAX_SKETCH]; \
+echo "Global memory used: $$RAM_USED bytes ($$RAM_USE_PCT%); max is $$MAX_RAM bytes"; \
+echo "Sketch size: $$[SKETCH_SZ] bytes ($$SKETCH_PCT%); max is $$MAX_SKETCH bytes"
 endef
 
-# Main compile/link target. Convert from the ELF executable into files to flash to EEPROM.
-image: $(TARGET) $(core_lib) $(eeprom_file) $(hex_file)
-	$(SIZE) -A $(TARGET) > $(build_dir)/size_stats.txt
+$(size_report_file): $(TARGET) $(eeprom_file) $(hex_file)
+	$(SIZE) -A $(TARGET) > $(size_report_file)
+	@echo ""
 	@bash -c '$(SIZE_SCRIPT)'
 
 # Build the main ELF executable containing user code, Arduino core, any required libraries.
@@ -268,6 +282,9 @@ $(hex_file): $(TARGET) $(eeprom_file)
 eeprom: $(eeprom_file)
 
 hexfile: $(hex_file)
+
+# Main compile/link target. Convert from the ELF executable into files to flash to EEPROM.
+image: $(TARGET) $(core_lib) $(eeprom_file) $(hex_file) $(size_report_file)
 
 %.o : %.cpp
 	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
