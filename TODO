@@ -1,6 +1,4 @@
 
 arduino.mk:
-  * `make ctags` rule.
-    /home/aaron/share/arduino-1.8.16/tools-builder/ctags/5.8-arduino11/ctags -u --language-force=c++
-    -f - --c++-kinds=svpf --fields=KSTtzns --line-directives
-    /tmp/arduino_build_188665/preproc/ctags_target_for_gcc_minus_e.cpp
+  * Consider `upload` command that uses avrdude directly rather than arduino-cli; this would let us
+    upload eeprom files as well, if needed.

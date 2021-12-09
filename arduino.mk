@@ -15,8 +15,9 @@ help:
 	@echo "===================================="
 	@echo "clean         : Remove intermediate / output files"
 	@echo "config        : Show configuration"
-	@echo "core          : Build the Arduino core"
+	@echo "core          : Build the Arduino core (but not your code)"
 	@echo "image         : (default) Compile code and prepare upload-ready files"
+	@echo "tags          : Run ctags"
 	@echo "upload        : Upload a compiled image to Arduino"
 	@echo "verify        : Verify an uploaded image"
 	@echo ""
@@ -38,11 +39,14 @@ UPLOAD_LOG_LEVEL ?= info
 UPLOAD_PORT ?= /dev/ttyACM0
 UPLOAD_PROTOCOL ?= serial
 
+TAGS_FILE = tags
 
 # Set variables for programs we need access to.
 
-# arduino-cli tool
 ARDUINO_CLI := $(realpath $(shell which arduino-cli))
+ifeq ($(origin CTAGS), undefined)
+	CTAGS := ctags
+endif
 
 # Set conventions
 SHELL ?= /bin/bash
@@ -120,6 +124,19 @@ AR := $(AVR_AR)
 OBJCOPY := $(AVR_OBJCOPY)
 SIZE := $(AVR_SIZE)
 
+
+
+__FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "avrdude" | head -1 ))
+FLASH_TOOLS_DIR := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 3 | cut -d ':' -f 2))
+FLASH_VERSION := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 4))
+FLASH_BINDIR := $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/$(FLASH_TOOLS_DIR)/$(FLASH_VERSION)/bin
+ifeq ($(origin AVRDUDE), undefined)
+	AVRDUDE_NAME := $(strip $(shell ls -1 $(FLASH_BINDIR) | grep -e 'avrdude$$' | head -1))
+	# We have found the fully-qualified path to the avrdude to use.
+	AVRDUDE := $(realpath $(FLASH_BINDIR)/$(AVRDUDE_NAME))
+endif
+
+
 arch_upper := $(strip $(shell echo $(ARCH) | tr [:lower:] [:upper:]))
 
 # Board definitions file for this hardware set.
@@ -186,6 +203,7 @@ config:
 	@echo "Tool paths:"
 	@echo "===================================="
 	@echo "arduino-cli   : $(ARDUINO_CLI)"
+	@echo "AVRDUDE       : $(AVRDUDE)"
 	@echo "AR            : $(AR)"
 	@echo "CXX           : $(CXX)"
 	@echo "OBJCOPY       : $(OBJCOPY)"
@@ -212,6 +230,9 @@ clean:
 	-rm "$(TARGET)"
 	-rm -r "$(build_dir)"
 	find . -name "*.o" -delete
+
+distclean: clean
+	-rm $(TAGS_FILE)
 
 core_dir := $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino
 # The src files in build/core/ need to be copied into that dir by the core setup task, so their names can't
@@ -304,6 +325,11 @@ verify: image
 	$(ARDUINO_CLI) upload -v --log-level $(UPLOAD_LOG_LEVEL) --port $(UPLOAD_PORT) --protocol $(UPLOAD_PROTOCOL) \
 			--fqbn $(BOARD) --input-file $(flash_file) --verify
 
+tags:
+	$(CTAGS) -R $(CTAGS_OPTS) --exclude=build/* . \
+		$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino \
+		$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(VARIANT)
+
 %.o : %.cpp
 	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
@@ -313,4 +339,4 @@ verify: image
 %.o : %.S
 	$(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
-.PHONY: config help clean core image eeprom flash upload verify
+.PHONY: config help clean core image eeprom flash upload verify distclean tags
