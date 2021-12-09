@@ -4,7 +4,7 @@
 const int R = 6;
 const int G = 5;
 
-const int TIC = 100; // blink interval
+const int TIC = 2500; // blink interval
 
 void setup() {
   // put your setup code here, to run once:

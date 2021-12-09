@@ -1,7 +1,5 @@
 
 arduino.mk:
-  * can we figure out the size of the board and compare used mem to available mem?
-  * upload rule using avrdude.
   * `make ctags` rule.
     /home/aaron/share/arduino-1.8.16/tools-builder/ctags/5.8-arduino11/ctags -u --language-force=c++
     -f - --c++-kinds=svpf --fields=KSTtzns --line-directives

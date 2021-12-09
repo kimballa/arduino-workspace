@@ -17,6 +17,8 @@ help:
 	@echo "config        : Show configuration"
 	@echo "core          : Build the Arduino core"
 	@echo "image         : (default) Compile code and prepare upload-ready files"
+	@echo "upload        : Upload a compiled image to Arduino"
+	@echo "verify        : Verify an uploaded image"
 	@echo ""
 	@echo "$(TARGET)     : Compile your code"
 
@@ -27,6 +29,14 @@ build_dir ?= build
 # Specify all directories containing .cpp files to compile.
 src_dirs ?= .
 
+# Some configuration settings
+
+# Set to trace/debug/info/warn/error/fatal/panic
+UPLOAD_LOG_LEVEL ?= info
+
+# Set to serial port device for upload.
+UPLOAD_PORT ?= /dev/ttyACM0
+UPLOAD_PROTOCOL ?= serial
 
 
 # Set variables for programs we need access to.
@@ -237,7 +247,7 @@ src_files = $(foreach dir,$(src_dirs),$(wildcard $(dir)/*.cpp))
 obj_files = $(patsubst %.cpp,%.o,$(src_files))
 
 eeprom_file = $(build_dir)/$(prog_name).eep
-hex_file = $(build_dir)/$(prog_name).hex
+flash_file = $(build_dir)/$(prog_name).hex
 
 max_sketch_size := $(strip $(shell grep -e "^$(VARIANT).upload.maximum_size" $(boards_txt) \
 	| cut -d '=' -f 2 | tr -s ' '))
@@ -263,7 +273,7 @@ echo "Global memory used: $$RAM_USED bytes ($$RAM_USE_PCT%); max is $$MAX_RAM by
 echo "Sketch size: $$[SKETCH_SZ] bytes ($$SKETCH_PCT%); max is $$MAX_SKETCH bytes"
 endef
 
-$(size_report_file): $(TARGET) $(eeprom_file) $(hex_file)
+$(size_report_file): $(TARGET) $(eeprom_file) $(flash_file)
 	$(SIZE) -A $(TARGET) > $(size_report_file)
 	@echo ""
 	@bash -c '$(SIZE_SCRIPT)'
@@ -276,15 +286,23 @@ $(eeprom_file): $(TARGET)
 	$(OBJCOPY) -O ihex -j .eeprom --set-section-flags=.eeprom=alloc,load --no-change-warnings \
 			--change-section-lma .eeprom=0 $(TARGET) $(eeprom_file)
 
-$(hex_file): $(TARGET) $(eeprom_file)
-	$(OBJCOPY) -O ihex -R .eeprom $(TARGET) $(hex_file)
+$(flash_file): $(TARGET) $(eeprom_file)
+	$(OBJCOPY) -O ihex -R .eeprom $(TARGET) $(flash_file)
 
 eeprom: $(eeprom_file)
 
-hexfile: $(hex_file)
+flash: $(flash_file)
 
 # Main compile/link target. Convert from the ELF executable into files to flash to EEPROM.
-image: $(TARGET) $(core_lib) $(eeprom_file) $(hex_file) $(size_report_file)
+image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_report_file)
+
+upload: image
+	$(ARDUINO_CLI) upload -v --log-level $(UPLOAD_LOG_LEVEL) --port $(UPLOAD_PORT) --protocol $(UPLOAD_PROTOCOL) \
+			--fqbn $(BOARD) --input-file $(flash_file)
+
+verify: image
+	$(ARDUINO_CLI) upload -v --log-level $(UPLOAD_LOG_LEVEL) --port $(UPLOAD_PORT) --protocol $(UPLOAD_PROTOCOL) \
+			--fqbn $(BOARD) --input-file $(flash_file) --verify
 
 %.o : %.cpp
 	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
@@ -295,4 +313,4 @@ image: $(TARGET) $(core_lib) $(eeprom_file) $(hex_file) $(size_report_file)
 %.o : %.S
 	$(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
-.PHONY: config help clean core image eeprom hexfile
+.PHONY: config help clean core image eeprom flash upload verify
