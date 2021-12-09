@@ -1,0 +1,4 @@
+
+arduino.mk:
+  * Handle .S -> .o assembler rule for core file. (and copy .S from core_dir to build/core/)
+  * $(AR) rules from .o -> .a
