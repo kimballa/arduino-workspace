@@ -1,25 +1,79 @@
 # (c) Copyright 2021 Aaron Kimball
 #
-# Arduino-based build and upload capabilities.
+# Makefile for Arduino-based build and upload capabilities.
 #
-# You must set the following variables before including this .mk file:
-#   BOARD - the fqbn of the board to use (e.g. 'arduino:avr:uno')
-#   TARGET - the name of the program to compile
+# You must set the following variables in Makefile before including this .mk file:
+#
+#   BOARD 		- The fqbn of the board to use (e.g. 'arduino:avr:uno')
+#   prog_name - The name of the program you're compiling (will generate '$(prog_name).elf', .hex...
+#   lib_name  - The name of the library you're compiling (will generate 'lib$(lib_name).a')
+#
+#   You can also forcibly set $(TARGET) to override the default usage of $(prog_name) or
+#   $(lib_name).
+#
+# Further configuration you can add to your Makefile:
+#   build_dir - By default, outputs are put in "./build/"
+#   src_dirs  - Specify all dirs of .cpp files to compile. (Default is '.')
+#
+#   libs      - List of libraries to link (e.g., "libs = foo bar" will link with -lfoo -lbar
+#
+#   CXXFLAGS  - Additional compiler flags
+#   LDFLAGS   - Additional linker flags
+#
+#   install_headers - Specific list of header files to copy in `make install`;
+#   									default is *.h in each of $(src_dirs)
+#
+#
+# If you have a file named .arduino_mk.conf in your home dir, it will be included
+# to enable you to set defaults.
+#
+# Global config you may want to set there:
+# ARDUINO_CLI       - Path to the `arduino-cli` tool (default is to discover via which(1))
+# UPLOAD_PORT       - The serial port to deploy to
+# UPLOAD_PROTOCOL   - 'serial' or 'usb'
+# UPLOAD_LOG_LEVEL  - Verboseness level for upload tool logging (default 'info')
+# TAGS_FILE         - filename to build for ctags
+#
+# install_dir       - Where library binaries & headers are installed. Used to install new
+#                     libraries as well as link against existing ones.
+#
+# Use `make config` to see the active configuration.
+# Use `make help` to see a list of available targets.
 
-ARDUINO_MK_VER = "1.0.0"
+ARDUINO_MK_VER := 1.0.0
+
+# If the user has a config file to set $BOARD, etc., include it here.
+MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
+ifeq ($(shell ls -1 $(MAKE_CONF_FILE) 2>/dev/null),$(MAKE_CONF_FILE))
+include $(MAKE_CONF_FILE)
+endif
+
 
 .DEFAULT_GOAL := image
 
 help:
 	@echo "Available targets:"
 	@echo "===================================="
+ifneq ($(origin lib_name), undefined)
+	@echo "all           : Same as 'library'"
+else ifneq ($(origin prog_name), undefined)
+	@echo "all           : Same as 'image'"
+endif
 	@echo "clean         : Remove intermediate / output files"
 	@echo "config        : Show configuration"
 	@echo "core          : Build the Arduino core (but not your code)"
+	@echo "help          : Print this message"
+ifneq ($(origin lib_name), undefined)
+	@echo "install       : Install the library to $(install_dir)"
+	@echo "library       : (default) Compile code for this library"
+else ifneq ($(origin prog_name), undefined)
 	@echo "image         : (default) Compile code and prepare upload-ready files"
+endif
 	@echo "tags          : Run ctags"
+ifneq ($(origin prog_name), undefined)
 	@echo "upload        : Upload a compiled image to Arduino"
 	@echo "verify        : Verify an uploaded image"
+endif
 	@echo ""
 	@echo "$(TARGET)     : Compile your code"
 
@@ -40,6 +94,16 @@ UPLOAD_PORT ?= /dev/ttyACM0
 UPLOAD_PROTOCOL ?= serial
 
 TAGS_FILE = tags
+
+# Set variables for compilation dependencies
+
+ifneq (,$(install_dir))
+include_dirs = -I$(install_dir)/include
+lib_dirs = -L$(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
+endif
+
+lib_flags = TODO add -l elems
+
 
 # Set variables for programs we need access to.
 
@@ -65,11 +129,23 @@ $(error "The `BOARD` variable must specify the active board fqbn. e.g.: 'arduino
 endif
 
 ifndef prog_name
-$(error "The `prog_name` variable must specify the target program name to compile")
+ifndef lib_name
+$(error "You must specify a target program with `prog_name` or target lib with `lib_name` to compile.")
+endif
+endif
+
+ifdef prog_name
+ifdef lib_name
+$(error "You must specify at most one of `prog_name` or `lib_name`")
+endif
 endif
 
 ifndef TARGET
+ifneq ($(origin prog_name), undefined)
 TARGET = $(build_dir)/$(prog_name).elf
+else ifneq ($(origin lib_name), undefined)
+TARGET = $(build_dir)/lib$(lib_name).a
+endif
 endif
 
 # Specific Arduino variant within fqbn.
@@ -185,11 +261,12 @@ CXXFLAGS += -std=gnu++11
 CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
-LINKFLAGS += -g -Os -w -flto -fuse-linker-plugin -Wl,--gc-sections -mmcu=$(build_mcu)
+LDFLAGS += -g -Os -w -flto -fuse-linker-plugin -Wl,--gc-sections -mmcu=$(build_mcu)
 
 config:
 	@echo "Ardiuno build configuration:"
 	@echo "===================================="
+	@echo "arduino.mk    : $(ARDUINO_MK_VER)"
 	@echo "BOARD (fqdn)  : $(BOARD)"
 	@echo ""
 	@echo "Package       : $(ARDUINO_PACKAGE)"
@@ -218,13 +295,24 @@ config:
 	@echo "src_files     : $(src_files)"
 	@echo "obj_files     : $(obj_files)"
 	@echo ""
+	@echo "System paths:"
+	@echo "===================================="
+	@echo "install_dir   : $(install_dir)"
+	@echo "include_dirs  : $(include_dirs)"
+	@echo "lib_dirs      : $(lib_dirs)"
+	@echo ""
 	@echo "Options:"
 	@echo "===================================="
-	@echo 'CFLAGS        : $(CFLAGS)'
+	@echo "libs            : $(libs)"
+ifdef lib_name
+	@echo "install_headers : $(install_headers)"
+endif
 	@echo ""
-	@echo 'CXXFLAGS      : $(CXXFLAGS)'
+	@echo 'CFLAGS          : $(CFLAGS)'
 	@echo ""
-	@echo 'LINKFLAGS     : $(LINKFLAGS)'
+	@echo 'CXXFLAGS        : $(CXXFLAGS)'
+	@echo ""
+	@echo 'LDFLAGS         : $(LDFLAGS)'
 
 clean:
 	-rm "$(TARGET)"
@@ -299,9 +387,16 @@ $(size_report_file): $(TARGET) $(eeprom_file) $(flash_file)
 	@echo ""
 	@bash -c '$(SIZE_SCRIPT)'
 
+ifneq ($(origin prog_name), undefined)
 # Build the main ELF executable containing user code, Arduino core, any required libraries.
 $(TARGET): $(obj_files) $(core_lib)
-	$(CXX) $(LINKFLAGS) -o $(TARGET) $(obj_files) $(core_lib) -lm
+	$(CXX) $(LDFLAGS) -o $(TARGET) $(obj_files) $(core_lib) -lm $(lib_dirs) $(lib_flags)
+
+else ifneq ($(origin lib_name), undefined)
+# Build the main library containing user code.
+$(TARGET): $(obj_files)
+	$(AR) rcs $(TARGET) $(obj_files)
+endif
 
 $(eeprom_file): $(TARGET)
 	$(OBJCOPY) -O ihex -j .eeprom --set-section-flags=.eeprom=alloc,load --no-change-warnings \
@@ -314,7 +409,9 @@ eeprom: $(eeprom_file)
 
 flash: $(flash_file)
 
-# Main compile/link target. Convert from the ELF executable into files to flash to EEPROM.
+ifneq ($(origin prog_name), undefined)
+
+# Main compile/link target for programs. Convert from the ELF executable into files to flash to EEPROM.
 image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_report_file)
 
 upload: image
@@ -325,10 +422,32 @@ verify: image
 	$(ARDUINO_CLI) upload -v --log-level $(UPLOAD_LOG_LEVEL) --port $(UPLOAD_PORT) --protocol $(UPLOAD_PROTOCOL) \
 			--fqbn $(BOARD) --input-file $(flash_file) --verify
 
+endif
+
+# Main compile/link target for libraries.
+ifneq ($(origin lib_name), undefined)
+library: $(TARGET)
+
+install: $(TARGET)
+	mkdir -p $(install_dir)
+	mkdir -p $(install_dir)/include
+	mkdir -p $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
+	cp $(TARGET) $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
+	cp $(install_headers) $(install_dir)/include/
+endif
+
 tags:
 	$(CTAGS) -R $(CTAGS_OPTS) --exclude=build/* . \
 		$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino \
 		$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(VARIANT)
+
+TAGS: tags
+
+ifneq ($(origin prog_name), undefined)
+all: image
+else ifneq ($(origin lib_name), undefined)
+all: library
+endif
 
 %.o : %.cpp
 	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
@@ -339,4 +458,4 @@ tags:
 %.o : %.S
 	$(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
-.PHONY: config help clean core image eeprom flash upload verify distclean tags
+.PHONY: all config help clean core install image library eeprom flash upload verify distclean tags TAGS
