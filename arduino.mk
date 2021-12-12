@@ -17,11 +17,15 @@
 #
 #   libs      - List of libraries to link (e.g., "libs = foo bar" will link with -lfoo -lbar
 #
+#   include_dirs - List of header directories to use with -I
+#   lib_dirs     - List of lib directories to use with -L
+#
 #   CXXFLAGS  - Additional compiler flags
 #   LDFLAGS   - Additional linker flags
 #
 #   install_headers - Specific list of header files to copy in `make install`;
-#   									default is *.h in each of $(src_dirs)
+#                     default is *.h in each of $(install_header_dirs)
+#   install_header_dirs - List of dirs containing *.h files to install. Defaults to $(src_dirs).
 #
 #
 # If you have a file named .arduino_mk.conf in your home dir, it will be included
@@ -49,7 +53,7 @@ include $(MAKE_CONF_FILE)
 endif
 
 
-.DEFAULT_GOAL := image
+.DEFAULT_GOAL := all
 
 help:
 	@echo "Available targets:"
@@ -98,12 +102,24 @@ TAGS_FILE = tags
 # Set variables for compilation dependencies
 
 ifneq (,$(install_dir))
-include_dirs = -I$(install_dir)/include
-lib_dirs = -L$(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
+include_dirs += $(install_dir)/include
+lib_dirs += $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
 endif
 
-lib_flags = TODO add -l elems
+include_flags = $(addprefix -I,$(include_dirs))
+lib_flags = $(addprefix -L,$(lib_dirs)) $(addprefix -l,$(libs))
 
+ifdef lib_name
+ifndef install_header_dirs
+# By default, install headers from all src directories to the shared /include/ dir.
+install_header_dirs = $(src_dirs)
+endif
+
+ifndef install_headers
+# Calculate list of header files to use with `make install`
+install_headers = $(foreach dir,$(install_header_dirs),$(wildcard $(dir)/*.h))
+endif
+endif
 
 # Set variables for programs we need access to.
 
@@ -116,6 +132,8 @@ endif
 SHELL ?= /bin/bash
 .SUFFIXES:
 .SUFFIXES: .ino .cpp .cxx .C .o
+
+src_extensions ?= .ino .cpp .cxx .C .c .S
 
 
 # ARDUINO_DATA_DIR: Where does arduino-cli store its toolchain packages?
@@ -250,6 +268,8 @@ CFLAGS += -fno-exceptions
 CFLAGS += -ffunction-sections
 CFLAGS += -fdata-sections
 
+CFLAGS += $(include_flags)
+
 # TODO(aaron): Questionable to enforce by default... do we want to? (arduino-ide does...)
 CXXFLAGS += -Wno-error=narrowing
 
@@ -262,6 +282,7 @@ CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
 LDFLAGS += -g -Os -w -flto -fuse-linker-plugin -Wl,--gc-sections -mmcu=$(build_mcu)
+LDFLAGS += $(lib_flags)
 
 config:
 	@echo "Ardiuno build configuration:"
@@ -352,8 +373,8 @@ $(core_setup_file):
 
 core: $(core_lib)
 
-src_files = $(foreach dir,$(src_dirs),$(wildcard $(dir)/*.cpp))
-obj_files = $(patsubst %.cpp,%.o,$(src_files))
+src_files = $(filter %,$(foreach dir,$(src_dirs),$(foreach ext,$(src_extensions),$(wildcard $(dir)/*$(ext)))))
+obj_files = $(filter %.o,$(foreach ext,$(src_extensions),$(patsubst %$(ext),%.o,$(src_files))))
 
 eeprom_file = $(build_dir)/$(prog_name).eep
 flash_file = $(build_dir)/$(prog_name).hex
@@ -395,6 +416,7 @@ $(TARGET): $(obj_files) $(core_lib)
 else ifneq ($(origin lib_name), undefined)
 # Build the main library containing user code.
 $(TARGET): $(obj_files)
+	mkdir -p $(dir $(TARGET))
 	$(AR) rcs $(TARGET) $(obj_files)
 endif
 
@@ -449,13 +471,24 @@ else ifneq ($(origin lib_name), undefined)
 all: library
 endif
 
+# Rule for compiling c++ source replicated for various equivalent c++ extensions.
 %.o : %.cpp
-	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+
+%.o : %.cxx
+	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+
+%.o : %.C
+	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+
+# Arduino-specific C++ file ext.
+%.o : %.ino
+	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
 
 %.o : %.c
-	$(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $< -o $@
+	cd $(dir $<) && $(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
 
 %.o : %.S
-	$(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	cd $(dir $<) && $(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
 
 .PHONY: all config help clean core install image library eeprom flash upload verify distclean tags TAGS
