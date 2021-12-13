@@ -1,6 +1,7 @@
 # (c) Copyright 2021 Aaron Kimball
 
-BOARD := arduino:avr:leonardo
 prog_name := poetrybot
+libs := wire
+src_dirs := . i2cparallel
 
 include arduino.mk

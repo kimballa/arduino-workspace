@@ -44,7 +44,7 @@
 # Use `make config` to see the active configuration.
 # Use `make help` to see a list of available targets.
 
-ARDUINO_MK_VER := 1.0.0
+ARDUINO_MK_VER := 1.0.1
 
 # If the user has a config file to set $BOARD, etc., include it here.
 MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
@@ -282,7 +282,6 @@ CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
 LDFLAGS += -g -Os -w -flto -fuse-linker-plugin -Wl,--gc-sections -mmcu=$(build_mcu)
-LDFLAGS += $(lib_flags)
 
 config:
 	@echo "Ardiuno build configuration:"
@@ -333,7 +332,7 @@ endif
 	@echo ""
 	@echo 'CXXFLAGS        : $(CXXFLAGS)'
 	@echo ""
-	@echo 'LDFLAGS         : $(LDFLAGS)'
+	@echo 'LDFLAGS         : $(LDFLAGS) $(lib_flags)'
 
 clean:
 	-rm "$(TARGET)"
@@ -411,7 +410,7 @@ $(size_report_file): $(TARGET) $(eeprom_file) $(flash_file)
 ifneq ($(origin prog_name), undefined)
 # Build the main ELF executable containing user code, Arduino core, any required libraries.
 $(TARGET): $(obj_files) $(core_lib)
-	$(CXX) $(LDFLAGS) -o $(TARGET) $(obj_files) $(core_lib) -lm $(lib_dirs) $(lib_flags)
+	$(CXX) $(LDFLAGS) -o $(TARGET) $(obj_files) $(core_lib) -lm $(lib_flags)
 
 else ifneq ($(origin lib_name), undefined)
 # Build the main library containing user code.
