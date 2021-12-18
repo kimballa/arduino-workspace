@@ -3,6 +3,9 @@
 
 #include "i2cparallel/I2CParallel.h"
 
+#define NHD_4BIT_I2C
+#include "LCD-NHD0440/LCD-NHD0440.h"
+
 // pin definitions.
 static const int R = 6;
 static const int G = 5;
@@ -10,7 +13,10 @@ static const int G = 5;
 static const int TIC = 500; // blink interval
 
 static const int PARALLEL_ADDR = I2C_PCF8574A_MIN_ADDR;
-static I2CParallel parPort;
+
+
+I2C4BitNhdByteSender nhdByteSender;
+NewhavenLcd0440 lcd;
 
 void setup() {
   // Initialize hardware serial.
@@ -22,7 +28,7 @@ void setup() {
 #endif
 
   Wire.begin(); // Open I2C interface
-  parPort.init(PARALLEL_ADDR); // Open parallel bus on I2C.
+  nhdByteSender.init(PARALLEL_ADDR);
 
 
   // Initialize blinkenlights outputs.
@@ -31,15 +37,15 @@ void setup() {
 
   digitalWrite(R, 0);
   digitalWrite(G, 0);  
-  parPort.setByte(0x00);
+
+  lcd.init(&nhdByteSender);
+  lcd.print("Hello, world!");
 }
 
 static int blinkState = 0;
 
 void loop() {
   delay(TIC);
-
-  parPort.increment();
 
   switch (blinkState) {
   case 0:

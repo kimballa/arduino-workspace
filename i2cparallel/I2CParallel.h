@@ -95,5 +95,5 @@ private:
 
 
 
-#endif
+#endif /* I2C_PARALLEL_H */
 
