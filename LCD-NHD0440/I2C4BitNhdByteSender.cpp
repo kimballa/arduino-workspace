@@ -47,7 +47,6 @@ void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
   // Drop the enable flag to low to lock the second nibble in.
   out &= enFlag_L_mask;
   _i2cp.setByte(out);
-  _i2cp.waitForValid();
 }
 
 void I2C4BitNhdByteSender::sendHighNibble(uint8_t v, uint8_t flags, bool useE1) {
@@ -67,6 +66,5 @@ void I2C4BitNhdByteSender::sendHighNibble(uint8_t v, uint8_t flags, bool useE1) 
   // Drop the enable flag to low to lock the high nibble in.
   out &= enFlag_L_mask;
   _i2cp.setByte(out);
-  _i2cp.waitForValid();
 }
 

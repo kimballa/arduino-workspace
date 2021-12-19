@@ -132,7 +132,7 @@ public:
 private:
   void _setCursorDisplay(uint8_t displayNum);
   void _sendDisplayFlags();
-  void _waitReady(unsigned long start_time, unsigned int delay_micros);
+  void _waitReady(unsigned int delay_micros);
 
   NhdByteSender* _byteSender;
 
