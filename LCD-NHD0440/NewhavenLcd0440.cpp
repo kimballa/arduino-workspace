@@ -18,7 +18,7 @@ NewhavenLcd0440::~NewhavenLcd0440() {
 void NewhavenLcd0440::init(NhdByteSender *byteSender) {
   _byteSender = byteSender;
 
-  // Wait for millis() > HD_0440_BOOT_TIME_MILLIS first.
+  // Wait for millis() [time since boot] > HD_0440_BOOT_TIME_MILLIS.
   // The device needs to go thru its internal setup logic before it can accept commands.
   unsigned long start_time = millis();
   while (start_time < NHD_0440_BOOT_TIME_MILLIS) {
@@ -151,10 +151,10 @@ void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
   _byteSender->sendByte(LCD_OP_SET_DDRAM_ADDR | addr, flags, enablePin);
   _waitReady(start_time, NHD_DEFAULT_DELAY_US);
 
-  _row = row;
-  _col = col;
-
   _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen.
+
+  _row = row; // Save this as our new position.
+  _col = col;
 }
 
 // Ensures the cursor is visible on the specified display subscreen.
@@ -211,12 +211,12 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
     return 1;
   } else if (chr == '\n') {
     _col = 0;
-    _row++;
-    if (_row == LCD_NUM_ROWS) {
-      _row = 0; // Wrap back to the top.
+    uint8_t newRow = _row + 1;
+    if (newRow >= LCD_NUM_ROWS) {
+      newRow = 0; // Wrap back to the top.
       // TODO(aaron): Make it scroll up!
     }
-    setCursorPos(_row, _col);
+    setCursorPos(newRow, _col); // _row updated in setCursorPos().
     return 1;
   }
 
@@ -227,15 +227,15 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
   _byteSender->sendByte(chr, flags, enableFlag);
   _waitReady(start_time, NHD_DEFAULT_DELAY_US);
   _col++;
-  if (_col == LCD_NUM_COLS) {
+  if (_col >= LCD_NUM_COLS) {
     // Move to the next line.
     _col = 0;
-    _row++;
-    if (_row == LCD_NUM_ROWS) {
-      _row = 0; // Wrap back to the top.
+    uint8_t newRow = _row + 1;
+    if (newRow >= LCD_NUM_ROWS) {
+      newRow = 0; // Wrap back to the top.
       // TODO(aaron): Make it scroll up!
     }
-    setCursorPos(_row, _col);
+    setCursorPos(newRow, _col); // _row updated in setCursorPos().
   }
 
   return 1;

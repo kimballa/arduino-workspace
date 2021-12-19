@@ -37,7 +37,7 @@ void setup() {
   digitalWrite(G, 0);  
 
   lcd.init(&nhdByteSender);
-  lcd.print("Hello, world!");
+  lcd.print(F("GREMBLOR <3 RIANA!\nThis unique device exists just to say\nYou're very special. <3\nXOXOXO Merry Christmas XOXOXO"));
 }
 
 static int blinkState = 0;

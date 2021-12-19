@@ -78,6 +78,6 @@ void I2CParallel::increment() {
 
 void I2CParallel::waitForValid() {
   delayMicroseconds(I2C_PARALLEL_HOLD_TIME_MICROS);
-  delay(500); // TODO(aaron): Massive delay added for debugging -- remove.
+  delay(200); // TODO(aaron): Massive delay added for debugging -- remove.
 }
 

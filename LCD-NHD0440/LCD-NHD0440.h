@@ -122,6 +122,7 @@ public:
   void home();  // return cursor to home position
   void setDisplayVisible(bool visible);        // turn display on or off
   void setCursor(bool visible, bool blinking); // turn cursor on or off
+  void reset() { init(_byteSender); }; // reset LCD state.
 
   // Set position on row 0--3, col 0--39 across the two subscreens.
   void setCursorPos(uint8_t row, uint8_t col);
