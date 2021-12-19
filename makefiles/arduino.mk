@@ -35,7 +35,7 @@
 # ARDUINO_CLI       - Path to the `arduino-cli` tool (default is to discover via which(1))
 # UPLOAD_PORT       - The serial port to deploy to
 # UPLOAD_PROTOCOL   - 'serial' or 'usb'
-# UPLOAD_LOG_LEVEL  - Verboseness level for upload tool logging (default 'info')
+# AVR_PROGRAMMER    - Programmer to invoke, e.g. 'avr109'
 # TAGS_FILE         - filename to build for ctags
 #
 # install_dir       - Where library binaries & headers are installed. Used to install new
@@ -44,7 +44,7 @@
 # Use `make config` to see the active configuration.
 # Use `make help` to see a list of available targets.
 
-ARDUINO_MK_VER := 1.0.1
+ARDUINO_MK_VER := 1.1.0
 
 # If the user has a config file to set $BOARD, etc., include it here.
 MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
@@ -82,20 +82,18 @@ endif
 	@echo "$(TARGET)     : Compile your code"
 
 
+########## Configuration settings ##########
+
 # Set target dirs
 build_dir ?= build
 
 # Specify all directories containing .cpp files to compile.
 src_dirs ?= .
 
-# Some configuration settings
-
-# Set to trace/debug/info/warn/error/fatal/panic
-UPLOAD_LOG_LEVEL ?= info
-
 # Set to serial port device for upload.
 UPLOAD_PORT ?= /dev/ttyACM0
 UPLOAD_PROTOCOL ?= serial
+AVR_PROGRAMMER ?= avr109
 
 TAGS_FILE = tags
 
@@ -228,6 +226,9 @@ ifeq ($(origin AVRDUDE), undefined)
 	# We have found the fully-qualified path to the avrdude to use.
 	AVRDUDE := $(realpath $(FLASH_BINDIR)/$(AVRDUDE_NAME))
 endif
+ifeq ($(origin AVRDUDE_CONF), undefined)
+  AVRDUDE_CONF := $(realpath $(FLASH_BINDIR)/../etc/avrdude.conf)
+endif
 
 
 arch_upper := $(strip $(shell echo $(ARCH) | tr [:lower:] [:upper:]))
@@ -284,6 +285,8 @@ CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
 LDFLAGS += $(OPTFLAGS) $(DBGFLAGS) -w -fuse-linker-plugin -mmcu=$(build_mcu)
+
+######### end configuration section #########
 
 config:
 	@echo "Ardiuno build configuration:"
@@ -437,13 +440,27 @@ ifneq ($(origin prog_name), undefined)
 # Main compile/link target for programs. Convert from the ELF executable into files to flash to EEPROM.
 image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_report_file)
 
+FLASH_ARGS = -C$(AVRDUDE_CONF) -v -p$(build_mcu) -c$(AVR_PROGRAMMER) -P$(UPLOAD_PORT) -D -Uflash:w:$(flash_file):i
 upload: image
-	$(ARDUINO_CLI) upload -v --log-level $(UPLOAD_LOG_LEVEL) --port $(UPLOAD_PORT) --protocol $(UPLOAD_PROTOCOL) \
-			--fqbn $(BOARD) --input-file $(flash_file)
+	# Force reset of device through port knocking on serial port.
+	# TODO(aaron): Only do this for Leonardo ... need to make configurable.
+	stty 1200 -F $(UPLOAD_PORT) raw -echo
+	@sleep 1
+	@echo "Waiting for port to re-appear"
+	while true; do ls -l $(UPLOAD_PORT); if [ $$? -eq 0 ]; then break; fi; sleep 1; done
+	@echo "Serial port available at $(UPLOAD_PORT)"
+	# -V argument suppresses verification.
+	$(AVRDUDE) -V $(FLASH_ARGS)
 
 verify: image
-	$(ARDUINO_CLI) upload -v --log-level $(UPLOAD_LOG_LEVEL) --port $(UPLOAD_PORT) --protocol $(UPLOAD_PROTOCOL) \
-			--fqbn $(BOARD) --input-file $(flash_file) --verify
+	# Force reset of device through port knocking on serial port.
+	# TODO(aaron): Only do this for Leonardo ... need to make configurable.
+	stty 1200 -F $(UPLOAD_PORT) raw -echo
+	@sleep 1
+	@echo "Waiting for port to re-appear"
+	while true; do ls -l $(UPLOAD_PORT); if [ $$? -eq 0 ]; then break; fi; sleep 1; done
+	@echo "Serial port available at $(UPLOAD_PORT)"
+	$(AVRDUDE) $(FLASH_ARGS)
 
 endif
 

@@ -1,4 +1,1 @@
 
-arduino.mk:
-  * Consider `upload` command that uses avrdude directly rather than arduino-cli; this would let us
-    upload eeprom files as well, if needed.

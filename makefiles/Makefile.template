@@ -1,0 +1,25 @@
+# (c) Copyright 2021 Aaron Kimball
+#
+# Sample Makefile for application or library.
+
+# Set the name of the application to be compiled
+prog_name := Your_App_Name
+# Alternatively, if you are compiling a library, specify lib_name.
+# This example creates `libyourlib.a`
+lib_name := yourlib
+
+# Other libraries you depend on. If you depend on libfoo.a, write 'foo'. 
+# If a library 'foo' depends on another library 'bar', you must enumerate both.
+# Further, you *must* list foo /before/ bar, otherwise you will see errors in
+# the link phase about missing symbols.
+libs := wire i2cparallel 
+
+# List all directories of source files. The current directory '.' is included by default.
+src_dirs := .
+
+# Finally, include the main makefile library.
+# This creates targets like 'all', 'install', 'upload', 'clean'...
+include ../makefiles/arduino.mk
+
+# Use `make config` to inspect the build configuration.
+# Use `make help` to see a list of available targets.
