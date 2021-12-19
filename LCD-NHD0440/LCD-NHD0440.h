@@ -44,7 +44,7 @@
 #define LCD_NHD_0440_H
 
 #include<Arduino.h>
-#include "../i2cparallel/I2CParallel.h"
+#include<I2CParallel.h>
 
 class NhdByteSender {
 public:

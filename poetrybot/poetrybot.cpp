@@ -1,8 +1,8 @@
 #include<Arduino.h>
 #include<Wire.h>
 
-#include "i2cparallel/I2CParallel.h"
-#include "LCD-NHD0440/LCD-NHD0440.h"
+#include <I2CParallel.h>
+#include <LCD-NHD0440.h>
 
 // pin definitions.
 static const int R = 6;

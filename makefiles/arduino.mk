@@ -219,7 +219,6 @@ OBJCOPY := $(AVR_OBJCOPY)
 SIZE := $(AVR_SIZE)
 
 
-
 __FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "avrdude" | head -1 ))
 FLASH_TOOLS_DIR := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 3 | cut -d ':' -f 2))
 FLASH_VERSION := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 4))
@@ -236,12 +235,17 @@ arch_upper := $(strip $(shell echo $(ARCH) | tr [:lower:] [:upper:]))
 # Board definitions file for this hardware set.
 boards_txt := "$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/boards.txt"
 
+# Optimization flags to add to CFLAGS and LDFLAGS.
+OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
+
+# Debug-mode compilation options
+DBGFLAGS += -g
+
 # Compiler flags we (might) want from arduino-ide's option set.
-CFLAGS += -Os # optimize for size.
-CFLAGS += -g  # Debug
+CFLAGS += $(OPTFLAGS)
+CFLAGS += $(DBGFLAGS)
 
 # Compiler flags we need
-CFLAGS += -flto # link-time optimization
 CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino
 CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(VARIANT)
 CFLAGS += -DARCH_$(arch_upper)
@@ -265,8 +269,6 @@ build_usb_product := $(strip $(shell grep -e "^$(VARIANT).build.usb_product" $(b
 CFLAGS += '-DUSB_PRODUCT=$(build_usb_product)'
 
 CFLAGS += -fno-exceptions
-CFLAGS += -ffunction-sections
-CFLAGS += -fdata-sections
 
 CFLAGS += $(include_flags)
 
@@ -281,7 +283,7 @@ CXXFLAGS += -std=gnu++11
 CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
-LDFLAGS += -g -Os -w -flto -fuse-linker-plugin -Wl,--gc-sections -mmcu=$(build_mcu)
+LDFLAGS += $(OPTFLAGS) $(DBGFLAGS) -w -fuse-linker-plugin -mmcu=$(build_mcu)
 
 config:
 	@echo "Ardiuno build configuration:"
