@@ -15,15 +15,28 @@
 // controlled with only 2 shared I2C pins from the AVR.
 //
 // You must instantiate the correct NhdByteSender based on the connection mode:
-//    I2C4BitNhdByteSender byteSender();
-//    byteSender.init(busI2CAddr); // address of I2C parallel bus.
-//    /* --or-- */
-//    Direct4bitNhdByteSender byteSender(11, 10, 9, 8, 7, 6, 5, 4);
-//    byteSender.init(); // Use Arduino D4..D11 as direct-wired bus.
 //
+//    /* -- Use one of the following two code snippets -- */
+//    // Connect via I2C to PCF8574[A] parallel port.
+//    Wire.begin();
+//    I2C4BitNhdByteSender byteSender();
+//    byteSender.init(I2C_PCF8574A_MIN_ADDR); // or your addr of parallel port on I2C bus.
+//
+//    /* --or-- */
+//    // Use Arduino D11..D4 gpio pins as direct-wired bus.
+//    Direct4bitNhdByteSender byteSender(11, 10, 9, 8, 7, 6, 5, 4);
+//    byteSender.init();
+//
+//    /* -- Then follow either of the above with -- */
 //    NewhavenLcd0440 lcd;
-//    lcd.init(&byteSender);
+//    lcd.init(&byteSender); // Connect LCD to bus & send LCD init commands.
+//
+//    /* -- Then use LCD according to API. e.g.: -- */
 //    lcd.print("Hello, world!");
+//    delay(1000);
+//    lcd.clear(); // clear screen
+//    lcd.setCursor(2, 0); // put cursor on 3rd row
+//    lcd.print("More text...");
 //
 //
 
@@ -182,15 +195,17 @@ private:
 // Define the FUNCTION_SET operation flag along with the `DL` field set for
 // the correct bus width
 #if LCD0440_BUS_WIDTH == 4
-#define LCD_OP_FUNC_SET_WITH_DATA_LEN (LCD_OP_FUNC_SET)
+#define LCD_OP_FUNC_SET_WITH_DATA_LEN (LCD_OP_FUNC_SET | FUNC_SET_4_BIT_BUS)
 #elif LCD0440_BUS_WIDTH == 8
-#define LCD_OP_FUNC_SET_WITH_DATA_LEN (LCD_OP_FUNC_SET | 0x10)
+#define LCD_OP_FUNC_SET_WITH_DATA_LEN (LCD_OP_FUNC_SET | FUNC_SET_8_BIT_BUS)
 #else
 #error "LCD0440_BUS_WIDTH is not defined. Should be 4 or 8."
 #endif
 
 // Flags to combine with LCD_OP_FUNC_SET_WITH_DATA_LEN.
 // Note that 2_LINES and FONT_5x11 are incompatible; setting 2_LINES forces 5x8 font.
+#define FUNC_SET_8_BIT_BUS 0x10
+#define FUNC_SET_4_BIT_BUS 0
 #define FUNC_SET_2_LINES   0x8
 #define FUNC_SET_1_LINE    0x0
 #define FUNC_SET_FONT_5x8  0x0

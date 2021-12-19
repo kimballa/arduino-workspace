@@ -22,28 +22,57 @@ void NewhavenLcd0440::init(NhdByteSender *byteSender) {
   // The device needs to go thru its internal setup logic before it can accept commands.
   unsigned long start_time = millis();
   while (start_time < NHD_0440_BOOT_TIME_MILLIS) {
-    unsigned long delta = NHD_0440_BOOT_TIME_MILLIS - start_time + 1;
-    delay(delta);
+    unsigned long remaining = NHD_0440_BOOT_TIME_MILLIS - start_time + 1;
+    delay(remaining);
+    start_time = millis();
   }
 
   // Configure the receiver for 4-bit bus mode. If we're only connected to 4 bus lines, we can't
   // send the entire LCD_OP_FUNC_SET command since it'd take two I2C commands. Just send the high
   // nibble to configure the bus mode, then reinitialize.
-  start_time = micros();
+  // According to the ST7066U datasheet (p.25), we actually start with an 8-bit bus config,
+  // repeated 3x to clear any prior 4- or 8-bit bus state, then we downgrade to 4-bit mode.
   uint8_t flags = LCD_RW_WRITE | LCD_RS_COMMAND;
+
+  for (uint8_t i = 0; i < 3; i++) {
+    // Send 8-bit-at-once command to affirm 8-bit bus. db3..db0 are 'X' / don't care in this config.
+    start_time = micros();
+    _byteSender->sendHighNibble(LCD_OP_FUNC_SET | FUNC_SET_8_BIT_BUS, flags, true);
+    _byteSender->sendHighNibble(LCD_OP_FUNC_SET | FUNC_SET_8_BIT_BUS, flags, false);
+    _waitReady(start_time, NHD_DEFAULT_DELAY_US);
+  }
+
+  // Send command to shift to 4-bit-bus mode. We send this as an 8-bit command,
+  // so we only send the high nibble.
+  start_time = micros();
   _byteSender->sendHighNibble(LCD_OP_FUNC_SET_WITH_DATA_LEN, flags, true);
   _byteSender->sendHighNibble(LCD_OP_FUNC_SET_WITH_DATA_LEN, flags, false);
   _waitReady(start_time, NHD_DEFAULT_DELAY_US);
-  // Now reaffirm our bus width along w/ the other OP_FUNC_SET flags.
+
+  // We are now in 4-bit mode. We want to configure other settings, so we transmit
+  // both nibbles one after the other: the opcode & 4-bit bus flag, followed by line
+  // count & font size.
   start_time = micros();
   _byteSender->sendByte(LCD_OP_FUNC_SET_WITH_DATA_LEN | FUNC_SET_2_LINES | FUNC_SET_FONT_5x8, flags, true);
   _byteSender->sendByte(LCD_OP_FUNC_SET_WITH_DATA_LEN | FUNC_SET_2_LINES | FUNC_SET_FONT_5x8, flags, false);
   _waitReady(start_time, NHD_DEFAULT_DELAY_US);
 
+  // Reset display flags in case they were previously corrupt.
+  _displayFlags1 = 0;
+  _displayFlags2 = 0;
+
   // Configure the display into a known, clean state.
-  clear();
-  setCursor(true, false);
   setDisplayVisible(true);
+  setCursor(true, true);
+  clear();
+
+  // Set ENTRY_MODE to be CURSOR_RIGHT.
+  start_time = micros();
+  _byteSender->sendByte(LCD_OP_ENTRY_MODE_SET | LCD_ENTRY_MODE_CURSOR_RIGHT, flags, true);
+  _byteSender->sendByte(LCD_OP_ENTRY_MODE_SET | LCD_ENTRY_MODE_CURSOR_RIGHT, flags, false);
+  _waitReady(start_time, NHD_DEFAULT_DELAY_US);
+
+  // The display is now ready for text.
 }
 
 void NewhavenLcd0440::clear() {
@@ -125,12 +154,12 @@ void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
   _row = row;
   _col = col;
 
-  _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen. 
+  _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen.
 }
 
 // Ensures the cursor is visible on the specified display subscreen.
 void NewhavenLcd0440::_setCursorDisplay(uint8_t displayNum) {
-  uint8_t curDisplay = _subscreenForRow(_row); 
+  uint8_t curDisplay = _subscreenForRow(_row);
   if (curDisplay == displayNum) {
     return; // Nothing to do.
   }
@@ -156,12 +185,21 @@ void NewhavenLcd0440::_sendDisplayFlags() {
  * Wait until the display is ready / finished processing the command.
  */
 void NewhavenLcd0440::_waitReady(unsigned long start_time, unsigned int delay_micros) {
-  unsigned long elapsed = micros() - start_time;
+  unsigned long now = micros();
+  if (now < start_time) {
+    // Handle microsecond clock rollover.
+    start_time = now;
+  }
+  unsigned long elapsed = now - start_time;
 
   while (elapsed < delay_micros) {
     // TODO(aaron): Actually read the busy-flag field and wait for it to drop to zero
     delayMicroseconds(delay_micros - elapsed);
-    elapsed = micros() - start_time;
+    now = micros();
+    if (now < start_time) {
+      start_time = now;
+    }
+    elapsed = now - start_time;
   }
 }
 
@@ -169,7 +207,7 @@ void NewhavenLcd0440::_waitReady(unsigned long start_time, unsigned int delay_mi
 size_t NewhavenLcd0440::write(uint8_t chr) {
   if (chr == '\r') {
     _col = 0;
-    setCursorPos(_row, _col); 
+    setCursorPos(_row, _col);
     return 1;
   } else if (chr == '\n') {
     _col = 0;
@@ -178,10 +216,10 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
       _row = 0; // Wrap back to the top.
       // TODO(aaron): Make it scroll up!
     }
-    setCursorPos(_row, _col); 
+    setCursorPos(_row, _col);
     return 1;
   }
-  
+
   uint8_t flags = LCD_RW_WRITE | LCD_RS_DATA;
   // choose enable flag based on current row.
   bool enableFlag = _subscreenForRow(_row) == DISPLAY_TOP;
@@ -197,7 +235,7 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
       _row = 0; // Wrap back to the top.
       // TODO(aaron): Make it scroll up!
     }
-    setCursorPos(_row, _col); 
+    setCursorPos(_row, _col);
   }
 
   return 1;

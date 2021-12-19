@@ -17,7 +17,7 @@ I2CParallel::I2CParallel() {
 void I2CParallel::init(const uint8_t i2cAddr) {
   _i2cAddr = i2cAddr & I2C_PARALLEL_ADDR_MASK;
 
-  if (_i2cAddr < I2C_PCF8574_MIN_ADDR 
+  if (_i2cAddr < I2C_PCF8574_MIN_ADDR
       || (_i2cAddr > I2C_PCF8574_MAX_ADDR && _i2cAddr < I2C_PCF8574A_MIN_ADDR)
       || _i2cAddr > I2C_PCF8574A_MAX_ADDR) {
 
@@ -28,7 +28,7 @@ void I2CParallel::init(const uint8_t i2cAddr) {
 
   // Enforce that the I2C bus is not operating too fast for this device.
   Wire.setClock(I2C_PARALLEL_MAX_BUS_SPEED);
-  Wire.setWireTimeout(I2C_PARALLEL_WIRE_TIMEOUT, true); 
+  Wire.setWireTimeout(I2C_PARALLEL_WIRE_TIMEOUT, true);
 }
 
 void I2CParallel::setByte(const uint8_t val) {
@@ -52,7 +52,7 @@ uint8_t I2CParallel::read() {
   return getByte();
 }
 
-uint8_t I2CParallel::getLastState() const { 
+uint8_t I2CParallel::getLastState() const {
   return _state;
 }
 
@@ -78,5 +78,6 @@ void I2CParallel::increment() {
 
 void I2CParallel::waitForValid() {
   delayMicroseconds(I2C_PARALLEL_HOLD_TIME_MICROS);
+  delay(500); // TODO(aaron): Massive delay added for debugging -- remove.
 }
 

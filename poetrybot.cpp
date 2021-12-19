@@ -2,8 +2,6 @@
 #include<Wire.h>
 
 #include "i2cparallel/I2CParallel.h"
-
-#define NHD_4BIT_I2C
 #include "LCD-NHD0440/LCD-NHD0440.h"
 
 // pin definitions.
