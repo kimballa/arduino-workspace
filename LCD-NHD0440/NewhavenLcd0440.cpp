@@ -2,11 +2,32 @@
 
 #include "LCD-NHD0440.h"
 
-NewhavenLcd0440::NewhavenLcd0440() {
-  _row = 0;
-  _col = 0;
-  _byteSender = NULL;
+// Return row portion of _pos.
+static inline uint8_t _getRow(uint8_t pos) {
+  return (pos & ROW_MASK) >> ROW_SHIFT;
+}
 
+// Return column portion of _pos.
+static inline uint8_t _getCol(uint8_t pos) {
+  return (pos & COL_MASK) >> COL_SHIFT;
+}
+
+// Create a _pos field from a row and column.
+static inline uint8_t _makePos(uint8_t row, uint8_t col) {
+  return ((row << ROW_SHIFT) & ROW_MASK) | ((col << COL_SHIFT) & COL_MASK);
+}
+
+// Increment the 'col' field of pos by 1 and return the new 'col' value.
+static inline uint8_t _incrementCol(uint8_t &pos) {
+  uint8_t row = _getRow(pos);
+  uint8_t col = _getCol(pos) + 1;
+  pos = _makePos(row, col + 1); // set thru reference.
+  return col;
+}
+
+NewhavenLcd0440::NewhavenLcd0440() {
+  _pos = 0;
+  _byteSender = NULL;
   _displayFlags = 0;
 }
 
@@ -71,9 +92,7 @@ void NewhavenLcd0440::clear() {
   _byteSender->sendByte(LCD_OP_CLEAR, ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_CLEAR_DELAY_US);
 
-  _row = 0;
-  _col = 0;
-  _setCursorDisplay(DISPLAY_TOP);
+  setCursorPos(0, 0);
 }
 
 void NewhavenLcd0440::home() {
@@ -81,9 +100,7 @@ void NewhavenLcd0440::home() {
   _byteSender->sendByte(LCD_OP_RETURN_HOME, ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_HOME_DELAY_US);
 
-  _row = 0;
-  _col = 0;
-  _setCursorDisplay(DISPLAY_TOP);
+  setCursorPos(0, 0);
 }
 
 void NewhavenLcd0440::setDisplayVisible(bool visible) {
@@ -100,7 +117,7 @@ void NewhavenLcd0440::setCursor(bool visible, bool blinking) {
   // Only manipulate cursor for the active lcd subscreen (based on cursor row).
   // The inactive subscreen should always have no cursor shown.
   uint8_t vis_mask, blink_mask;
-  if (_row < 2) {
+  if (_getRow(_pos) < 2) {
     vis_mask = DISP_FLAG_C1;
     blink_mask = DISP_FLAG_B1;
   } else {
@@ -145,14 +162,12 @@ void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
   _waitReady(NHD_DEFAULT_DELAY_US);
 
   _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen.
-
-  _row = row; // Save this as our new position.
-  _col = col;
+  _pos = _makePos(row, col); // Save this as our new position.
 }
 
 // Ensures the cursor is visible on the specified display subscreen.
 void NewhavenLcd0440::_setCursorDisplay(uint8_t displayNum) {
-  uint8_t curDisplay = _subscreenForRow(_row);
+  uint8_t curDisplay = _subscreenForRow(_getRow(_pos));
   if (curDisplay == displayNum) {
     return; // Nothing to do.
   }
@@ -204,35 +219,32 @@ void NewhavenLcd0440::_waitReady(unsigned int delay_micros) {
 // Actually write a byte to the screen.
 size_t NewhavenLcd0440::write(uint8_t chr) {
   if (chr == '\r') {
-    _col = 0;
-    setCursorPos(_row, _col);
+    setCursorPos(_getRow(_pos), 0);
     return 1;
   } else if (chr == '\n') {
-    _col = 0;
-    uint8_t newRow = _row + 1;
+    uint8_t newRow = _getRow(_pos) + 1;
     if (newRow >= LCD_NUM_ROWS) {
       newRow = 0; // Wrap back to the top.
       // TODO(aaron): Make it scroll up!
     }
-    setCursorPos(newRow, _col); // _row updated in setCursorPos().
+    setCursorPos(newRow, 0); 
     return 1;
   }
 
   const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
   // choose enable flag based on current row.
-  uint8_t enablePin = (_subscreenForRow(_row) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
+  uint8_t enablePin = (_subscreenForRow(_getRow(_pos)) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
   _byteSender->sendByte(chr, ctrlFlags, enablePin);
   _waitReady(NHD_DEFAULT_DELAY_US);
-  _col++;
-  if (_col >= LCD_NUM_COLS) {
+
+  if (_incrementCol(_pos) >= LCD_NUM_COLS) {
     // Move to the next line.
-    _col = 0;
-    uint8_t newRow = _row + 1;
+    uint8_t newRow = _getRow(_pos) + 1;
     if (newRow >= LCD_NUM_ROWS) {
       newRow = 0; // Wrap back to the top.
       // TODO(aaron): Make it scroll up!
     }
-    setCursorPos(newRow, _col); // _row updated in setCursorPos().
+    setCursorPos(newRow, 0); 
   }
 
   return 1;

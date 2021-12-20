@@ -140,12 +140,15 @@ private:
 
   NhdByteSender* _byteSender;
 
-  // TODO(aaron): Store both in a single byte.
-  uint8_t _row; // should be in 0--3.
-  uint8_t _col; // should be in 0--39.
-
+  uint8_t _pos; // row is [0--3] in ROW_MASK, col is [0--39] in COL_MASK.
   uint8_t _displayFlags; // state of display flags for both subscreens.
 };
+
+#define COL_MASK  ((uint8_t)0x1F)
+#define COL_SHIFT ((uint8_t)0)
+
+#define ROW_MASK  ((uint8_t)0x60)
+#define ROW_SHIFT ((uint8_t)5)
 
 
 #define DISP_FLAG_D1 ((uint8_t)0x4) // display visible (subscreen 1)
