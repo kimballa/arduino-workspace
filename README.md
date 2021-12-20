@@ -25,21 +25,31 @@ Tools
 Using the arduino.mk Makefile
 ==============================
 
-Setup:
+Setup and dependencies:
+-----------------------
 
-* Install the Arduino IDE and use it to download any Arduino core and board definitions you need.
+* Install the Arduino IDE and use it to download any Arduino core and board definitions you need, as
+  well as associated AVR or ARM compilation toolchains.
 * Install the `arduino-cli` tool (https://github.com/arduino/arduino-cli) on your `PATH`.
-* Create a file named `~/.arduino_mk.conf` to hold your hardware configuration. This is included
-  in the Makefile and follows Makefile syntax. 
+* Copy `arduino_mk_conf.template` to a file named `~/.arduino_mk.conf` to hold your hardware
+  configuration. This is included in the Makefile and follows Makefile syntax. 
 
+Config file:
+------------
 You should set the following variables:
 
 * `BOARD` - the fqbn of the board you are using (e.g. `arduino:avr:leonardo`)
 * `UPLOAD_PORT` - the USB port where you upload to the board. (e.g. `/dev/ttyACM0`)
 * `UPLOAD_PROTOCOL` - The protocol to use (e.g. `serial` or `usb`). (Default: `serial`)
+* `AVR_PROGRAMMER` - Flash programmer protocol for `avrdude` (Default: `avr109`)
 * `install_dir` - the directory tree where `make install` will install static libraries and headers.
 
+These can be overridden on the `make` command line or in any app-specific `Makefile`, but
+especially in the case of libraries you probably do not want to tie them to a specific
+board hardware configuration.
+
 Usage:
+------
 
 * Create a `Makefile` based on `Makefile.template`.
 * Set the `prog_name` or `lib_name` field, and declare any `libs` you need.

@@ -1,0 +1,16 @@
+# Global config settings for arduino.mk scripts
+# Save this as ~/.arduino_mk.conf and modify your copy there.
+
+# The fqbn of your board (e.g.: arduino:avr:uno)
+BOARD := arduino:avr:leonardo
+
+# Directory where `make install` should put static libraries & headers,
+# for use by other libraries and apps compiled with arduino.mk.
+install_dir := $(HOME)/share/arduino-install
+
+# Serial port for device programming.
+UPLOAD_PORT = /dev/ttyACM0
+UPLOAD_PROTOCOL = serial
+
+# Flash programmer protocol for avrdude.
+AVR_PROGRAMMER = avr109
