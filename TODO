@@ -1,1 +1,6 @@
 
+LCD-NHD0440:
+------------
+* Combine row/col into single byte storage.
+* Added a scroll? flag to the display flags -- make it actually work.
+* On '\n' in scroll mode, mirror lines up by 1 and advance like a normal tty.

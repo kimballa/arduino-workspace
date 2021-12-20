@@ -2,6 +2,8 @@
 
 #include "LCD-NHD0440.h"
 
+static const uint8_t enFlag_L_mask = 0x3F;   // Mask with enable flags held low.
+
 I2C4BitNhdByteSender::I2C4BitNhdByteSender(): _i2cp(I2CParallel()) {
 }
 
@@ -19,8 +21,6 @@ void I2C4BitNhdByteSender::init(const uint8_t i2cAddr) {
 
 void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) {
   uint8_t out = 0;
-
-  const uint8_t enFlag_L_mask = 0x3F;   // Mask with enable flags held low.
 
   out |= (enFlags & LCD_ENABLE_FLAGS);
   out |= (ctrlFlags & LCD_CTRL_FLAGS);
@@ -50,8 +50,6 @@ void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlag
 
 void I2C4BitNhdByteSender::sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) {
   uint8_t out = 0;
-
-  const uint8_t enFlag_L_mask = 0x3F;   // Mask with enable flags held low.
 
   out |= (enFlags & LCD_ENABLE_FLAGS);
   out |= (ctrlFlags & LCD_CTRL_FLAGS);

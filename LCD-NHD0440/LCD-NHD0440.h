@@ -109,7 +109,7 @@ public:
   virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
 private:
   void _setEnable(uint8_t state, uint8_t enFlags);
-  uint8_t _EN1, _EN2, _RW, _RS, _DB7, _DB6, _DB5, _DB4;
+  const uint8_t _EN1, _EN2, _RW, _RS, _DB7, _DB6, _DB5, _DB4;
 };
 
 
@@ -129,6 +129,8 @@ public:
   // Set position on row 0--3, col 0--39 across the two subscreens.
   void setCursorPos(uint8_t row, uint8_t col);
 
+  void setScrolling(bool scroll); // Enable/disable scrolling display.
+
   virtual size_t write(uint8_t chr); // write 1 character thru the Print interface.
 
 private:
@@ -142,10 +144,23 @@ private:
   uint8_t _row; // should be in 0--3.
   uint8_t _col; // should be in 0--39.
 
-  // TODO(aaron): Store both in a single byte.
-  uint8_t _displayFlags1; // state of display flags for both subscreens.
-  uint8_t _displayFlags2;
+  uint8_t _displayFlags; // state of display flags for both subscreens.
 };
+
+
+#define DISP_FLAG_D1 ((uint8_t)0x4) // display visible (subscreen 1)
+#define DISP_FLAG_C1 ((uint8_t)0x2) // cursor vis
+#define DISP_FLAG_B1 ((uint8_t)0x1) // blink
+
+#define DISP_FLAG_D2 ((uint8_t)0x20) // display visible (subscreen 2)
+#define DISP_FLAG_C2 ((uint8_t)0x10) // cursor vis
+#define DISP_FLAG_B2 ((uint8_t)0x08) // blink
+
+#define DISP_FLAG_SCROLL ((uint8_t)0x40) // flag to indicate scrolling behavior after 4th line
+
+#define DISPLAY_BITS_MASK ((uint8_t)0x7)
+#define DISPLAY_1_SHIFT ((uint8_t)0)
+#define DISPLAY_2_SHIFT ((uint8_t)3)
 
 
 #define LCD0440_BUS_WIDTH 4 // 4-bit interface mode.

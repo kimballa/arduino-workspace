@@ -7,8 +7,7 @@ NewhavenLcd0440::NewhavenLcd0440() {
   _col = 0;
   _byteSender = NULL;
 
-  _displayFlags1 = 0;
-  _displayFlags2 = 0;
+  _displayFlags = 0;
 }
 
 NewhavenLcd0440::~NewhavenLcd0440() {
@@ -32,7 +31,7 @@ void NewhavenLcd0440::init(NhdByteSender *byteSender) {
   // nibble to configure the bus mode, then reinitialize.
   // According to the ST7066U datasheet (p.25), we actually start with an 8-bit bus config,
   // repeated 3x to clear any prior 4- or 8-bit bus state, then we downgrade to 4-bit mode.
-  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
 
   for (uint8_t i = 0; i < 3; i++) {
     // Send 8-bit-at-once command to affirm 8-bit bus. db3..db0 are 'X' / don't care in this config.
@@ -53,8 +52,7 @@ void NewhavenLcd0440::init(NhdByteSender *byteSender) {
   _waitReady(NHD_DEFAULT_DELAY_US);
 
   // Reset display flags in case they were previously corrupt.
-  _displayFlags1 = 0;
-  _displayFlags2 = 0;
+  _displayFlags = 0;
 
   // Configure the display into a known, clean state.
   setDisplayVisible(true);
@@ -69,7 +67,7 @@ void NewhavenLcd0440::init(NhdByteSender *byteSender) {
 }
 
 void NewhavenLcd0440::clear() {
-  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
   _byteSender->sendByte(LCD_OP_CLEAR, ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_CLEAR_DELAY_US);
 
@@ -79,10 +77,10 @@ void NewhavenLcd0440::clear() {
 }
 
 void NewhavenLcd0440::home() {
-  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
   _byteSender->sendByte(LCD_OP_RETURN_HOME, ctrlFlags, LCD_EN_ALL);
-
   _waitReady(NHD_HOME_DELAY_US);
+
   _row = 0;
   _col = 0;
   _setCursorDisplay(DISPLAY_TOP);
@@ -90,11 +88,9 @@ void NewhavenLcd0440::home() {
 
 void NewhavenLcd0440::setDisplayVisible(bool visible) {
   if (visible) {
-    _displayFlags1 |= LCD_DISPLAY_ON;
-    _displayFlags2 |= LCD_DISPLAY_ON;
+    _displayFlags |= DISP_FLAG_D1 | DISP_FLAG_D2;
   } else {
-    _displayFlags1 &= ~LCD_DISPLAY_ON;
-    _displayFlags2 &= ~LCD_DISPLAY_ON;
+    _displayFlags &= (~DISP_FLAG_D1) & (~DISP_FLAG_D2);
   }
 
   _sendDisplayFlags();
@@ -103,17 +99,25 @@ void NewhavenLcd0440::setDisplayVisible(bool visible) {
 void NewhavenLcd0440::setCursor(bool visible, bool blinking) {
   // Only manipulate cursor for the active lcd subscreen (based on cursor row).
   // The inactive subscreen should always have no cursor shown.
-  uint8_t *flagPtr = (_row < 2) ? &_displayFlags1 : &_displayFlags2;
-  if (visible) {
-    *flagPtr |= LCD_CURSOR_ON;
+  uint8_t vis_mask, blink_mask;
+  if (_row < 2) {
+    vis_mask = DISP_FLAG_C1;
+    blink_mask = DISP_FLAG_B1;
   } else {
-    *flagPtr &= ~LCD_CURSOR_ON;
+    vis_mask = DISP_FLAG_C2;
+    blink_mask = DISP_FLAG_B2;
+  }
+
+  if (visible) {
+    _displayFlags |= vis_mask;
+  } else {
+    _displayFlags &= ~vis_mask;
   }
 
   if (blinking) {
-    *flagPtr |= LCD_CURSOR_BLINK;
+    _displayFlags |= blink_mask;
   } else {
-    *flagPtr &= ~LCD_CURSOR_BLINK;
+    _displayFlags &= ~blink_mask;
   }
 
   _sendDisplayFlags();
@@ -135,7 +139,7 @@ void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
   uint8_t enablePin = (subscreen == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
 
   uint8_t inScreenRow = (row >= 2) ? (row - 2) : row; // Row within subscreen.
-  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
   uint8_t addr = col + ((inScreenRow == 0) ? 0 : 0x40);
   _byteSender->sendByte(LCD_OP_SET_DDRAM_ADDR | addr, ctrlFlags, enablePin);
   _waitReady(NHD_DEFAULT_DELAY_US);
@@ -154,19 +158,29 @@ void NewhavenLcd0440::_setCursorDisplay(uint8_t displayNum) {
   }
 
   // Swap the active display.
-  uint8_t tmp = _displayFlags1;
-  _displayFlags1 = _displayFlags2;
-  _displayFlags2 = tmp;
+  uint8_t d1 = (_displayFlags >> DISPLAY_1_SHIFT) & DISPLAY_BITS_MASK;
+  uint8_t d2 = (_displayFlags >> DISPLAY_2_SHIFT) & DISPLAY_BITS_MASK;
+  _displayFlags = (d1 << DISPLAY_2_SHIFT) | (d2 << DISPLAY_1_SHIFT) | (_displayFlags & DISP_FLAG_SCROLL);
 
   _sendDisplayFlags();
 }
 
 // Send display and cursor vis flags to device.
 void NewhavenLcd0440::_sendDisplayFlags() {
-  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
-  _byteSender->sendByte(LCD_OP_DISPLAY_ON_OFF | _displayFlags1, ctrlFlags, LCD_E1);
-  _byteSender->sendByte(LCD_OP_DISPLAY_ON_OFF | _displayFlags2, ctrlFlags, LCD_E2);
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  uint8_t display1 = LCD_OP_DISPLAY_ON_OFF | ((_displayFlags >> DISPLAY_1_SHIFT) & DISPLAY_BITS_MASK);
+  uint8_t display2 = LCD_OP_DISPLAY_ON_OFF | ((_displayFlags >> DISPLAY_2_SHIFT) & DISPLAY_BITS_MASK);
+  _byteSender->sendByte(display1, ctrlFlags, LCD_E1);
+  _byteSender->sendByte(display2, ctrlFlags, LCD_E2);
   _waitReady(NHD_DEFAULT_DELAY_US);
+}
+
+void NewhavenLcd0440::setScrolling(bool scroll) {
+  if (scroll) {
+    _displayFlags |= DISP_FLAG_SCROLL;
+  } else {
+    _displayFlags &= ~DISP_FLAG_SCROLL;
+  }
 }
 
 /**
@@ -204,7 +218,7 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
     return 1;
   }
 
-  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
   // choose enable flag based on current row.
   uint8_t enablePin = (_subscreenForRow(_row) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
   _byteSender->sendByte(chr, ctrlFlags, enablePin);
