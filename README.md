@@ -53,6 +53,9 @@ Usage:
 
 * Create a `Makefile` based on `Makefile.template`.
 * Set the `prog_name` or `lib_name` field, and declare any `libs` you need.
+* Remember that if you depend on a library `foo` that itself depends on `bar`, you must
+  list `foo` *before* `bar` in your `libs` list, or else the link-time optimization will
+  be unable to find `foo`'s prerequisite symbols in `bar`.
 * If your source is not all in the current dir, enuerate the `src_dirs` as needed.
 * Run `make` to build your app or library.
 * Libraries can be installed to a local lib dir for linking to apps later with `make install`
