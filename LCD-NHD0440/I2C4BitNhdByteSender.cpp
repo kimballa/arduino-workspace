@@ -17,14 +17,13 @@ void I2C4BitNhdByteSender::init(const uint8_t i2cAddr) {
   _i2cp.setByte(0);
 }
 
-void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
+void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) {
   uint8_t out = 0;
 
-  uint8_t enFlag = useE1 ? 0x80 : 0x40; // Set the correct enable flag high.
   const uint8_t enFlag_L_mask = 0x3F;   // Mask with enable flags held low.
 
-  out |= enFlag;
-  out |= (flags & LCD_USER_FLAGS);
+  out |= (enFlags & LCD_ENABLE_FLAGS);
+  out |= (ctrlFlags & LCD_CTRL_FLAGS);
   // Send the high nibble first.
   out |= (v >> 4) & 0x0F;
     
@@ -37,8 +36,8 @@ void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
   _i2cp.waitForValid(); // wait for hold time on data after falling edge of EN.
 
   out = 0;
-  out |= enFlag; // Set enable flag high & send low nibble.
-  out |= (flags & LCD_USER_FLAGS);
+  out |= (enFlags & LCD_ENABLE_FLAGS); // Set enable flag high & send low nibble.
+  out |= (ctrlFlags & LCD_CTRL_FLAGS);
   out |= (v & 0xF); // use low nibble
     
   _i2cp.setByte(out);
@@ -49,14 +48,13 @@ void I2C4BitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
   _i2cp.setByte(out);
 }
 
-void I2C4BitNhdByteSender::sendHighNibble(uint8_t v, uint8_t flags, bool useE1) {
+void I2C4BitNhdByteSender::sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) {
   uint8_t out = 0;
 
-  uint8_t enFlag = useE1 ? 0x80 : 0x40; // Set the correct enable flag high.
   const uint8_t enFlag_L_mask = 0x3F;   // Mask with enable flags held low.
 
-  out |= enFlag;
-  out |= (flags & LCD_USER_FLAGS);
+  out |= (enFlags & LCD_ENABLE_FLAGS);
+  out |= (ctrlFlags & LCD_CTRL_FLAGS);
   // Send the high nibble.
   out |= (v >> 4) & 0x0F;
     

@@ -38,14 +38,19 @@ void Direct4bitNhdByteSender::init() {
 // trigger EN via falling edge.
 #define DIRECT_PORT_SETUP_TIME_NS (485)
 
-void Direct4bitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
-  uint8_t enPin = useE1 ? _EN1 : _EN2;
+/* Set one or both enable lines to state (HIGH or LOW) based on enFlags. */
+void Direct4bitNhdByteSender::_setEnable(uint8_t state, uint8_t enFlags) {
+  if (enFlags & LCD_E1) { digitalWrite(_EN1, state); }
+  if (enFlags & LCD_E2) { digitalWrite(_EN2, state); }
+}
 
-  digitalWrite(enPin, HIGH); // Set enable to HIGH to setup for falling edge when ready.
+void Direct4bitNhdByteSender::sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) {
+  // Set enable to HIGH to setup for falling edge when ready.
+  _setEnable(HIGH, enFlags);
 
   // Flags stay consistent through entire send operation.
-  digitalWrite(_RW, flags & LCD_RW);
-  digitalWrite(_RS, flags & LCD_RS);
+  digitalWrite(_RW, ctrlFlags & LCD_RW);
+  digitalWrite(_RS, ctrlFlags & LCD_RS);
 
   // Send high nibble first.
   digitalWrite(_DB7, v & 0x80);
@@ -53,7 +58,7 @@ void Direct4bitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
   digitalWrite(_DB5, v & 0x20);
   digitalWrite(_DB4, v & 0x10);
   HALF_MICRO_WAIT(); // Wait for worst-case pin setup time (485ns, rounded up to 500)
-  digitalWrite(enPin, LOW); // lock in high nibble
+  _setEnable(LOW, enFlags); // lock in high nibble
 
   // falling-edge time (T_F) and data hold time (T_H) are only 10+25 = 35ns, but
   // the complete cycle time before we can raise EN back to HIGH is 1200ns. A fair bit of this was
@@ -61,25 +66,24 @@ void Direct4bitNhdByteSender::sendByte(uint8_t v, uint8_t flags, bool useE1) {
   HALF_MICRO_WAIT();
 
   // Send low nibble.
-  digitalWrite(enPin, HIGH); // Set enable to HIGH to setup for falling edge when ready.
+  _setEnable(HIGH, enFlags); // Set enable to HIGH to setup for falling edge when ready.
   digitalWrite(_DB7, v & 0x8);
   digitalWrite(_DB6, v & 0x4);
   digitalWrite(_DB5, v & 0x2);
   digitalWrite(_DB4, v & 0x1);
   HALF_MICRO_WAIT(); // Wait for worst-case pin setup time
-  digitalWrite(enPin, LOW); // lock in low nibble
+  _setEnable(LOW, enFlags); // lock in low nibble
   _NOP(); // Wait for final T_F + T_H
 
 }
 
-void Direct4bitNhdByteSender::sendHighNibble(uint8_t v, uint8_t flags, bool useE1) {
-  uint8_t enPin = useE1 ? _EN1 : _EN2;
-
-  digitalWrite(enPin, HIGH); // Set enable to HIGH to setup for falling edge when ready.
+void Direct4bitNhdByteSender::sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) {
+  // Set enable to HIGH to setup for falling edge when ready.
+  _setEnable(HIGH, enFlags);
 
   // Flags stay consistent through entire send operation.
-  digitalWrite(_RW, flags & LCD_RW);
-  digitalWrite(_RS, flags & LCD_RS);
+  digitalWrite(_RW, ctrlFlags & LCD_RW);
+  digitalWrite(_RS, ctrlFlags & LCD_RS);
 
   // Send high nibble of 'v'..
   digitalWrite(_DB7, v & 0x80);
@@ -87,7 +91,7 @@ void Direct4bitNhdByteSender::sendHighNibble(uint8_t v, uint8_t flags, bool useE
   digitalWrite(_DB5, v & 0x20);
   digitalWrite(_DB4, v & 0x10);
   HALF_MICRO_WAIT(); // Wait for worst-case pin setup time (485ns, rounded up to 500)
-  digitalWrite(enPin, LOW); // lock in high nibble
+  _setEnable(LOW, enFlags); // lock in high nibble.
 
   // falling-edge time (T_F) and data hold time (T_H) are only 10+25 = 35ns, but
   // the complete cycle time before we can raise EN back to HIGH is 1200ns. 

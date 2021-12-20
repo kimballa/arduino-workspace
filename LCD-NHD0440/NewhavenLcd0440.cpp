@@ -32,26 +32,24 @@ void NewhavenLcd0440::init(NhdByteSender *byteSender) {
   // nibble to configure the bus mode, then reinitialize.
   // According to the ST7066U datasheet (p.25), we actually start with an 8-bit bus config,
   // repeated 3x to clear any prior 4- or 8-bit bus state, then we downgrade to 4-bit mode.
-  uint8_t flags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
 
   for (uint8_t i = 0; i < 3; i++) {
     // Send 8-bit-at-once command to affirm 8-bit bus. db3..db0 are 'X' / don't care in this config.
-    _byteSender->sendHighNibble(LCD_OP_FUNC_SET | FUNC_SET_8_BIT_BUS, flags, true);
-    _byteSender->sendHighNibble(LCD_OP_FUNC_SET | FUNC_SET_8_BIT_BUS, flags, false);
+    _byteSender->sendHighNibble(LCD_OP_FUNC_SET | FUNC_SET_8_BIT_BUS, ctrlFlags, LCD_EN_ALL);
     _waitReady(NHD_DEFAULT_DELAY_US);
   }
 
   // Send command to shift to 4-bit-bus mode. We send this as an 8-bit command,
   // so we only send the high nibble.
-  _byteSender->sendHighNibble(LCD_OP_FUNC_SET_WITH_DATA_LEN, flags, true);
-  _byteSender->sendHighNibble(LCD_OP_FUNC_SET_WITH_DATA_LEN, flags, false);
+  _byteSender->sendHighNibble(LCD_OP_FUNC_SET_WITH_DATA_LEN, ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_DEFAULT_DELAY_US);
 
   // We are now in 4-bit mode. We want to configure other settings, so we transmit
   // both nibbles one after the other: the opcode & 4-bit bus flag, followed by line
   // count & font size.
-  _byteSender->sendByte(LCD_OP_FUNC_SET_WITH_DATA_LEN | FUNC_SET_2_LINES | FUNC_SET_FONT_5x8, flags, true);
-  _byteSender->sendByte(LCD_OP_FUNC_SET_WITH_DATA_LEN | FUNC_SET_2_LINES | FUNC_SET_FONT_5x8, flags, false);
+  _byteSender->sendByte(LCD_OP_FUNC_SET_WITH_DATA_LEN | FUNC_SET_2_LINES | FUNC_SET_FONT_5x8,
+      ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_DEFAULT_DELAY_US);
 
   // Reset display flags in case they were previously corrupt.
@@ -64,17 +62,15 @@ void NewhavenLcd0440::init(NhdByteSender *byteSender) {
   clear();
 
   // Set ENTRY_MODE to be CURSOR_RIGHT.
-  _byteSender->sendByte(LCD_OP_ENTRY_MODE_SET | LCD_ENTRY_MODE_CURSOR_RIGHT, flags, true);
-  _byteSender->sendByte(LCD_OP_ENTRY_MODE_SET | LCD_ENTRY_MODE_CURSOR_RIGHT, flags, false);
+  _byteSender->sendByte(LCD_OP_ENTRY_MODE_SET | LCD_ENTRY_MODE_CURSOR_RIGHT, ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_DEFAULT_DELAY_US);
 
   // The display is now ready for text.
 }
 
 void NewhavenLcd0440::clear() {
-  uint8_t flags = LCD_RW_WRITE | LCD_RS_COMMAND;
-  _byteSender->sendByte(LCD_OP_CLEAR, flags, true);  // E1
-  _byteSender->sendByte(LCD_OP_CLEAR, flags, false); // E2
+  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  _byteSender->sendByte(LCD_OP_CLEAR, ctrlFlags, LCD_EN_ALL);
   _waitReady(NHD_CLEAR_DELAY_US);
 
   _row = 0;
@@ -83,9 +79,8 @@ void NewhavenLcd0440::clear() {
 }
 
 void NewhavenLcd0440::home() {
-  uint8_t flags = LCD_RW_WRITE | LCD_RS_COMMAND;
-  _byteSender->sendByte(LCD_OP_RETURN_HOME, flags, true);  // E1
-  _byteSender->sendByte(LCD_OP_RETURN_HOME, flags, false); // E2
+  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  _byteSender->sendByte(LCD_OP_RETURN_HOME, ctrlFlags, LCD_EN_ALL);
 
   _waitReady(NHD_HOME_DELAY_US);
   _row = 0;
@@ -136,12 +131,13 @@ static uint8_t _subscreenForRow(uint8_t row) {
  */
 void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
   uint8_t subscreen = _subscreenForRow(row);
-  bool enablePin = subscreen == DISPLAY_TOP; // Choose e1 or e2 based on subscreen for row.
+  // Choose e1 or e2 based on subscreen for row.
+  uint8_t enablePin = (subscreen == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
 
   uint8_t inScreenRow = (row >= 2) ? (row - 2) : row; // Row within subscreen.
-  uint8_t flags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
   uint8_t addr = col + ((inScreenRow == 0) ? 0 : 0x40);
-  _byteSender->sendByte(LCD_OP_SET_DDRAM_ADDR | addr, flags, enablePin);
+  _byteSender->sendByte(LCD_OP_SET_DDRAM_ADDR | addr, ctrlFlags, enablePin);
   _waitReady(NHD_DEFAULT_DELAY_US);
 
   _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen.
@@ -167,9 +163,9 @@ void NewhavenLcd0440::_setCursorDisplay(uint8_t displayNum) {
 
 // Send display and cursor vis flags to device.
 void NewhavenLcd0440::_sendDisplayFlags() {
-  uint8_t flags = LCD_RW_WRITE | LCD_RS_COMMAND;
-  _byteSender->sendByte(LCD_OP_DISPLAY_ON_OFF | _displayFlags1, flags, true);  // E1
-  _byteSender->sendByte(LCD_OP_DISPLAY_ON_OFF | _displayFlags2, flags, false); // E2
+  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_COMMAND;
+  _byteSender->sendByte(LCD_OP_DISPLAY_ON_OFF | _displayFlags1, ctrlFlags, LCD_E1);
+  _byteSender->sendByte(LCD_OP_DISPLAY_ON_OFF | _displayFlags2, ctrlFlags, LCD_E2);
   _waitReady(NHD_DEFAULT_DELAY_US);
 }
 
@@ -208,10 +204,10 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
     return 1;
   }
 
-  uint8_t flags = LCD_RW_WRITE | LCD_RS_DATA;
+  uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
   // choose enable flag based on current row.
-  bool enableFlag = _subscreenForRow(_row) == DISPLAY_TOP;
-  _byteSender->sendByte(chr, flags, enableFlag);
+  uint8_t enablePin = (_subscreenForRow(_row) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
+  _byteSender->sendByte(chr, ctrlFlags, enablePin);
   _waitReady(NHD_DEFAULT_DELAY_US);
   _col++;
   if (_col >= LCD_NUM_COLS) {

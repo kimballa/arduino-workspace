@@ -1,7 +1,8 @@
 // (C) Copyright 2021 Aaron Kimball
 //
 // Driver for Newhaven Devices 0440-series 4x40 char LCDs
-// These LCDs are integrated on top of the ST7066U LCD IC.
+// These LCDs are integrated on top of a pair of ST7066U LCD ICs.
+// (A Hitachi HD44780-compatible chip.)
 //
 // Datasheet references:
 // * Display:   https://www.mouser.com/datasheet/2/291/NHD-0440WH-ATFH-JT-47935.pdf
@@ -52,9 +53,9 @@ public:
   ~NhdByteSender() {};
 
   // Must be overridden by implementation class
-  virtual void sendByte(uint8_t v, uint8_t flags, bool useE1) = 0;
+  virtual void sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) = 0;
   /* Send the high nibble of v with RW/RS and latch. */
-  virtual void sendHighNibble(uint8_t v, uint8_t flags, bool useE1) = 0;
+  virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) = 0;
 };
 
 /**
@@ -74,12 +75,12 @@ public:
   // you should call this method as early as possible in the boot process.
   void init(const uint8_t i2cAddr);
 
-  /* Send the byte value 'v'; initialize RW/RS via flags; latch with E1 if useE1
-   * is true, latch with E2 otherwise.
+  /* Send the byte value 'v'; initialize RW/RS via ctrlFlags; latch with E1 and/or E2
+   * based on enFlags.
    */
-  virtual void sendByte(uint8_t v, uint8_t flags, bool useE1);
+  virtual void sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
   /* Send the high nibble of v with RW/RS and latch. */
-  virtual void sendHighNibble(uint8_t v, uint8_t flags, bool useE1);
+  virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
 private:
   I2CParallel _i2cp;
 };
@@ -100,13 +101,14 @@ public:
 
   void init(); // Set up the GPIO pins as outputs and pull them low.
 
-  /* Send the byte value 'v'; initialize RW/RS via flags; latch with E1 if useE1
-   * is true, latch with E2 otherwise.
+  /* Send the byte value 'v'; initialize RW/RS via ctrlFlags; latch with E1 and/or E2
+   * based on enFlags.
    */
-  virtual void sendByte(uint8_t v, uint8_t flags, bool useE1);
+  virtual void sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
   /* Send the high nibble of v with RW/RS and latch. */
-  virtual void sendHighNibble(uint8_t v, uint8_t flags, bool useE1);
+  virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
 private:
+  void _setEnable(uint8_t state, uint8_t enFlags);
   uint8_t _EN1, _EN2, _RW, _RS, _DB7, _DB6, _DB5, _DB4;
 };
 
@@ -136,9 +138,11 @@ private:
 
   NhdByteSender* _byteSender;
 
+  // TODO(aaron): Store both in a single byte.
   uint8_t _row; // should be in 0--3.
   uint8_t _col; // should be in 0--39.
 
+  // TODO(aaron): Store both in a single byte.
   uint8_t _displayFlags1; // state of display flags for both subscreens.
   uint8_t _displayFlags2;
 };
@@ -155,8 +159,11 @@ private:
 
 // Caller of NhdByteSender::sendByte() controls RW and RS through `flags`.
 // The ByteSender manages E1 and E2 internally via `useE1` argument.
-#define LCD_USER_FLAGS (LCD_RS | LCD_RW)
+#define LCD_CTRL_FLAGS (LCD_RS | LCD_RW)
 #define LCD_ENABLE_FLAGS (LCD_E1 | LCD_E2)
+
+// Bitfield pattern for all (both) enable lines.
+#define LCD_EN_ALL (LCD_E1 | LCD_E2)
 
 // LCD_RW signal values
 #define LCD_RW_READ    (LCD_RW)
