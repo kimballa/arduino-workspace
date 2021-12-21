@@ -44,7 +44,12 @@ void I2CParallel::write(const uint8_t val) {
 
 uint8_t I2CParallel::getByte() {
   // Request 1 byte of data from the "read address" of the device (@ write_addr + 1)
-  _state = Wire.requestFrom(_i2cAddr + 1, 1);
+  uint8_t received = Wire.requestFrom((uint8_t)_i2cAddr, (uint8_t)1);
+  if (received != 1) {
+    _state = 0xFF;  // Unknown err state
+  } else {
+    _state = Wire.read();
+  }
   return _state;
 }
 
