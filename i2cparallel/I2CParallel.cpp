@@ -82,6 +82,8 @@ void I2CParallel::increment() {
 }
 
 void I2CParallel::waitForValid() {
-  delayMicroseconds(I2C_PARALLEL_HOLD_TIME_MICROS);
+  // Programmed delay unnecessary; at 100KHz bus speed, we will
+  // have already experienced 10us delay after the ACK.
+  //delayMicroseconds(I2C_PARALLEL_HOLD_TIME_MICROS);
 }
 
