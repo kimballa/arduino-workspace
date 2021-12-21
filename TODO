@@ -3,3 +3,5 @@ LCD-NHD0440:
 ------------
 * See if I2C scroll delay can be improved by not wasting an extra 4us pulse
   to raise EN
+* scroll() in 44870-speak usually means L/R; think of a different API name.
+  (ttyscroll()?)

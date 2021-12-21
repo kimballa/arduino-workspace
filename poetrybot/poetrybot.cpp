@@ -12,6 +12,24 @@ static const int TIC = 500; // blink interval
 
 static const int PARALLEL_ADDR = I2C_PCF8574A_MIN_ADDR;
 
+static const uint8_t num_lines = 10;
+static const char L0[] PROGMEM = "1, This is the first line";
+static const char L1[] PROGMEM = "2, Here is line two";
+static const char L2[] PROGMEM = "3, We are on the third line";
+static const char L3[] PROGMEM = "4- Here comes the fourth!";
+static const char L4[] PROGMEM = "5- We are scrolling decisively";
+static const char L5[] PROGMEM = "6- Madly dashing along.";
+static const char L6[] PROGMEM = "7th line ends with a newline\n";
+static const char L7[] PROGMEM = "8: eighth line";
+static const char L8[] PROGMEM = "9: xABCDEF another A third 10,1234567890wrapping around";
+static const char L9[] PROGMEM = "A: TEN!!!!";
+
+static const char *const lines[] PROGMEM = {
+  L0, L1, L2, L3, L4, L5, L6, L7, L8, L9
+};
+
+// buffer to hold elements of `lines` for printing.
+static char linebuf[80];
 
 I2C4BitNhdByteSender nhdByteSender;
 NewhavenLcd0440 lcd;
@@ -37,10 +55,14 @@ void setup() {
   digitalWrite(G, 0);  
 
   lcd.init(&nhdByteSender);
-  lcd.print(F("GREMBLOR <3 RIANA!\nThis unique device exists just to say\n...You're very special. <3\nXOXOXO Merry Christmas XOXOXO"));
+  lcd.setScrolling(true);
+
+  //lcd.print(F("GREMBLOR <3 RIANA!\nThis unique device exists just to say\n...You're very special. <3\nXOXOXO Merry Christmas XOXOXO"));
 }
 
 static int blinkState = 0;
+static int line = 0;
+static bool first = true;
 
 void loop() {
   delay(TIC);
@@ -62,6 +84,36 @@ void loop() {
   blinkState++;
   if (blinkState > 3) {
     blinkState = 0;
+  }
+
+  //lcd.print("meep\n");
+  /*
+  int n = 0;
+  for (int i = 0; i < 60; i++) {
+    lcd.print(n, HEX);
+    n++;
+    if (n >= 10) {
+      n = 0;
+    }
+    delay(100);
+  }
+  */
+  /*
+  line = 8;
+  strcpy_P(linebuf, (char*)pgm_read_word(&(lines[line])));
+  lcd.print(linebuf);
+  */
+  //while(true) { delay(50); };
+
+  if (!first) {
+    lcd.print("\n");
+  }
+  strcpy_P(linebuf, (char*)pgm_read_word(&(lines[line])));
+  lcd.print(linebuf);
+  first = false;
+  line++;
+  if (line >= num_lines) {
+    line = 0;
   }
 
 }
