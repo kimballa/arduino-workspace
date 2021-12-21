@@ -114,6 +114,13 @@ void loop() {
   line++;
   if (line >= num_lines) {
     line = 0;
+    unsigned int t1 = micros();
+    lcd.print("\n");
+    unsigned int t2 = micros();
+    unsigned int delta = t2 - t1;
+    lcd.print("Scroll Time: ");
+    lcd.print(delta, DEC);
+    lcd.print("\n");
   }
 
 }

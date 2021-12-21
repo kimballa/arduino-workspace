@@ -147,9 +147,9 @@ public:
   void setScrolling(bool scroll); // Enable/disable scrolling display.
 
   virtual size_t write(uint8_t chr); // write 1 character thru the Print interface.
-  size_t writeAtPos(uint8_t row, uint8_t col, uint8_t chr);
 
 private:
+  void _sendCommand(uint8_t cmd, uint8_t enFlags, unsigned int delay_micros);
   void _setCursorDisplay(uint8_t displayNum);
   void _sendDisplayFlags();
   void _waitReady(unsigned int delay_micros);
