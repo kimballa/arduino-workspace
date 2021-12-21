@@ -134,9 +134,7 @@ uint8_t Direct4BitNhdByteSender::readByte(uint8_t ctrlFlags, uint8_t enFlag) {
 
   _setEnable(LOW, enFlag); // Dismiss second nibble.
 
-  // Block here to ensure a complete cycle is realized.
-  MICRO_WAIT();
-  EIGHTH_MICRO_WAIT();
+  // No block at end of digital read; caller will invoke 37us delay.
 
   return v; // Value ready for return.
 }
