@@ -280,7 +280,7 @@ CXXFLAGS += -Wno-error=narrowing
 CXXFLAGS += $(CFLAGS)
 
 # Additional flags specific to C++ compilation
-CXXFLAGS += -std=gnu++11
+CXXFLAGS += -std=gnu++14
 CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
