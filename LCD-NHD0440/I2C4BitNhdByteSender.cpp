@@ -64,3 +64,50 @@ void I2C4BitNhdByteSender::sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t 
   _i2cp.setByte(out);
 }
 
+uint8_t I2C4BitNhdByteSender::readByte(uint8_t ctrlFlags, uint8_t enFlag) {
+  uint8_t send = 0;
+  // Start with no en flags high.
+  send |= (ctrlFlags & LCD_CTRL_FLAGS);
+  send |= 0xF; // Keep the 4 data lines set 'high' to enable reading.
+  _i2cp.setByte(send); // Set up the READ command.
+  _i2cp.waitForValid();
+
+  // Once the other lines have settled, then raise EN.
+  send |= (enFlag & LCD_ENABLE_FLAGS); // Warning: You must pass exactly 1 enable flag or they'll fight.
+  _i2cp.setByte(send); // Request first nibble.
+  _i2cp.waitForValid();
+  // I2C wait time (4us) greatly exceeds t_DDR (100ns) so lines are now valid with high nibble.
+  uint8_t scan = _i2cp.read(); // Read back current contents (high nibble).
+  uint8_t v = (scan & 0xF) << 4;
+
+  send &= enFlag_L_mask;
+  _i2cp.setByte(send); // Drop EN flag to low; discard first nibble.
+  _i2cp.waitForValid();
+
+  _i2cp.setByte(send); // Set up the second half of the READ command.
+  _i2cp.waitForValid();
+
+  send |= (enFlag & LCD_ENABLE_FLAGS); // set EN high again.
+  _i2cp.setByte(send);  // Request read as we raising-edge EN.
+  _i2cp.waitForValid(); // t_DDR elapses; low nibble now valid.
+  scan = _i2cp.read();  // Read back current contents (low nibble).
+  v |= (scan & 0xF);
+
+  send &= enFlag_L_mask;
+  _i2cp.setByte(send); // Drop EN flag to low, acknowledge/discard 2nd nibble. 
+  _i2cp.waitForValid();
+
+  return v;
+}
+
+void I2C4BitNhdByteSender::setBusMode(uint8_t busMode) {
+  if (busMode == NHD_MODE_READ) {
+    // Set the low-order 4 bits of the bus (the non-control data lines) to HIGH
+    // to enable reading. Control lines remain unaffected.
+    _i2cp.setOr(0xF);
+    _i2cp.waitForValid();
+  }
+
+  // Nothing to do for NHD_MODE_WRITE; the next write operation just
+  // overwrites the 4 data lines.
+}

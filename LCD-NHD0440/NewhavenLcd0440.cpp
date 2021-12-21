@@ -18,11 +18,11 @@ static inline uint8_t _makePos(uint8_t row, uint8_t col) {
 }
 
 // Increment the 'col' field of pos by 1 and return the new 'col' value.
+// Note that this can set _pos to illegal values where col >= LCD_NUM_COLS.
+// The caller is responsible for detecting overflow.
 static inline uint8_t _incrementCol(uint8_t &pos) {
-  uint8_t row = _getRow(pos);
-  uint8_t col = _getCol(pos) + 1;
-  pos = _makePos(row, col + 1); // set thru reference.
-  return col;
+  // col is in low-order bits, so just increment.
+  return _getCol(++pos);
 }
 
 NewhavenLcd0440::NewhavenLcd0440() {
@@ -222,32 +222,99 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
     setCursorPos(_getRow(_pos), 0);
     return 1;
   } else if (chr == '\n') {
-    uint8_t newRow = _getRow(_pos) + 1;
+    const uint8_t newRow = _getRow(_pos) + 1;
     if (newRow >= LCD_NUM_ROWS) {
-      newRow = 0; // Wrap back to the top.
-      // TODO(aaron): Make it scroll up!
+      if (_displayFlags & DISP_FLAG_SCROLL) {
+        _scrollScreen();
+      } else {
+        setCursorPos(0, 0);  // Wrap back to the top.
+      }
+    } else {
+      setCursorPos(newRow, 0); // Move to the next line.
     }
-    setCursorPos(newRow, 0); 
     return 1;
   }
 
-  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
-  // choose enable flag based on current row.
-  uint8_t enablePin = (_subscreenForRow(_getRow(_pos)) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
-  _byteSender->sendByte(chr, ctrlFlags, enablePin);
-  _waitReady(NHD_DEFAULT_DELAY_US);
-
-  if (_incrementCol(_pos) >= LCD_NUM_COLS) {
-    // Move to the next line.
-    uint8_t newRow = _getRow(_pos) + 1;
-    if (newRow >= LCD_NUM_ROWS) {
-      newRow = 0; // Wrap back to the top.
-      // TODO(aaron): Make it scroll up!
+  if (_getCol(_pos) >= LCD_NUM_COLS) {
+    // Prior write was to the last column on the screen, and we didn't handle
+    // a '\n' or '\r' above, meaning we're writing to the "41st" column. (nope!)
+    // Wrap to the next line before printing.
+    const uint8_t nextRow = _getRow(_pos) + 1;
+    if (nextRow >= LCD_NUM_ROWS) {
+      if (_displayFlags & DISP_FLAG_SCROLL) {
+        _scrollScreen();
+      } else {
+        setCursorPos(0, 0); // Wrap back to the top.
+      }
+    } else {
+      setCursorPos(nextRow, 0); 
     }
-    setCursorPos(newRow, 0); 
   }
 
+  // We're now in a valid location to write a character.
+  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
+  // choose enable flag based on current row.
+  const uint8_t enablePin = (_subscreenForRow(_getRow(_pos)) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
+  _byteSender->sendByte(chr, ctrlFlags, enablePin);
+  _waitReady(NHD_DEFAULT_DELAY_US);
+  _incrementCol(_pos);
+
   return 1;
+}
+
+size_t NewhavenLcd0440::writeAtPos(uint8_t row, uint8_t col, uint8_t chr) {
+  setCursorPos(row, col);
+  return write(chr);
+}
+
+/**
+ * Scroll all the lines up by 1.
+ */
+void NewhavenLcd0440::_scrollScreen() {
+  const uint8_t oldDisplayFlags = _displayFlags; // push display flags.
+  _displayFlags = DISP_FLAG_D1 | DISP_FLAG_D2; // hide cursor temporarily during scroll.
+  _sendDisplayFlags();
+
+  const uint8_t ctrlFlagsR = LCD_RW_READ | LCD_RS_DATA;
+  const uint8_t ctrlFlagsW = LCD_RW_WRITE | LCD_RS_DATA;
+
+  for (uint8_t r = 1; r < LCD_NUM_ROWS; r++) {
+    const uint8_t enFlagR = (_subscreenForRow(r) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
+    const uint8_t enFlagW = (_subscreenForRow(r - 1) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
+
+    // Buffer one row of char RAM locally.
+    // NOTE(aaron): This read-all-then-write-all pattern makes use of the LCD's internal 
+    // cursor to minimize the number of setPosition() calls. If a 40 byte buffer is too
+    // big for the stack, we could do this in blocks of 8 chars to compromise between
+    // stack usage and I/O latency.
+    uint8_t buffer[LCD_NUM_COLS];
+
+    setCursorPos(r, 0);
+    _byteSender->setBusMode(NHD_MODE_READ);
+    for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
+      // Read operation also moves the cursor 1 to the right.
+      buffer[c] = _byteSender->readByte(ctrlFlagsR, enFlagR);
+      _waitReady(NHD_DEFAULT_DELAY_US);
+    }
+
+    // Reset to prior row and emit the buffer.
+    _byteSender->setBusMode(NHD_MODE_WRITE);
+    setCursorPos(r - 1, 0);
+    for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
+      _byteSender->sendByte(buffer[c], ctrlFlagsW, enFlagW);
+      _waitReady(NHD_DEFAULT_DELAY_US);
+    }
+  }
+  // Clear bottom row.
+  setCursorPos(LCD_NUM_ROWS - 1, 0);
+  for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
+    _byteSender->sendByte(' ', ctrlFlagsW, LCD_E2);
+    _waitReady(NHD_DEFAULT_DELAY_US);
+  }
+
+  _displayFlags = oldDisplayFlags; // pop prior display flags.
+  _sendDisplayFlags();
+  setCursorPos(LCD_NUM_ROWS - 1, 0); // Return cursor to beginning of bottom line.
 }
 
 

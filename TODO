@@ -1,5 +1,5 @@
 
 LCD-NHD0440:
 ------------
-* Added a scroll? flag to the display flags -- make it actually work.
-* On '\n' in scroll mode, mirror lines up by 1 and advance like a normal tty.
+* See if I2C scroll delay can be improved by not wasting an extra 4us pulse
+  to raise EN

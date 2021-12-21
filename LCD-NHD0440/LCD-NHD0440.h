@@ -25,7 +25,7 @@
 //
 //    /* --or-- */
 //    // Use Arduino D11..D4 gpio pins as direct-wired bus.
-//    Direct4bitNhdByteSender byteSender(11, 10, 9, 8, 7, 6, 5, 4);
+//    Direct4BitNhdByteSender byteSender(11, 10, 9, 8, 7, 6, 5, 4);
 //    byteSender.init();
 //
 //    /* -- Then follow either of the above with -- */
@@ -56,7 +56,14 @@ public:
   virtual void sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) = 0;
   /* Send the high nibble of v with RW/RS and latch. */
   virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags) = 0;
+  /* Read a byte from the NHD memory. */
+  virtual uint8_t readByte(uint8_t ctrlFlags, uint8_t enFlag) = 0;
+  /** Switch between NHD_MODE_WRITE and NHD_MODE_READ. */
+  virtual void setBusMode(uint8_t busMode) = 0;
 };
+
+#define NHD_MODE_WRITE (OUTPUT)
+#define NHD_MODE_READ  (INPUT)
 
 /**
  * Send data to the NHD 0440 in 4-bit bus mode. The Arduino sends data over I2C
@@ -81,6 +88,10 @@ public:
   virtual void sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
   /* Send the high nibble of v with RW/RS and latch. */
   virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
+  /* Read a byte from the NHD memory. */
+  virtual uint8_t readByte(uint8_t ctrlFlags, uint8_t enFlag);
+  /** Switch between NHD_MODE_WRITE and NHD_MODE_READ. */
+  virtual void setBusMode(uint8_t busMode);
 private:
   I2CParallel _i2cp;
 };
@@ -93,11 +104,11 @@ private:
  * You must initialize the ByteSender with Arduino pin numbers that map to each
  * of these. (In 4-bit mode, DB3..0 are not used and should be tied to GND.)
  */
-class Direct4bitNhdByteSender : public NhdByteSender {
+class Direct4BitNhdByteSender : public NhdByteSender {
 public:
-  Direct4bitNhdByteSender(uint8_t EN1, uint8_t EN2, uint8_t RW, uint8_t RS,
+  Direct4BitNhdByteSender(uint8_t EN1, uint8_t EN2, uint8_t RW, uint8_t RS,
       uint8_t DB7, uint8_t DB6, uint8_t DB5, uint8_t DB4);
-  ~Direct4bitNhdByteSender();
+  ~Direct4BitNhdByteSender();
 
   void init(); // Set up the GPIO pins as outputs and pull them low.
 
@@ -107,6 +118,10 @@ public:
   virtual void sendByte(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
   /* Send the high nibble of v with RW/RS and latch. */
   virtual void sendHighNibble(uint8_t v, uint8_t ctrlFlags, uint8_t enFlags);
+  /* Read a byte from the NHD memory. */
+  virtual uint8_t readByte(uint8_t ctrlFlags, uint8_t enFlag);
+  /** Switch between NHD_MODE_WRITE and NHD_MODE_READ. */
+  virtual void setBusMode(uint8_t busMode);
 private:
   void _setEnable(uint8_t state, uint8_t enFlags);
   const uint8_t _EN1, _EN2, _RW, _RS, _DB7, _DB6, _DB5, _DB4;
@@ -132,11 +147,13 @@ public:
   void setScrolling(bool scroll); // Enable/disable scrolling display.
 
   virtual size_t write(uint8_t chr); // write 1 character thru the Print interface.
+  size_t writeAtPos(uint8_t row, uint8_t col, uint8_t chr);
 
 private:
   void _setCursorDisplay(uint8_t displayNum);
   void _sendDisplayFlags();
   void _waitReady(unsigned int delay_micros);
+  void _scrollScreen(); 
 
   NhdByteSender* _byteSender;
 
@@ -144,11 +161,11 @@ private:
   uint8_t _displayFlags; // state of display flags for both subscreens.
 };
 
-#define COL_MASK  ((uint8_t)0x1F)
+#define COL_MASK  ((uint8_t)0x3F)
 #define COL_SHIFT ((uint8_t)0)
 
-#define ROW_MASK  ((uint8_t)0x60)
-#define ROW_SHIFT ((uint8_t)5)
+#define ROW_MASK  ((uint8_t)0xC0)
+#define ROW_SHIFT ((uint8_t)6)
 
 
 #define DISP_FLAG_D1 ((uint8_t)0x4) // display visible (subscreen 1)
@@ -263,10 +280,10 @@ private:
 
 // internal id numbers for the two sub-screens. enable-line E1 latches the top
 // subscreen (rows 0 & 1), E2 latches for the bottom subscreen (rows 2 & 3).
-#define DISPLAY_TOP    0
-#define DISPLAY_BOTTOM 1
+#define DISPLAY_TOP    ((uint8_t)0)
+#define DISPLAY_BOTTOM ((uint8_t)1)
 
-#define LCD_NUM_ROWS  4
-#define LCD_NUM_COLS 40
+#define LCD_NUM_ROWS  ((uint8_t)4)
+#define LCD_NUM_COLS  ((uint8_t)40)
 
 #endif /* LCD_NHD_0440_H */
