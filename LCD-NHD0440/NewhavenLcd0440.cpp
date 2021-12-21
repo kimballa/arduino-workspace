@@ -140,11 +140,25 @@ static uint8_t _subscreenForRow(uint8_t row) {
 }
 
 /**
- * Set the cursor position in the 4x40 char screen. In practice this means determining
- * which of the two subscreens we're on, moving the cursor appropriately within the subscreen,
- * and setting cursor visibility only on the appropriate subscreen.
+ * Set the cursor position in the 4x40 char screen.
+ *
+ * In practice this means determining which of the two subscreens we're on, moving the
+ * cursor appropriately within the subscreen, and setting cursor visibility only on the
+ * appropriate subscreen.
  */
 void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
+  _setCursorPos(row, col, true);
+}
+
+/**
+ * Set the cursor position in the 4x40 char screen.
+ *
+ * If `updateDisplayFlags`, determine which of the two subscreens we're on, move the
+ * cursor appropriately within the subscreen, and set cursor visibility only on the
+ * appropriate subscreen. Setting to 'false' will skip display flag updates but may
+ * cause the display to go out of sync unless you move it back to the right subscreen.
+ */
+void NewhavenLcd0440::_setCursorPos(uint8_t row, uint8_t col, bool updateDisplayFlags) {
   const uint8_t subscreen = _subscreenForRow(row);
   // Choose e1 or e2 based on subscreen for row.
   const uint8_t enablePin = (subscreen == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
@@ -153,7 +167,9 @@ void NewhavenLcd0440::setCursorPos(uint8_t row, uint8_t col) {
   const uint8_t addr = col + ((inScreenRow == 0) ? 0 : 0x40);
   _sendCommand(LCD_OP_SET_DDRAM_ADDR | addr, enablePin, NHD_DEFAULT_DELAY_US);
 
-  _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen.
+  if (updateDisplayFlags) {
+    _setCursorDisplay(subscreen); // Make sure cursor is on the right subscreen.
+  }
   _pos = _makePos(row, col); // Save this as our new position.
 }
 
@@ -176,7 +192,7 @@ void NewhavenLcd0440::_setCursorDisplay(uint8_t displayNum) {
 void NewhavenLcd0440::_sendDisplayFlags() {
   uint8_t display1 = LCD_OP_DISPLAY_ON_OFF | ((_displayFlags >> DISPLAY_1_SHIFT) & DISPLAY_BITS_MASK);
   uint8_t display2 = LCD_OP_DISPLAY_ON_OFF | ((_displayFlags >> DISPLAY_2_SHIFT) & DISPLAY_BITS_MASK);
-  _sendCommand(display1, LCD_E1, 0); // No delay; the 2nd delay handles both subscreens. 
+  _sendCommand(display1, LCD_E1, 0); // No delay; the 2nd delay handles both subscreens.
   _sendCommand(display2, LCD_E2, NHD_DEFAULT_DELAY_US);
 }
 
@@ -237,12 +253,12 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
         setCursorPos(0, 0); // Wrap back to the top.
       }
     } else {
-      setCursorPos(nextRow, 0); 
+      setCursorPos(nextRow, 0);
     }
   }
 
   // We're now in a valid location to write a character.
-  const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
+  static const uint8_t ctrlFlags = LCD_RW_WRITE | LCD_RS_DATA;
   // choose enable flag based on current row.
   const uint8_t enablePin = (_subscreenForRow(_getRow(_pos)) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
   _byteSender->sendByte(chr, ctrlFlags, enablePin);
@@ -256,25 +272,22 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
  * Scroll all the lines up by 1.
  */
 void NewhavenLcd0440::_scrollScreen() {
-  const uint8_t oldDisplayFlags = _displayFlags; // push display flags.
-  _displayFlags = DISP_FLAG_D1 | DISP_FLAG_D2; // hide cursor temporarily during scroll.
-  _sendDisplayFlags();
 
-  const uint8_t ctrlFlagsR = LCD_RW_READ | LCD_RS_DATA;
-  const uint8_t ctrlFlagsW = LCD_RW_WRITE | LCD_RS_DATA;
+  static const uint8_t ctrlFlagsR = LCD_RW_READ | LCD_RS_DATA;
+  static const uint8_t ctrlFlagsW = LCD_RW_WRITE | LCD_RS_DATA;
 
   for (uint8_t r = 1; r < LCD_NUM_ROWS; r++) {
     const uint8_t enFlagR = (_subscreenForRow(r) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
     const uint8_t enFlagW = (_subscreenForRow(r - 1) == DISPLAY_TOP) ? LCD_E1 : LCD_E2;
 
     // Buffer one row of char RAM locally.
-    // NOTE(aaron): This read-all-then-write-all pattern makes use of the LCD's internal 
+    // NOTE(aaron): This read-all-then-write-all pattern makes use of the LCD's internal
     // cursor to minimize the number of setPosition() calls. If a 40 byte buffer is too
     // big for the stack, we could do this in blocks of 8 chars to compromise between
     // stack usage and I/O latency.
     uint8_t buffer[LCD_NUM_COLS];
 
-    setCursorPos(r, 0);
+    _setCursorPos(r, 0, false);
     _byteSender->setBusMode(NHD_MODE_READ);
     for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
       // Read operation also moves the cursor 1 to the right.
@@ -290,7 +303,7 @@ void NewhavenLcd0440::_scrollScreen() {
       _sendCommand(LCD_OP_CLEAR, LCD_E2, NHD_CLEAR_DELAY_US);
     } else {
       // Reset cursor position to prior row.
-      setCursorPos(r - 1, 0);
+      _setCursorPos(r - 1, 0, false);
     }
 
     // Emit the buffer onto the previous line.
@@ -300,9 +313,7 @@ void NewhavenLcd0440::_scrollScreen() {
     }
   }
 
-  _displayFlags = oldDisplayFlags; // pop prior display flags.
-  _sendDisplayFlags();
-  setCursorPos(LCD_NUM_ROWS - 1, 0); // Return cursor to beginning of bottom line.
+  _setCursorPos(LCD_NUM_ROWS - 1, 0, false); // Return cursor to beginning of bottom line.
 }
 
 
