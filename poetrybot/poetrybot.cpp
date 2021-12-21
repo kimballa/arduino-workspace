@@ -55,7 +55,7 @@ void setup() {
   digitalWrite(G, 0);  
 
   lcd.init(&nhdByteSender);
-  lcd.setScrolling(true);
+  lcd.setScrollingTTY(true);
 
   //lcd.print(F("GREMBLOR <3 RIANA!\nThis unique device exists just to say\n...You're very special. <3\nXOXOXO Merry Christmas XOXOXO"));
 }

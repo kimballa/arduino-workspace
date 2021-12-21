@@ -144,7 +144,7 @@ public:
   // Set position on row 0--3, col 0--39 across the two subscreens.
   void setCursorPos(uint8_t row, uint8_t col);
 
-  void setScrolling(bool scroll); // Enable/disable scrolling display.
+  void setScrollingTTY(bool scroll); // Enable/disable scrolling display.
 
   virtual size_t write(uint8_t chr); // write 1 character thru the Print interface.
 

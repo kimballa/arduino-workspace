@@ -180,7 +180,7 @@ void NewhavenLcd0440::_sendDisplayFlags() {
   _sendCommand(display2, LCD_E2, NHD_DEFAULT_DELAY_US);
 }
 
-void NewhavenLcd0440::setScrolling(bool scroll) {
+void NewhavenLcd0440::setScrollingTTY(bool scroll) {
   if (scroll) {
     _displayFlags |= DISP_FLAG_SCROLL;
   } else {
