@@ -277,6 +277,7 @@ void NewhavenLcd0440::_scrollScreen() {
   t_loop_pos_resets = 0;
   t_lineread = 0;
   t_linewrite = 0;
+  t_clear = 0;
   unsigned long start = micros();
   static const uint8_t ctrlFlagsR = LCD_RW_READ | LCD_RS_DATA;
   static const uint8_t ctrlFlagsW = LCD_RW_WRITE | LCD_RS_DATA;
@@ -298,22 +299,33 @@ void NewhavenLcd0440::_scrollScreen() {
     lpr_e = micros();
     t_loop_pos_resets += (lpr_e - lpr_s);
     unsigned long rd_s = micros();
+    uint8_t lastRealPos = 0;
     for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
       // Read operation also moves the cursor 1 to the right.
-      buffer[c] = _byteSender->readByte(ctrlFlagsR, enFlagR);
+      uint8_t v = _byteSender->readByte(ctrlFlagsR, enFlagR);
       _waitReady(NHD_DEFAULT_DELAY_US);
+      buffer[c] = v;
+      if (v != ' ') {
+        lastRealPos = c; // We have chars to copy out at least thru this position.
+      }
     }
     unsigned long rd_e = micros();
     t_lineread += (rd_e - rd_s);
 
     _byteSender->setBusMode(NHD_MODE_WRITE);
-    if (r == LCD_NUM_ROWS - 1) {
+    if (r == 1) {
+      // We just read the 2nd row of the screen, to copy it to the
+      // first row. Clear the upper subscreen (and reset to (0, 0)).
+      _sendCommand(LCD_OP_CLEAR, LCD_E1, NHD_CLEAR_DELAY_US);
+      unsigned long clr_e = micros();
+      t_clear += clr_e - rd_e;
+    } else if (r == LCD_NUM_ROWS - 1) {
       // We just read the last row of the screen, to copy it to the
       // second-to-last row. Clear the bottom display first, to wipe
       // the last line out 0.5ms faster than we could set it byte-by-byte.
       _sendCommand(LCD_OP_CLEAR, LCD_E2, NHD_CLEAR_DELAY_US);
       unsigned long clr_e = micros();
-      t_clear = clr_e - rd_e;
+      t_clear += clr_e - rd_e;
     } else {
       // Reset cursor position to prior row.
       _setCursorPos(r - 1, 0, false);
@@ -323,7 +335,10 @@ void NewhavenLcd0440::_scrollScreen() {
 
     // Emit the buffer onto the previous line.
     unsigned long wr_s = micros();
-    for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
+    for (uint8_t c = 0; c <= lastRealPos; c++) {
+      if (buffer[c] == 0) {
+        break; // No need to copy further in this line.
+      }
       _byteSender->sendByte(buffer[c], ctrlFlagsW, enFlagW);
       _waitReady(NHD_DEFAULT_DELAY_US);
     }
