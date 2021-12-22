@@ -148,14 +148,6 @@ public:
 
   virtual size_t write(uint8_t chr); // write 1 character thru the Print interface.
 
-  // TODO: Remove timers.
-  unsigned long t_scroll;
-  unsigned long t_lineread;
-  unsigned long t_linewrite;
-  unsigned long t_clear;
-  unsigned long t_loop_pos_resets;
-  unsigned long t_final_pos_reset;
-
 private:
   void _setCursorPos(uint8_t row, uint8_t col, bool updateDisplayFlags=true);
   void _sendCommand(uint8_t cmd, uint8_t enFlags, unsigned int delay_micros);
