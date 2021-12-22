@@ -273,6 +273,11 @@ size_t NewhavenLcd0440::write(uint8_t chr) {
  */
 void NewhavenLcd0440::_scrollScreen() {
 
+  unsigned long lpr_s, lpr_e;
+  t_loop_pos_resets = 0;
+  t_lineread = 0;
+  t_linewrite = 0;
+  unsigned long start = micros();
   static const uint8_t ctrlFlagsR = LCD_RW_READ | LCD_RS_DATA;
   static const uint8_t ctrlFlagsW = LCD_RW_WRITE | LCD_RS_DATA;
 
@@ -287,13 +292,19 @@ void NewhavenLcd0440::_scrollScreen() {
     // stack usage and I/O latency.
     uint8_t buffer[LCD_NUM_COLS];
 
+    lpr_s = micros();
     _setCursorPos(r, 0, false);
     _byteSender->setBusMode(NHD_MODE_READ);
+    lpr_e = micros();
+    t_loop_pos_resets += (lpr_e - lpr_s);
+    unsigned long rd_s = micros();
     for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
       // Read operation also moves the cursor 1 to the right.
       buffer[c] = _byteSender->readByte(ctrlFlagsR, enFlagR);
       _waitReady(NHD_DEFAULT_DELAY_US);
     }
+    unsigned long rd_e = micros();
+    t_lineread += (rd_e - rd_s);
 
     _byteSender->setBusMode(NHD_MODE_WRITE);
     if (r == LCD_NUM_ROWS - 1) {
@@ -301,19 +312,30 @@ void NewhavenLcd0440::_scrollScreen() {
       // second-to-last row. Clear the bottom display first, to wipe
       // the last line out 0.5ms faster than we could set it byte-by-byte.
       _sendCommand(LCD_OP_CLEAR, LCD_E2, NHD_CLEAR_DELAY_US);
+      unsigned long clr_e = micros();
+      t_clear = clr_e - rd_e;
     } else {
       // Reset cursor position to prior row.
       _setCursorPos(r - 1, 0, false);
+      lpr_e = micros();
+      t_loop_pos_resets += (lpr_e - rd_e);
     }
 
     // Emit the buffer onto the previous line.
+    unsigned long wr_s = micros();
     for (uint8_t c = 0; c < LCD_NUM_COLS; c++) {
       _byteSender->sendByte(buffer[c], ctrlFlagsW, enFlagW);
       _waitReady(NHD_DEFAULT_DELAY_US);
     }
+    unsigned long wr_e = micros();
+    t_linewrite += (wr_e - wr_s);
   }
 
+  unsigned long fpr_s = micros();
   _setCursorPos(LCD_NUM_ROWS - 1, 0, false); // Return cursor to beginning of bottom line.
+  unsigned long fpr_e = micros();
+  t_final_pos_reset = fpr_e - fpr_s;
+  t_scroll = fpr_e - start;
 }
 
 

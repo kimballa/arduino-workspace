@@ -1,6 +1,8 @@
 // (c) Copyright 2021 Aaron Kimball
 //
 // Library to use the PCF8574 / PCF8574A
+// Also for pin-compatible fast-mode devices like NXP PCA8574[A].
+//
 // Remote 8-Bit I/O Expander for I2C Bus
 // See datasheet: https://www.ti.com/lit/ds/symlink/pcf8574a.pdf
 //
@@ -32,8 +34,14 @@
 // for actual communication.
 #define I2C_PARALLEL_ADDR_MASK ((uint8_t)0x7F)
 
-// The bus expander operates at a maximum rate of 100 KHz 
-#define I2C_PARALLEL_MAX_BUS_SPEED ((uint32_t)100000)
+#define I2C_SPEED_FAST     ((uint32_t)400000L)
+#define I2C_SPEED_STANDARD ((uint32_t)100000L)
+// The PCF8574 standard is specified at 100kHz but TI-manufactured chips are rated for 
+// 400kHz "fast mode" I2C. (See p.12 of https://www.ti.com/lit/an/scpa032/scpa032.pdf)
+// The pin-compatible NXP-mfr'd PCA8574 is also 400kHz device.
+#ifndef I2C_PARALLEL_MAX_BUS_SPEED
+#define I2C_PARALLEL_MAX_BUS_SPEED I2C_SPEED_FAST
+#endif /* I2C_PARALLEL_MAX_BUS_SPEED */
 
 // Timeout duration for I2C communications in microseconds; use 25 ms.
 #define I2C_PARALLEL_WIRE_TIMEOUT ((uint32_t)25000)
@@ -54,7 +62,7 @@ public:
 
   // Configure the 8-bit parallel bus with its expected 7-bit I2C address.
   // This must be within one of the two supported MIN_ADDR .. MAX_ADDR ranges.
-  void init(const uint8_t i2cAddr);
+  void init(const uint8_t i2cAddr, const uint32_t busSpeed=I2C_PARALLEL_MAX_BUS_SPEED);
 
   // Set the value to emit on the 8-bit bus. This value is latched and held
   // until overwritten by another setByte() or driven by the other side of the bus.
@@ -62,12 +70,12 @@ public:
   void write(const uint8_t val); // synonym for setByte().
 
   // Read back the current contents of the 8-bit bus. The bus can be driven by
-  // connected logic on any lines that we have set to HIGH via setByte(). 
+  // connected logic on any lines that we have set to HIGH via setByte().
   // On power-up, all data lines initialize to high (getByte() == 0xFF).
   uint8_t getByte();
   uint8_t read(); // synonym for getByte().
 
-  // Read back the last known contents of the bus without actually reading over i2c. 
+  // Read back the last known contents of the bus without actually reading over i2c.
   uint8_t getLastState() const;
 
   // Configure some data lines as inputs according to the specified mask.  The

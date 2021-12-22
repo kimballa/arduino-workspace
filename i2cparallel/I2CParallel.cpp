@@ -14,7 +14,7 @@ I2CParallel::I2CParallel() {
   _state = I2C_PARALLEL_DEFAULT_BUS_STATE;
 }
 
-void I2CParallel::init(const uint8_t i2cAddr) {
+void I2CParallel::init(const uint8_t i2cAddr, const uint32_t busSpeed) {
   _i2cAddr = i2cAddr & I2C_PARALLEL_ADDR_MASK;
 
   if (_i2cAddr < I2C_PCF8574_MIN_ADDR
@@ -26,8 +26,7 @@ void I2CParallel::init(const uint8_t i2cAddr) {
     Serial.println(_i2cAddr, HEX);
   }
 
-  // Enforce that the I2C bus is not operating too fast for this device.
-  Wire.setClock(I2C_PARALLEL_MAX_BUS_SPEED);
+  Wire.setClock(busSpeed);
   Wire.setWireTimeout(I2C_PARALLEL_WIRE_TIMEOUT, true);
 }
 
@@ -82,8 +81,11 @@ void I2CParallel::increment() {
 }
 
 void I2CParallel::waitForValid() {
-  // Programmed delay unnecessary; at 100KHz bus speed, we will
-  // have already experienced 10us delay after the ACK.
+  // Programmed delay unnecessary; even at 400KHz bus speed, we will
+  // have already experienced 2.5us delay after the ACK, which is stable
+  // in operational testing. (Despite being lower than the 4us requirement
+  // specified on the datasheet.)
+  //
   //delayMicroseconds(I2C_PARALLEL_HOLD_TIME_MICROS);
 }
 

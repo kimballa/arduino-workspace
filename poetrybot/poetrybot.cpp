@@ -8,7 +8,7 @@
 static const int R = 6;
 static const int G = 5;
 
-static const int TIC = 500; // blink interval
+static const int TIC = 1000; // blink interval
 
 static const int PARALLEL_ADDR = I2C_PCF8574A_MIN_ADDR;
 
@@ -114,13 +114,29 @@ void loop() {
   line++;
   if (line >= num_lines) {
     line = 0;
-    unsigned int t1 = micros();
     lcd.print("\n");
-    unsigned int t2 = micros();
-    unsigned int delta = t2 - t1;
-    lcd.print("Scroll Time: ");
-    lcd.print(delta, DEC);
+    unsigned long t_scroll = lcd.t_scroll;
+    unsigned long t_lineread = lcd.t_lineread;
+    unsigned long t_linewrite = lcd.t_linewrite;
+    unsigned long t_clear = lcd.t_clear;
+    unsigned long t_loop_pos_resets = lcd.t_loop_pos_resets;
+    unsigned long t_final_pos_reset = lcd.t_final_pos_reset;
+    lcd.print("Scroll: ");
+    lcd.print(t_scroll, DEC);
+    lcd.print(" R: ");
+    lcd.print(t_lineread, DEC);
+    lcd.print(" W: ");
+    lcd.print(t_linewrite, DEC);
     lcd.print("\n");
+    delay(TIC);
+    lcd.print(" clr: ");
+    lcd.print(t_clear, DEC);
+    lcd.print(" lpr: ");
+    lcd.print(t_loop_pos_resets, DEC);
+    lcd.print(" fpr: ");
+    lcd.print(t_final_pos_reset, DEC);
+    lcd.print("\n");
+    delay(TIC);
   }
 
 }
