@@ -13,8 +13,10 @@ Apps
 Libraries
 ---------
 
-* `i2cparallel`: An 8-bit parallel bus (PCF8574 / PCF8574A) you can interface over I2C.
-* `LCD-NHD0440`: Driver for the Newhave Devices 0440 series of 4x40 char LCDs.
+* `i2cparallel`: An 8-bit parallel bus (PCF8574 / PCF8574A / PCA8574) you can interface over I2C.
+* `LCD-NHD0440`: Driver for the Newhaven Devices `0440` series of 4x40 char LCDs. Includes a 
+  "TTY scrolling" feature that scrolls lines upward as you emit more lines with `print()` /
+  `println()`.
 
 Tools
 ------
