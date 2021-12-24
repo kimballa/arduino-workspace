@@ -44,7 +44,7 @@
 # Use `make config` to see the active configuration.
 # Use `make help` to see a list of available targets.
 
-ARDUINO_MK_VER := 1.1.0
+ARDUINO_MK_VER := 1.1.1
 
 # If the user has a config file to set $BOARD, etc., include it here.
 MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
@@ -73,6 +73,7 @@ ifneq ($(origin lib_name), undefined)
 else ifneq ($(origin prog_name), undefined)
 	@echo "image         : (default) Compile code and prepare upload-ready files"
 endif
+	@echo "serial        : Open serial connection to Arduino"
 	@echo "tags          : Run ctags"
 ifneq ($(origin prog_name), undefined)
 	@echo "upload        : Upload a compiled image to Arduino"
@@ -339,6 +340,9 @@ endif
 	@echo ""
 	@echo 'LDFLAGS         : $(LDFLAGS) $(lib_flags)'
 
+serial:
+	$(ARDUINO_CLI) monitor -p $(UPLOAD_PORT)
+
 clean:
 	-rm "$(TARGET)"
 	-rm -r "$(build_dir)"
@@ -415,7 +419,7 @@ $(size_report_file): $(TARGET) $(eeprom_file) $(flash_file)
 ifneq ($(origin prog_name), undefined)
 # Build the main ELF executable containing user code, Arduino core, any required libraries.
 $(TARGET): $(obj_files) $(core_lib)
-	$(CXX) $(LDFLAGS) -o $(TARGET) $(obj_files) $(core_lib) -lm $(lib_flags)
+	$(CXX) $(LDFLAGS) -o $(TARGET) $(obj_files) $(lib_flags) -lm $(core_lib)
 
 else ifneq ($(origin lib_name), undefined)
 # Build the main library containing user code.
@@ -509,4 +513,6 @@ endif
 %.o : %.S
 	cd $(dir $<) && $(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
 
-.PHONY: all config help clean core install image library eeprom flash upload verify distclean tags TAGS
+.PHONY: all config help clean core install image library eeprom flash upload verify \
+		distclean serial tags TAGS
+
