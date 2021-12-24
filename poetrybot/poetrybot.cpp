@@ -4,6 +4,12 @@
 #include <I2CParallel.h>
 #include <LCD-NHD0440.h>
 
+#define DEBUG
+// #define DBG_WAIT_FOR_CONNECT
+// #define DBG_START_PAUSED
+#define DBG_PRETTY_FUNCTIONS
+#include <dbg.h>
+
 // pin definitions.
 static const int R = 6;
 static const int G = 5;
@@ -34,7 +40,7 @@ static char linebuf[80];
 I2C4BitNhdByteSender nhdByteSender;
 NewhavenLcd0440 lcd;
 
-void setup() {
+SETUP() {
   // Initialize hardware serial.
 //  Serial.begin(115200);
 #ifdef __AVR_ATmega32U4__ // Arduino AVR Leonardo
@@ -53,9 +59,12 @@ void setup() {
 
   digitalWrite(R, 0);
   digitalWrite(G, 0);  
+  TRACE("trace message");
+  DBGPRINT("meep");
 
   lcd.init(&nhdByteSender);
   lcd.setScrollingTTY(true);
+  BREAK();
 
   //lcd.print(F("GREMBLOR <3 RIANA!\nThis unique device exists just to say\n...You're very special. <3\nXOXOXO Merry Christmas XOXOXO"));
 }

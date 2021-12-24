@@ -22,6 +22,8 @@ Tools
 ------
 
 * `arduino.mk`: A Makefile that builds and deploys Arduino apps and libraries.
+* `dbg`: A debug library including useful logging functions and a client--server interactive 
+  debugging console. See `dbg.h` for usage instructions.
 
 
 Using the arduino.mk Makefile

@@ -2,16 +2,21 @@
 //
 // dbg.h - Add debugger support to your Arduino sketch
 //
-// To enable the debugging system, replace the words `void setup()`
-// in your sketch with `SETUP()`. e.g.:
+// To enable the debugging system, use the following three steps:
 //
-// SETUP() {
-//   /* your setup function. */
-// }
+// 1) include `dbg` in your  Makefile's `libs` list variable.
+// 2) #include <dbg.h>
+// 3) replace the words `void setup()` in your sketch with `SETUP()`. e.g.:
 //
-// You can control this library by defining the following macros:
+//     SETUP() {
+//       /* your setup function. */
+//     }
+//
+// You can control this library by defining the following macros before dbg.h is #include'd:
+//
 // * NDEBUG: Debugger support is suppressed.
 // * DEBUG: Debugger support is explicitly enabled (overrides NDEBUG).
+//
 // * DBG_PRETTY_FUNCTIONS: Use pretty-printed function names in ASSERT() and TRACE().
 //   Without it, the filename (via __FILE__ macro) will be used instead. Function names will
 //   consume RAM whereas filenames are stored in Flash via the `F()` macro.
