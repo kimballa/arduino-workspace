@@ -97,12 +97,22 @@ void __dbg_service() {
     case DBG_OP_STACKREL:
       break;
     case DBG_OP_FLASHADDR:
+      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      Serial.println((uint8_t)pgm_read_byte(addr));
       break;
     case DBG_OP_POKE:
       break;
     case DBG_OP_MEMSTATS:
       break;
     case DBG_OP_REGISTERS:
+      // 32 general purpose registers exist at 0x00..0x1F (mega32u4 ds fig. 4-2)
+      for(addr = 0; addr < 32; addr++) {
+        Serial.println(*((uint8_t*)addr), DEC);
+      }
+      // Special registers: SP (note: 16 bit), SREG
+      Serial.println((uint16_t)SP, DEC);
+      Serial.println((uint8_t)SREG, DEC);
+      // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
     case DBG_OP_PORT_IN:
       break;

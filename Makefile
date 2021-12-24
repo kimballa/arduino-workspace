@@ -1,6 +1,6 @@
 # (c) Copyright 2021 Aaron Kimball
 
-LIBS = i2cparallel LCD-NHD0440
+LIBS = i2cparallel LCD-NHD0440 debugger/dbglib
 APPS = poetrybot
 
 TAGS_FILE = tags
@@ -17,7 +17,10 @@ i2cparallel:
 LCD-NHD0440: i2cparallel i2cparallel.install
 	$(MAKE) -C LCD-NHD0440
 
-poetrybot: i2cparallel.install LCD-NHD0440.install
+debugger/dbglib:
+	$(MAKE) -C debugger/dbglib
+
+poetrybot: i2cparallel.install LCD-NHD0440.install debugger/dbglib.install
 	$(MAKE) -C poetrybot
 
 # For each library in $LIBS, generate a $(LIB).install target.

@@ -117,7 +117,7 @@ extern void __dbg_trace(const String &tracemsg, const String &funcOrFile, const 
 
 #ifdef DBG_START_PAUSED
 // Within the SETUP() macro, start paused immediately prior to user's setup().
-#  define __optional_immediate_brk() BREAK();
+#  define __optional_immediate_brk() { DBGPRINT("Break on init"); BREAK(); }
 #else
 #  define __optional_immediate_brk()
 #endif /* DBG_START_PAUSED */

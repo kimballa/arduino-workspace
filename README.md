@@ -67,3 +67,11 @@ Usage:
 * Use `make config` to see and debug your environment config. Use `make help` to see a list of 
   available targets.
 
+Using the debugger
+===================
+
+* Install the dependencies with `cd debugger/arduino_dbg/ && pip install -r requirements.txt`.
+* Build the Arduino library with `cd debugger/dbglib && make install`
+* Follow instructions in `dbg.h` to include in your application.
+* Run `debugger/arduino-dbg/bin/arduino-dbg` to launch the debug console.
+
