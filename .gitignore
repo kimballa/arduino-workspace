@@ -4,3 +4,6 @@
 build
 tags
 TAGS
+__pycache__
+*.pyc
+*.pyo

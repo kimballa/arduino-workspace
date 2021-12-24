@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# (c) Copyright 2021 Aaron Kimball
+#
+# arduino-dbg: Arduino debug console client that works with `dbglib`.
+#
+# Usage: arduino-dbg -p <port> [<imageName.elf>]
+
+PY3=`which python3`
+PY3=`readlink -f "${PY3}"`
+
+dbgroot=`pwd`/../
+dbgroot=`readlink -f "${dbgroot}"`
+
+export PYTHONPATH="${dbgroot}":"${PYTHONPATH}"
+
+exec "${PY3}" -m arduino_dbg "$@"
+
