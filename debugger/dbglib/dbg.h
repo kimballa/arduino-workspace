@@ -53,7 +53,7 @@ extern void __dbg_setup();
 extern void __dbg_break(const char *funcOrFile, const uint16_t lineno); /* Enter user breakpoint. */
 extern void __dbg_break(const String &funcOrFile, const uint16_t lineno);
 
-extern bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile, 
+extern bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile,
     const unsigned int lineno);
 
 inline bool __dbg_assert(uint8_t test, const String &assertStr, const String &funcOrFile,
@@ -105,13 +105,13 @@ extern void __dbg_trace(const String &tracemsg, const String &funcOrFile, const 
 
 
 #ifdef DBG_PRETTY_FUNCTIONS
-#define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
-#define TRACE(x) __dbg_trace(F(#x),  __PRETTY_FUNCTION__, __LINE__)
-#define BREAK() __dbg_break(__PRETTY_FUNCTION__, __LINE__);
+#  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
+#  define TRACE(x) __dbg_trace(F(#x),  __PRETTY_FUNCTION__, __LINE__)
+#  define BREAK() __dbg_break(__PRETTY_FUNCTION__, __LINE__);
 #else
-#define ASSERT(x) __dbg_assert(x, F(#x), F(__FILE__), __LINE__)
-#define TRACE(x) __dbg_trace(F(#x),  F(__FILE__), __LINE__)
-#define BREAK() __dbg_break(F(__FILE__), __LINE__);
+#  define ASSERT(x) __dbg_assert(x, F(#x), F(__FILE__), __LINE__)
+#  define TRACE(x) __dbg_trace(F(#x),  F(__FILE__), __LINE__)
+#  define BREAK() __dbg_break(F(__FILE__), __LINE__);
 #endif /* DBG_PRETTY_FUNCTIONS */
 
 
@@ -124,15 +124,15 @@ extern void __dbg_trace(const String &tracemsg, const String &funcOrFile, const 
 
 #ifdef __AVR_ATmega32U4__
 // Arduino Leonardo -- require serial.
-#define WAIT_FOR_CONNECT_SUPPORTED  1
+#  define WAIT_FOR_CONNECT_SUPPORTED  1
 #else
-#define WAIT_FOR_CONNECT_SUPPORTED  0
+#  define WAIT_FOR_CONNECT_SUPPORTED  0
 #endif /* __AVR_ATmega32U4__ */
 
 #if WAIT_FOR_CONNECT_SUPPORTED == 1 && defined(DBG_WAIT_FOR_CONNECT)
-#define __optional_wait_for_conn()  while (!Serial) { delay(1); };
+#  define __optional_wait_for_conn()  while (!Serial) { delay(1); };
 #else
-#define __optional_wait_for_conn()  
+#  define __optional_wait_for_conn()
 #endif /* DBG_WAIT_FOR_CONNECT ? */
 
 

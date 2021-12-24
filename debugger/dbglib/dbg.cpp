@@ -10,6 +10,8 @@
 // Debugger status bits.
 volatile uint8_t debug_status = 0;
 
+static void __dbg_service(); // fwd declare.
+
 #define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
 
 
@@ -61,7 +63,7 @@ void __dbg_setup() {
  * that communicates over Serial about the state of the CPU until released to continue by
  * the client.
  */
-void __dbg_service() {
+static void __dbg_service() {
   debug_status |= DBG_STATUS_IN_BREAK; // Mark the service as started so we don't recursively re-enter.
   // In order to communicate over UART or USB Serial, we need to keep servicing interrupts within
   // debugger, even if called via IRQ.
@@ -120,7 +122,7 @@ void __dbg_service() {
       break;
     case DBG_OP_CONTINUE: // Continue main program execution; exit debugger.
       if (Serial.available() && Serial.peek() == DBG_END) {
-        Serial.read(); // consume expected EOL marker.
+        Serial.read(); // consume expected EOL marker before debugger exit.
       }
       Serial.print(DBG_RET_PRINT);
       Serial.println(F("Continuing..."));
@@ -131,7 +133,7 @@ void __dbg_service() {
     }
 
     if (Serial.available() && Serial.peek() == DBG_END) {
-      Serial.read(); // consume expected EOL marker.
+      Serial.read(); // consume expected EOL marker before reading next command.
     }
   }
 exit_loop:
@@ -144,11 +146,11 @@ bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile,
     const unsigned int lineno) {
 
   if (test) {
-    return test; // Assert succeeded.
+    return true; // Assert succeeded.
   }
 
   Serial.print(DBG_RET_PRINT);
-  Serial.print(F("Assertion failure ("));
+  Serial.print(F("Assertion failure in "));
   Serial.print(funcOrFile);
   Serial.print('(');
   Serial.print(lineno, DEC);
