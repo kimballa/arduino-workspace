@@ -113,6 +113,7 @@ static void __dbg_service() {
 
     // Interpret client request sentence.
     unsigned int addr = 0;
+    unsigned long value = 0;
     int rel = 0;
     uint8_t b = 0;
     switch(cmd) {
@@ -155,6 +156,16 @@ static void __dbg_service() {
       }
       break;
     case DBG_OP_POKE:
+      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      value = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      if (4 == b) {
+        *((uint32_t*)addr) = (uint32_t) value;
+      } else if (2 == b) {
+        *((uint16_t*)addr) = (uint16_t) value;
+      } else { // expect '1' but fallback to 1 byte in any err mode.
+        *((uint8_t*)addr) = (uint8_t) value;
+      }
       break;
     case DBG_OP_MEMSTATS:
       break;
