@@ -11,7 +11,8 @@
 // Debugger status bits.
 volatile uint8_t debug_status = 0;
 
-static void __dbg_service(); // fwd declare.
+// Forward declarations.
+static void __dbg_service();
 
 #define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
 
@@ -39,6 +40,26 @@ static void __dbg_service(); // fwd declare.
 
 #define DBG_TIME_MILLIS 'm' // get time in ms
 #define DBG_TIME_MICROS 'u' // get time in us
+
+/**
+ * Method called pre-init to disable watchdog.
+ * The watchdog timer remains running after watchdog-fired reset, which will just
+ * cause infinite resetting in normal applications. Clear it.
+ */
+void __dbg_disable_watchdog() {
+  MCUSR = 0;
+  wdt_disable();
+}
+
+/**
+ * Program the watchdog timer to run for a short period, with system reset on watchdog
+ * timeout. Then wait 'forever' so the watchdog timer fires, causing a system reset.
+ */
+inline void __dbg_reset() {
+  wdt_reset();
+  wdt_enable(WDTO_15MS);
+  while (true) { }; // Wait for watchdog reset to fire.
+}
 
 /**
  * Setup function for debugger; called before user's setup function.
@@ -95,6 +116,7 @@ static void __dbg_service() {
     uint8_t b = 0;
     switch(cmd) {
     case DBG_OP_RESET:
+      __dbg_reset();
       break;
     case DBG_OP_CALLSTACK:
       break;

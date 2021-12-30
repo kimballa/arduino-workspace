@@ -1,3 +1,30 @@
 
 Debugger:
 ------------
+
+On-device service capabilities:
+  * callstack walking
+  * RAMADDR, FLASHADDR, STACKREL, and POKE should take a length byte (1, 2, or 4)
+  * STACKREL (SP-relative data access)
+  * POKE
+  * MEMSTATS (can this be done w/o incl'ing malloc?)
+  * gpio in/out
+
+Client:
+  * Read ELF file and load symtab
+  * Search symtab for mangled symbol
+  * Connect to debugger
+  * Read global var by sym
+  * Write global var by sym
+  * Deconvolve stacktrace addr's to fn names (and display args?)
+  * 'help' text
+  * Interact w/ all device service capabilities
+
+SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
+* Breakpoint unit support
+* Watchpoint unit support
+* Single-step support 
+
+
+Current stats: 9660 data, 514 RAM
+    9714 / 514 (wdt.h, reset)

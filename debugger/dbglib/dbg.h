@@ -55,7 +55,8 @@
 #else
 // Debugger support enabled.
 
-#include<Arduino.h> // for typedefs e.g. uint8_t
+#include<Arduino.h>  // For typedefs e.g. uint8_t
+#include<avr/wdt.h>  // For watchdog timer control
 
 extern void __dbg_setup();
 
@@ -213,6 +214,8 @@ extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashString
     const uint16_t lineno);
 
 
+void __dbg_disable_watchdog() __attribute__((naked, used, section(".init3")));
+
 #ifdef DBG_PRETTY_FUNCTIONS
 #  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
 #  define TRACE(x) __dbg_trace(F(#x),  __PRETTY_FUNCTION__, __LINE__)
@@ -243,7 +246,6 @@ extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashString
 #else
 #  define __optional_wait_for_conn()
 #endif /* DBG_WAIT_FOR_CONNECT ? */
-
 
 #define SETUP() \
     static void __user_setup(); /* fwd declare. */ \
