@@ -113,6 +113,7 @@ static void __dbg_service() {
 
     // Interpret client request sentence.
     unsigned int addr = 0;
+    int rel = 0;
     uint8_t b = 0;
     switch(cmd) {
     case DBG_OP_RESET:
@@ -121,14 +122,37 @@ static void __dbg_service() {
     case DBG_OP_CALLSTACK:
       break;
     case DBG_OP_RAMADDR:
+      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      Serial.println(*((uint8_t*)addr), DEC);
+      if (4 == b) {
+        Serial.println(*((uint32_t*)addr), DEC);
+      } else if (2 == b) {
+        Serial.println(*((uint16_t*)addr), DEC);
+      } else { // expect '1' but fallback to 1 byte in any err mode.
+        Serial.println(*((uint8_t*)addr), DEC);
+      }
       break;
     case DBG_OP_STACKREL:
+      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      rel = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      if (4 == b) {
+        Serial.println(*((uint32_t*)(SP + rel)), DEC);
+      } else if (2 == b) {
+        Serial.println(*((uint16_t*)(SP + rel)), DEC);
+      } else { // expect '1' but fallback to 1 byte in any err mode.
+        Serial.println(*((uint8_t*)(SP + rel)), DEC);
+      }
       break;
     case DBG_OP_FLASHADDR:
+      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      Serial.println((uint8_t)pgm_read_byte(addr));
+      if (4 == b) {
+        Serial.println((uint32_t)pgm_read_dword(addr));
+      } else if (2 == b) {
+        Serial.println((uint16_t)pgm_read_word(addr));
+      } else { // expect '1' but fallback to 1 byte in any err mode.
+        Serial.println((uint8_t)pgm_read_byte(addr));
+      }
       break;
     case DBG_OP_POKE:
       break;

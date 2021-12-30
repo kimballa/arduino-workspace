@@ -4,8 +4,6 @@ Debugger:
 
 On-device service capabilities:
   * callstack walking
-  * RAMADDR, FLASHADDR, STACKREL, and POKE should take a length byte (1, 2, or 4)
-  * STACKREL (SP-relative data access)
   * POKE
   * MEMSTATS (can this be done w/o incl'ing malloc?)
   * gpio in/out
@@ -28,3 +26,4 @@ SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 
 Current stats: 9660 data, 514 RAM
     9714 / 514 (wdt.h, reset)
+    9826 / 514 (length byte and STACKREL)
