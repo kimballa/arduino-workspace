@@ -1,6 +1,3 @@
 
 Debugger:
 ------------
-* Using `const String &` for formal params will handle all of const char *, const String &, and
-  const __FlashStringHelper * but it relies on malloc(), thus pulling several kb of core.a into
-  the image. Is it worth it?

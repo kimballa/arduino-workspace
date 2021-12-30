@@ -20,6 +20,8 @@
 // * DBG_PRETTY_FUNCTIONS: Use pretty-printed function names in ASSERT() and TRACE().
 //   Without it, the filename (via __FILE__ macro) will be used instead. Function names will
 //   consume RAM whereas filenames are stored in Flash via the `F()` macro.
+// * DBG_SERIAL_SPEED: Speed of the serial connection. Default is 57600. The DBG_SERIAL_SPEED_FAST
+//   (57600) and DBG_SERIAL_SPEED_SLOW (9600) macros are available for your convenience.
 // * DBG_START_PAUSED: The sketch will immediately enter the debugger and require
 //   an explicit 'continue' ('C') command before proceeding to your setup() fn.
 // * DBG_WAIT_FOR_CONNECT: The sketch will wait for a Serial connection before
@@ -28,6 +30,13 @@
 
 #ifndef _DBG_H
 #define _DBG_H
+
+#define DBG_SERIAL_SPEED_FAST (57600)
+#define DBG_SERIAL_SPEED_SLOW (9600)
+
+#ifndef DBG_SERIAL_SPEED
+#define DBG_SERIAL_SPEED DBG_SERIAL_SPEED_FAST
+#endif
 
 #if defined(NDEBUG) && defined(DEBUG)
 /* DEBUG conquors NDEBUG. */
@@ -51,49 +60,145 @@
 extern void __dbg_setup();
 
 extern void __dbg_break(const char *funcOrFile, const uint16_t lineno); /* Enter user breakpoint. */
-extern void __dbg_break(const String &funcOrFile, const uint16_t lineno);
+extern void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno);
 
-extern bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile,
+extern bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
     const unsigned int lineno);
+extern bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const unsigned int lineno);
+extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const unsigned int lineno);
+extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const unsigned int lineno);
 
-inline bool __dbg_assert(uint8_t test, const String &assertStr, const String &funcOrFile,
+inline bool __dbg_assert(uint8_t test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(uint8_t test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(uint8_t test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(uint8_t test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+
+inline bool __dbg_assert(int test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(int test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(int test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(int test, const __FlashStringHelper *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
   return test;
 }
 
-inline bool __dbg_assert(int test, const String &assertStr, const String &funcOrFile,
+inline bool __dbg_assert(long test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
   return test;
 }
-
-inline bool __dbg_assert(long test, const String &assertStr, const String &funcOrFile,
+inline bool __dbg_assert(long test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
   return test;
 }
-
-inline bool __dbg_assert(unsigned int test, const String &assertStr, const String &funcOrFile,
+inline bool __dbg_assert(long test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
   return test;
 }
-
-inline bool __dbg_assert(unsigned long test, const String &assertStr, const String &funcOrFile,
-    const uint16_t lineno) {
+inline bool __dbg_assert(long test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
   return test;
 }
 
-inline bool __dbg_assert(void *test, const String &assertStr, const String &funcOrFile,
+inline bool __dbg_assert(unsigned int test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(unsigned int test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(unsigned int test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(unsigned int test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+
+inline bool __dbg_assert(unsigned long test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(unsigned long test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+
+inline bool __dbg_assert(void *test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(void *test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
+  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  return test;
+}
+inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
   return test;
 }
 
 extern void __dbg_print(const char *message);
-extern void __dbg_print(const String &msg);
+extern void __dbg_print(const __FlashStringHelper *msg);
 extern void __dbg_print(bool msg);
 extern void __dbg_print(uint8_t msg);
 extern void __dbg_print(int msg);
@@ -101,7 +206,11 @@ extern void __dbg_print(long msg);
 extern void __dbg_print(unsigned int msg);
 extern void __dbg_print(unsigned long msg);
 
-extern void __dbg_trace(const String &tracemsg, const String &funcOrFile, const uint16_t lineno);
+extern void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t lineno);
+extern void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, const uint16_t lineno);
+extern void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, const uint16_t lineno);
+extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno);
 
 
 #ifdef DBG_PRETTY_FUNCTIONS

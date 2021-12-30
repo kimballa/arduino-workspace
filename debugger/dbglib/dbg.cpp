@@ -1,5 +1,6 @@
 // (C) Copyright 2021 Aaron Kimball
 
+#define DEBUG /* Ensure this file is compiled correctly. */
 #include "dbg.h"
 #include <Stream.h>
 
@@ -18,29 +19,33 @@ static void __dbg_service(); // fwd declare.
 // The debugger client sends sentences beginning with a DBG_OP_ and ending with DBG_END.
 #define DBG_END          '\n' // end of debugger sentence.
 
-#define DBG_OP_RESET     'R' // Reset CPU.
-#define DBG_OP_CALLSTACK 's' // Return call stack info
 #define DBG_OP_RAMADDR   '@' // Return data at RAM address
 #define DBG_OP_STACKREL  '$' // Return data at addr relative to SP.
+#define DBG_OP_CONTINUE  'C' // continue execution
 #define DBG_OP_FLASHADDR 'f' // Return data at Flash address.
 #define DBG_OP_POKE      'K' // Insert data to RAM address.
 #define DBG_OP_MEMSTATS  'm' // Describe memory usage
-#define DBG_OP_REGISTERS 'r' // Dump registers
 #define DBG_OP_PORT_IN   'p' // read gpio pin
 #define DBG_OP_PORT_OUT  'P' // write gpio pin
-#define DBG_OP_CONTINUE  'C' // continue execution
+#define DBG_OP_RESET     'R' // Reset CPU.
+#define DBG_OP_REGISTERS 'r' // Dump registers
+#define DBG_OP_CALLSTACK 's' // Return call stack info
+#define DBG_OP_TIME      't' // Return cpu timekeeping info.
 #define DBG_OP_NONE      DBG_END
 
 #define DBG_RET_PRINT    ('>') // prefix for logged messages that debugger client
                                // should output verbatim to console.
 
 
+#define DBG_TIME_MILLIS 'm' // get time in ms
+#define DBG_TIME_MICROS 'u' // get time in us
+
 /**
  * Setup function for debugger; called before user's setup function.
  * Activate I/O and IRQs required for debugger operation.
  */
 void __dbg_setup() {
-  Serial.begin(9600);
+  Serial.begin(DBG_SERIAL_SPEED);
 
   // Set up timer IRQ: 1Hz on Timer1
   // (see https://www.instructables.com/Arduino-Timer-Interrupts/)
@@ -87,6 +92,7 @@ static void __dbg_service() {
 
     // Interpret client request sentence.
     unsigned int addr = 0;
+    uint8_t b = 0;
     switch(cmd) {
     case DBG_OP_RESET:
       break;
@@ -120,6 +126,21 @@ static void __dbg_service() {
       break;
     case DBG_OP_PORT_OUT:
       break;
+    case DBG_OP_TIME:
+      while (!Serial.available()) {
+        delay(1);
+      }
+
+      b = Serial.read();
+      if (b == DBG_TIME_MILLIS) {
+        Serial.println((uint32_t)millis(), DEC);
+      } else if (b == DBG_TIME_MICROS) {
+        Serial.println((uint32_t)micros(), DEC);
+      } else {
+        Serial.print(DBG_RET_PRINT);
+        Serial.println(F("Error"));
+      }
+      break;
     case DBG_OP_CONTINUE: // Continue main program execution; exit debugger.
       if (Serial.available() && Serial.peek() == DBG_END) {
         Serial.read(); // consume expected EOL marker before debugger exit.
@@ -141,8 +162,11 @@ exit_loop:
   debug_status &= ~DBG_STATUS_IN_BREAK; // Mark debug service as closed.
 }
 
+static const char _breakpoint_msg[] PROGMEM = "Breakpoint at ";
+static const char _assert_fail_msg[] PROGMEM = "Assertion failure in ";
 
-bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile,
+
+bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
     const unsigned int lineno) {
 
   if (test) {
@@ -150,7 +174,67 @@ bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile,
   }
 
   Serial.print(DBG_RET_PRINT);
-  Serial.print(F("Assertion failure in "));
+  Serial.print(FPSTR(_assert_fail_msg));
+  Serial.print(funcOrFile);
+  Serial.print('(');
+  Serial.print(lineno, DEC);
+  Serial.print(')');
+  Serial.print(':');
+  Serial.print(' ');
+  Serial.println(assertStr);
+
+  return false;
+}
+
+bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const unsigned int lineno) {
+
+  if (test) {
+    return true; // Assert succeeded.
+  }
+
+  Serial.print(DBG_RET_PRINT);
+  Serial.print(FPSTR(_assert_fail_msg));
+  Serial.print(funcOrFile);
+  Serial.print('(');
+  Serial.print(lineno, DEC);
+  Serial.print(')');
+  Serial.print(':');
+  Serial.print(' ');
+  Serial.println(assertStr);
+
+  return false;
+}
+
+bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const unsigned int lineno) {
+
+  if (test) {
+    return true; // Assert succeeded.
+  }
+
+  Serial.print(DBG_RET_PRINT);
+  Serial.print(FPSTR(_assert_fail_msg));
+  Serial.print(funcOrFile);
+  Serial.print('(');
+  Serial.print(lineno, DEC);
+  Serial.print(')');
+  Serial.print(':');
+  Serial.print(' ');
+  Serial.println(assertStr);
+
+  return false;
+}
+
+bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const __FlashStringHelper *funcOrFile,
+    const unsigned int lineno) {
+
+  if (test) {
+    return true; // Assert succeeded.
+  }
+
+  Serial.print(DBG_RET_PRINT);
+  Serial.print(FPSTR(_assert_fail_msg));
   Serial.print(funcOrFile);
   Serial.print('(');
   Serial.print(lineno, DEC);
@@ -163,7 +247,42 @@ bool __dbg_assert(bool test, const String &assertStr, const String &funcOrFile,
 }
 
 
-void __dbg_trace(const String &tracemsg, const String &funcOrFile, const uint16_t lineno) {
+void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t lineno) {
+  Serial.print(DBG_RET_PRINT);
+  Serial.print(funcOrFile);
+  Serial.print('(');
+  Serial.print(lineno, DEC);
+  Serial.print(')');
+  Serial.print(':');
+  Serial.print(' ');
+  Serial.println(tracemsg);
+}
+
+void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+  Serial.print(DBG_RET_PRINT);
+  Serial.print(funcOrFile);
+  Serial.print('(');
+  Serial.print(lineno, DEC);
+  Serial.print(')');
+  Serial.print(':');
+  Serial.print(' ');
+  Serial.println(tracemsg);
+}
+
+void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, const uint16_t lineno) {
+  Serial.print(DBG_RET_PRINT);
+  Serial.print(funcOrFile);
+  Serial.print('(');
+  Serial.print(lineno, DEC);
+  Serial.print(')');
+  Serial.print(':');
+  Serial.print(' ');
+  Serial.println(tracemsg);
+}
+
+void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
+
   Serial.print(DBG_RET_PRINT);
   Serial.print(funcOrFile);
   Serial.print('(');
@@ -179,7 +298,7 @@ void __dbg_print(const char *message) {
   Serial.println(message);
 }
 
-void __dbg_print(const String &message) {
+void __dbg_print(const __FlashStringHelper *message) {
   Serial.print(DBG_RET_PRINT);
   Serial.println(message);
 }
@@ -218,8 +337,6 @@ void __dbg_print(unsigned long msg) {
   Serial.println(msg, DEC);
 }
 
-static const char _breakpoint_msg[] PROGMEM = "Breakpoint at ";
-
 void __dbg_break(const char *funcOrFile, const uint16_t lineno) {
   Serial.print(DBG_RET_PRINT);
   Serial.print(FPSTR(_breakpoint_msg));
@@ -231,7 +348,7 @@ void __dbg_break(const char *funcOrFile, const uint16_t lineno) {
   __dbg_service();
 }
 
-void __dbg_break(const String &funcOrFile, const uint16_t lineno) {
+void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   Serial.print(DBG_RET_PRINT);
   Serial.print(FPSTR(_breakpoint_msg));
   Serial.print(funcOrFile);
