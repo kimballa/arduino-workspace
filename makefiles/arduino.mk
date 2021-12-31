@@ -25,7 +25,6 @@
 #
 #   OPTFLAGS  - Included in CFLAGS/CXXFLAGS, specific to optimization.
 #   DBGFLAGS  - Included in CFLAGS/CXXFLAGS, specific to debugging.
-#   COREFLAGS - Included in CFLAGS/CXXFLAGS, specific to compiling core.a
 #
 #   install_headers - Specific list of header files to copy in `make install`;
 #                     default is *.h in each of $(install_header_dirs)
@@ -245,11 +244,10 @@ boards_txt := "$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/
 OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
 
 # Debug-mode compilation options
+# -finstrument-functions is necessary for debugger stack tracing.
+# We then add `*/build/core/*` to the exclude-file-list so we don't instrument the core itself.
+# (The core should not depend on functions in the dbglib.)
 DBGFLAGS ?= -g -finstrument-functions -finstrument-functions-exclude-file-list=build/core
-
-# Compilation options for the Arduino core lib.
-# Include fno-instrument-functions to override any instrument-functions in $(DBGFLAGS).
-COREFLAGS ?= -fno-instrument-functions
 
 # Compiler flags we (might) want from arduino-ide's option set.
 CFLAGS += $(OPTFLAGS)
@@ -382,10 +380,21 @@ $(core_lib) : $(core_setup_file) $(core_obj_files)
 # file to mark that this task is done, so it doesn't continually make our build out of date.
 $(core_setup_file):
 	mkdir -p "$(build_dir)/core/"
-	cp -n "$(core_dir)/"*.cpp "$(build_dir)/core/"
-	cp -n "$(core_dir)/"*.c "$(build_dir)/core/"
-	cp -n "$(core_dir)/"*.S "$(build_dir)/core/"
 	touch $(core_setup_file)
+
+# Copy each file from the core source directory into our working copy within build/.
+
+$(build_dir)/core/%.cpp : $(core_dir)/%.cpp $(core_setup_file)
+	cp -n $< $@
+
+$(build_dir)/core/%.c : $(core_dir)/%.c $(core_setup_file)
+	cp -n $< $@
+
+$(build_dir)/core/%.S : $(core_dir)/%.S $(core_setup_file)
+	cp -n $< $@
+
+# Don't delete our local copy of the core source.
+.PRECIOUS: $(build_dir)/core/%.cpp $(build_dir)/core/%.c $(build_dir)/core/%.S $(core_setup_file)
 
 core: $(core_lib)
 
@@ -503,37 +512,25 @@ endif
 
 # Rule for compiling c++ source replicated for various equivalent c++ extensions.
 %.o : %.cpp
-	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
 %.o : %.cxx
-	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
 %.o : %.C
-	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
 # Arduino-specific C++ file ext.
 %.o : %.ino
-	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
 # Additional gcc-supported languages.
 %.o : %.c
-	cd $(dir $<) && $(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+	$(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $< -o $@
 
 %.o : %.S
-	cd $(dir $<) && $(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+	$(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
 
-# Separate implicit rules for compiling core to avoid debugger profiling.
-# Add $(COREFLAGS) to the build command line arguments.
-
-$(build_dir)/core/%.o : $(build_dir)/core/%.cpp
-	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(COREFLAGS) $(notdir $<) -o $(notdir $@)
-
-$(build_dir)/core/%.o : $(build_dir)/core/%.c
-	cd $(dir $<) && $(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $(COREFLAGS) $(notdir $<) -o $(notdir $@)
-
-$(build_dir)/core/%.o : $(build_dir)/core/%.S
-	cd $(dir $<) && $(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $(COREFLAGS) \
-			$(notdir $<) -o $(notdir $@)
 
 .PHONY: all config help clean core install image library eeprom flash upload verify \
 		distclean serial tags TAGS

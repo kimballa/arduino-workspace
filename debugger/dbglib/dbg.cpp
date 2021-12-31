@@ -420,7 +420,7 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   __dbg_service();
 }
 
-//   *** Call stack tracing ***
+//                   *** Call stack tracing ***
 //
 // We need to record our own stack of calls since we can't walk the real stack frames on
 // AVR.  This is stored in a circular buffer, updated using profiling hooks on method
@@ -432,14 +432,16 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
 // This can be controlled with DBG_MAX_STACK_FRAMES, although we put a hard cap @ 64 for
 // sanity.
 //
+// For this to work, you must compile your code with -finstrument-functions.
+//
 // This does *not* memoize any methods defined with the `no_instrument_function`
 // attribute. We also configure (via gcc args) the Arduino core to be exempt from tracing.
 // And since libc wasn't compiled with tracing hooks enabled, it is also exempt; thus this
 // tracks method calls in user code & added libraries only.
 
-static void* traceStack[__dbg_internal_stack_frame_limit];
-static void** traceStackNext = &(traceStack[0]);
-static void** traceStackTop = NULL;
+static volatile void* traceStack[__dbg_internal_stack_frame_limit];
+static volatile void** traceStackNext = &(traceStack[0]);
+static volatile void** traceStackTop = NULL;
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
 #ifdef DBG_ENABLED
@@ -512,8 +514,7 @@ static void __dbg_callstack() {
     return; // Empty call stack traced.
   }
 
-
-  void **stackElem = traceStackNext - 1;
+  volatile void **stackElem = traceStackNext - 1;
   if (stackElem < &(traceStack[0])) {
     stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
   }

@@ -2,24 +2,11 @@
 Makefile:
 ------------
 
-* The special 'core' rules work if you run `make` twice, but on a cold start from a `make clean`
-  it fails. You then need to `make` again for it to work.
 
 Debugger:
 ------------
 
-
-callstack walking /sorta/ works? initially, anyway?
-- initial callstack on dbg_break @ start works
-- later callstack traces after continuing + a later interrupt don't seem to work right
-  ... often it's just "empty stack."
-  ... at some point I got a new valid stacktrace but it was incomplete.
-
-- and there's still the makefile b.s.
-
-
 On-device service capabilities:
-  * callstack walking
   * MEMSTATS (can this be done w/o incl'ing malloc?)
   * gpio in/out
 
@@ -43,3 +30,4 @@ Current stats: 9660 data, 514 RAM
     9714 / 514 (wdt.h, reset)
     9826 / 514 (length byte and STACKREL)
     9880 / 514 (poke)
+    12016 / 592 (stacktrace) <<with instrumentation>>
