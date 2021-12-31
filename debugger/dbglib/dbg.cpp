@@ -175,8 +175,15 @@ static void __dbg_service() {
       }
       break;
     case DBG_OP_MEMSTATS:
-      // Print back stats on memory usage
-      Serial.println(RAMEND, HEX);
+      // Print back stats on memory usage.
+      // RAMSTART and RAMEND are hardcoded and can be loaded from a device profile on the
+      // client. The other values are dynamic and must be reported live, here. __malloc_heap_end
+      // will be 0 if the dynamic allocator isn't initialized; __malloc_heap_start will point
+      // to the end of the .bss section, where allocatable memory begins.
+      Serial.println(SP, HEX);
+      Serial.println((uint16_t)__malloc_heap_end, HEX);
+      Serial.println((uint16_t)__malloc_heap_start, HEX);
+      Serial.println('$');
       break;
     case DBG_OP_REGISTERS:
       // 32 general purpose registers exist at 0x00..0x1F (mega32u4 ds fig. 4-2)
@@ -514,6 +521,13 @@ void __cyg_profile_func_exit(void *this_fn, void *call_site) {
 }
 
 
+static inline void __dbg_callstack_epilogue() __attribute__((no_instrument_function));
+/** Clean-up code to call on all exit paths from __dbg_callstack(). */
+static inline void __dbg_callstack_epilogue() {
+  sei();
+  Serial.println('$');
+}
+
 /**
  * Enumerate the methods on the call stack.
  *
@@ -525,8 +539,8 @@ static void __dbg_callstack() {
   cli(); // When directly reading 2-byte values from stack, don't let interrupts interfere.
 
   if (NULL == traceStackTop) {
-    sei();
-    return; // Empty call stack traced.
+    // Empty call stack traced.
+    return __dbg_callstack_epilogue();
   }
 
   volatile void **stackElem = traceStackNext - 1;
@@ -554,8 +568,7 @@ static void __dbg_callstack() {
     }
   }
 
-  sei();
-  Serial.println('$');
+  return __dbg_callstack_epilogue();
 }
 
 #else /* DBG_NO_STACKTRACE */

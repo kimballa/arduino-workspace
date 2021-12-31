@@ -7,7 +7,6 @@ Debugger:
 ------------
 
 On-device service capabilities:
-  * MEMSTATS (can this be done w/o incl'ing malloc?)
   * annotate more debugger methods with no_instrument.
 
 Client:
