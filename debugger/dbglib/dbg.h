@@ -14,9 +14,14 @@
 //
 // You can control this library by defining the following macros before dbg.h is #include'd:
 //
-// * NDEBUG: Debugger support is suppressed.
-// * DEBUG: Debugger support is explicitly enabled (overrides NDEBUG).
+// * DEBUG or DBG_ENABLED: Debugger support is explicitly enabled.
+// * Debugger support is enabled by default if NDEBUG is *not* defined.
+//   If NDEBUG *is* defined, you must also define DEBUG or DBG_ENABLED to enforce debugger
+//   integration.
 //
+// * DBG_MAX_STACK_FRAMES: Max number of stack frames to trace on the call stack.
+//   Setting shallower than your deepest call stack will cause some backtrace info to be lost.
+//   However, this consumes `sizeof(void*) * DBG_MAX_STACK_FRAMES` bytes of memory.
 // * DBG_PRETTY_FUNCTIONS: Use pretty-printed function names in ASSERT() and TRACE().
 //   Without it, the filename (via __FILE__ macro) will be used instead. Function names will
 //   consume RAM whereas filenames are stored in Flash via the `F()` macro.
@@ -38,13 +43,40 @@
 #define DBG_SERIAL_SPEED DBG_SERIAL_SPEED_FAST
 #endif
 
-#if defined(NDEBUG) && defined(DEBUG)
-/* DEBUG conquors NDEBUG. */
-#undef NDEBUG
-#endif /* NDEBUG && DEBUG */
+// The call stack for backtracing will be tracked in a buffer of function
+// pointers, with this many elements.
+#ifndef DBG_MAX_STACK_FRAMES
+#define DBG_MAX_STACK_FRAMES 16
+#endif
 
-#ifdef NDEBUG
-// Suppress debugger support.
+// Under no circumstances enumerate more than this many stack frames.
+#define __DBG_STACK_FRAME_LIMIT 64
+
+#if (__DBG_STACK_FRAME_LIMIT != 64) // No, really, don't be clever.
+#  pragma GCC warning "DBG stack frame limit must be 64. Resetting."
+#  undef __DBG_STACK_FRAME_LIMIT
+#  define __DBG_STACK_FRAME_LIMIT 64
+#endif /* limit != 64 */
+
+#if (DBG_MAX_STACK_FRAMES > __DBG_STACK_FRAME_LIMIT)
+#  pragma GCC warning "Max call stack unwind count set higher than limit; unwind count will be capped at 64."
+#endif
+
+// Determine whether to enable the debugger, based on preprocessor flags.
+#if defined(DEBUG) && !defined(DBG_ENABLED)
+#  define DBG_ENABLED
+#endif /* DEBUG => DBG_ENABLED */
+
+#if !defined(NDEBUG) && !defined(DBG_ENABLED)
+#  define DBG_ENABLED
+#endif /* !NDEBUG => DBG_ENABLED */
+
+#if defined(NDEBUG) && defined(DBG_ENABLED)
+/* DEBUG/DBG_ENABLED => !NDEBUG. */
+#  undef NDEBUG
+#endif /* NDEBUG && DBG_ENABLED */
+
+#ifndef DBG_ENABLED /* Suppress debugger support. */
 
 #define SETUP() void setup()
 #define BREAK()
@@ -52,13 +84,13 @@
 #define TRACE(x)
 #define DBGPRINT(x)
 
-#else
+#else /* DBG_ENABLED */
 // Debugger support enabled.
 
 #include<Arduino.h>  // For typedefs e.g. uint8_t
 #include<avr/wdt.h>  // For watchdog timer control
 
-extern void __dbg_setup();
+extern void __dbg_setup() __attribute__((no_instrument_function));
 
 extern void __dbg_break(const char *funcOrFile, const uint16_t lineno); /* Enter user breakpoint. */
 extern void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno);
@@ -214,7 +246,7 @@ extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashString
     const uint16_t lineno);
 
 
-void __dbg_disable_watchdog() __attribute__((naked, used, section(".init3")));
+void __dbg_disable_watchdog() __attribute__((naked, used, section(".init3"), no_instrument_function));
 
 #ifdef DBG_PRETTY_FUNCTIONS
 #  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
@@ -260,8 +292,20 @@ void __dbg_disable_watchdog() __attribute__((naked, used, section(".init3")));
 
 #define DBGPRINT(x) __dbg_print(x)
 
-#endif /* NDEBUG */
+#endif /* DBG_ENABLED */
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* C++ */
+
+  extern void __cyg_profile_func_enter(void *this_fn, void *call_site)
+      __attribute__((used, no_instrument_function));
+  extern void __cyg_profile_func_exit(void *this_fn, void *call_site)
+      __attribute__((used, no_instrument_function));
+
+#ifdef __cplusplus
+} /* Close 'extern "C"' */
+#endif /* C++ */
 
 
 #endif /* _DBG_H */

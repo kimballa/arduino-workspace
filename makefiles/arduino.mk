@@ -23,6 +23,10 @@
 #   CXXFLAGS  - Additional compiler flags
 #   LDFLAGS   - Additional linker flags
 #
+#   OPTFLAGS  - Included in CFLAGS/CXXFLAGS, specific to optimization.
+#   DBGFLAGS  - Included in CFLAGS/CXXFLAGS, specific to debugging.
+#   COREFLAGS - Included in CFLAGS/CXXFLAGS, specific to compiling core.a
+#
 #   install_headers - Specific list of header files to copy in `make install`;
 #                     default is *.h in each of $(install_header_dirs)
 #   install_header_dirs - List of dirs containing *.h files to install. Defaults to $(src_dirs).
@@ -241,7 +245,11 @@ boards_txt := "$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/
 OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
 
 # Debug-mode compilation options
-DBGFLAGS += -g
+DBGFLAGS ?= -g -finstrument-functions -finstrument-functions-exclude-file-list=build/core
+
+# Compilation options for the Arduino core lib.
+# Include fno-instrument-functions to override any instrument-functions in $(DBGFLAGS).
+COREFLAGS ?= -fno-instrument-functions
 
 # Compiler flags we (might) want from arduino-ide's option set.
 CFLAGS += $(OPTFLAGS)
@@ -507,11 +515,25 @@ endif
 %.o : %.ino
 	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
 
+# Additional gcc-supported languages.
 %.o : %.c
 	cd $(dir $<) && $(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
 
 %.o : %.S
 	cd $(dir $<) && $(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $(notdir $<) -o $(notdir $@)
+
+# Separate implicit rules for compiling core to avoid debugger profiling.
+# Add $(COREFLAGS) to the build command line arguments.
+
+$(build_dir)/core/%.o : $(build_dir)/core/%.cpp
+	cd $(dir $<) && $(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $(COREFLAGS) $(notdir $<) -o $(notdir $@)
+
+$(build_dir)/core/%.o : $(build_dir)/core/%.c
+	cd $(dir $<) && $(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $(COREFLAGS) $(notdir $<) -o $(notdir $@)
+
+$(build_dir)/core/%.o : $(build_dir)/core/%.S
+	cd $(dir $<) && $(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $(COREFLAGS) \
+			$(notdir $<) -o $(notdir $@)
 
 .PHONY: all config help clean core install image library eeprom flash upload verify \
 		distclean serial tags TAGS

@@ -1,6 +1,5 @@
 // (C) Copyright 2021 Aaron Kimball
 
-#define DEBUG /* Ensure this file is compiled correctly. */
 #include "dbg.h"
 #include <Stream.h>
 
@@ -8,16 +7,24 @@
 #define FPSTR(pstr_pointer) (reinterpret_cast<const __FlashStringHelper *>(pstr_pointer))
 #endif /* FPSTR */
 
+#define __dbg_internal_stack_frame_limit (min(DBG_MAX_STACK_FRAMES, __DBG_STACK_FRAME_LIMIT))
+
 // Debugger status bits.
 volatile uint8_t debug_status = 0;
 
 // Forward declarations.
-static void __dbg_service();
+static void __dbg_service() __attribute__((no_instrument_function));
+static void __dbg_callstack() __attribute__((no_instrument_function));
+ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
+static inline void __dbg_reset() __attribute__((no_instrument_function));
 
 #define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
 
 
 // The debugger client sends sentences beginning with a DBG_OP_ and ending with DBG_END.
+// The sentences may usually contain one or more whitespace-delimited base-10 integer arguments.
+// Our commands do not use [0-9] so any extra args are consumed harmlessly rather than be
+// accidentally interpreted as other commands.
 #define DBG_END          '\n' // end of debugger sentence.
 
 #define DBG_OP_RAMADDR   '@' // Return data at RAM address
@@ -55,7 +62,7 @@ void __dbg_disable_watchdog() {
  * Program the watchdog timer to run for a short period, with system reset on watchdog
  * timeout. Then wait 'forever' so the watchdog timer fires, causing a system reset.
  */
-inline void __dbg_reset() {
+static inline void __dbg_reset() {
   wdt_reset();
   wdt_enable(WDTO_15MS);
   while (true) { }; // Wait for watchdog reset to fire.
@@ -102,9 +109,7 @@ static void __dbg_service() {
   Serial.println(F("Paused."));
 
   while (true) {
-    while (!Serial.available()) {
-      delay(1);
-    }
+    while (!Serial.available()) { };
 
     cmd = Serial.read();
     if (cmd == DBG_OP_NONE) {
@@ -121,6 +126,7 @@ static void __dbg_service() {
       __dbg_reset();
       break;
     case DBG_OP_CALLSTACK:
+      __dbg_callstack();
       break;
     case DBG_OP_RAMADDR:
       b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
@@ -184,10 +190,7 @@ static void __dbg_service() {
     case DBG_OP_PORT_OUT:
       break;
     case DBG_OP_TIME:
-      while (!Serial.available()) {
-        delay(1);
-      }
-
+      while (!Serial.available()) { };
       b = Serial.read();
       if (b == DBG_TIME_MILLIS) {
         Serial.println((uint32_t)millis(), DEC);
@@ -206,7 +209,7 @@ static void __dbg_service() {
       Serial.println(F("Continuing..."));
       goto exit_loop;
       break;
-    default: // Unknown command.
+    default: // Unknown command or unconsumed trailing junk from prior command.
       break;
     }
 
@@ -414,6 +417,111 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   Serial.println(lineno, DEC);
 
   __dbg_service();
+}
+
+// We need to record our own stack of calls since we can't walk the real stack frames.
+// This is performed with a circular buffer. If the call stack depth ever exceeds this
+// stack size, we continue to record deeper stack frames, dropping shallower ones (on the
+// theory that most debugging is deep in the core, and you're unlikely to care about
+// `main()` itself, or the other shallow method calls).
+static void* traceStack[__dbg_internal_stack_frame_limit];
+static void** traceStackNext = &(traceStack[0]);
+static void** traceStackTop = NULL;
+
+void __cyg_profile_func_enter(void *this_fn, void *call_site) {
+#ifdef DBG_ENABLED
+  uint8_t SREG_old = SREG;
+  cli(); // Disable interrupts during logging.
+
+  if (traceStackNext == traceStackTop) {
+    // We're about to overwrite the current top-of-stack entry because we wrapped.
+    // Forget top-of-stack by kicking 'top' down a level.
+    traceStackTop++;
+    if (traceStackTop > &(traceStack[__dbg_internal_stack_frame_limit - 1])) {
+      // Wrap 'top' back around.
+      traceStackTop = &(traceStack[0]);
+    }
+  }
+
+  *traceStackNext = this_fn;
+
+  if (NULL == traceStackTop) {
+    traceStackTop = traceStackNext; // Non-empty buffer now has a top-of-stack.
+  }
+
+  traceStackNext++;
+  if (traceStackNext > &(traceStack[__dbg_internal_stack_frame_limit - 1])) {
+    // wrap around. Next call will eat an earlier stacktrace element.
+    traceStackNext = &(traceStack[0]);
+  }
+
+  SREG = SREG_old; // Restore prior interrupt flag status.
+#endif /* DBG_ENABLED */
+}
+
+void __cyg_profile_func_exit(void *this_fn, void *call_site) {
+#ifdef DBG_ENABLED
+  uint8_t SREG_old = SREG;
+  cli();
+
+  if (traceStackNext != &(traceStack[0])) {
+    // We're forgetting the bottom-most call on the call stack.
+    // Throw away one pointer level.
+    traceStackNext--;
+  } else {
+    // The bottom-most call stack is in the first slot of the ring buffer.
+    // Point to the last slot of the ring buffer instead.
+    traceStackNext = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+  }
+
+  if (traceStackNext == traceStackTop) {
+    // We evicted the top-of-stack call. The ring buffer is now empty.
+    traceStackTop = NULL;
+  }
+
+  SREG = SREG_old;
+#endif /* DBG_ENABLED */
+}
+
+
+/**
+ * Enumerate the methods on the call stack.
+ *
+ * This does not walk the stack directly (not possible on AVR); it just prints the values
+ * logged by the "profiling" functions that have been maintaining a separate
+ * function-pointer stack in a circular buffer.
+ */
+static void __dbg_callstack() {
+  cli(); // When directly reading 2-byte values from stack, don't let interrupts interfere.
+
+  if (NULL == traceStackTop) {
+    sei();
+    return; // Empty call stack traced.
+  }
+
+
+  void **stackElem = traceStackNext - 1;
+  if (stackElem < &(traceStack[0])) {
+    stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+  }
+
+  while(stackElem != traceStackTop) {
+    uint16_t fnPtr = (uint16_t)*stackElem;
+#ifdef __AVR_ARCH__
+    fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
+#endif /* __AVR_ARCH__ */
+
+    sei();
+    Serial.println(fnPtr, HEX);
+    cli();
+
+    stackElem--;
+    if (stackElem < &(traceStack[0])) {
+      stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+    }
+  }
+
+  sei();
 }
 
 
