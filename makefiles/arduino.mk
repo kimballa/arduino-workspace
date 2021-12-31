@@ -243,11 +243,11 @@ boards_txt := "$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/
 # Optimization flags to add to CFLAGS and LDFLAGS.
 OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
 
-# Debug-mode compilation options
-# -finstrument-functions is necessary for debugger stack tracing.
-# We then add `*/build/core/*` to the exclude-file-list so we don't instrument the core itself.
+# Debug-mode compilation options.
+# If you want to use debugger stack tracing, you must add -finstrument-functions.
+# Here we add `*/build/core/*` to the exclude-file-list so we don't instrument the core itself.
 # (The core should not depend on functions in the dbglib.)
-DBGFLAGS ?= -g -finstrument-functions -finstrument-functions-exclude-file-list=build/core
+DBGFLAGS ?= -g -finstrument-functions-exclude-file-list=build/core
 
 # Compiler flags we (might) want from arduino-ide's option set.
 CFLAGS += $(OPTFLAGS)
