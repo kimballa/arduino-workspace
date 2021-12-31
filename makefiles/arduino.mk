@@ -247,7 +247,10 @@ OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-secti
 # If you want to use debugger stack tracing, you must add -finstrument-functions.
 # Here we add `*/build/core/*` to the exclude-file-list so we don't instrument the core itself.
 # (The core should not depend on functions in the dbglib.)
-DBGFLAGS ?= -g -finstrument-functions-exclude-file-list=build/core
+ifeq ($(origin DBGFLAGS), undefined)
+	DBGFLAGS = -g
+endif
+DBGFLAGS += -finstrument-functions-exclude-file-list=build/core
 
 # Compiler flags we (might) want from arduino-ide's option set.
 CFLAGS += $(OPTFLAGS)

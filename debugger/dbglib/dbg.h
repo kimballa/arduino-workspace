@@ -2,7 +2,7 @@
 //
 // dbg.h - Add debugger support to your Arduino sketch
 //
-// To enable the debugging system, use the following three steps:
+// To enable the debugging system, use the following steps:
 //
 // 1) include `dbg` in your  Makefile's `libs` list variable.
 // 2) #include <dbg.h>
@@ -11,6 +11,10 @@
 //     SETUP() {
 //       /* your setup function. */
 //     }
+//
+// 4) (Optional) To enable stack tracing, see the `Stack tracing` section below.
+//
+// ** Configuration:
 //
 // You can control this library by defining the following macros before dbg.h is #include'd:
 //
@@ -32,6 +36,13 @@
 // * DBG_WAIT_FOR_CONNECT: The sketch will wait for a Serial connection before
 //   beginning. (On supported systems - Arduino Leonardo.)
 //
+// ** Stack tracing:
+//
+// To use stack tracing on AVR, you must enable function instrumentation hooks with
+// `gcc -finstrument-functions` and recompile your sketch and any libraries with this option.
+// If using the `arduino.mk` Makefile in this system, set `DBGFLAGS = -g -finstrument-functions`
+// before including `arduino.mk`. This will expand your sketch image size by approximately 20%.
+
 
 #ifndef _DBG_H
 #define _DBG_H
