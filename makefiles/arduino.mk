@@ -250,7 +250,7 @@ OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-secti
 ifeq ($(origin DBGFLAGS), undefined)
 	DBGFLAGS = -g
 endif
-DBGFLAGS += -finstrument-functions-exclude-file-list=build/core
+DBGFLAGS += -finstrument-functions-exclude-file-list=build/core,cores/arduino,tools/$(COMPILER_TOOLS_DIR)
 
 # Compiler flags we (might) want from arduino-ide's option set.
 CFLAGS += $(OPTFLAGS)
