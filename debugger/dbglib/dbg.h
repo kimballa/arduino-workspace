@@ -26,13 +26,10 @@
 // * DBG_MAX_STACK_FRAMES: Max number of stack frames to trace on the call stack.
 //   Setting shallower than your deepest call stack will cause some backtrace info to be lost.
 //   However, this consumes `sizeof(void*) * DBG_MAX_STACK_FRAMES` bytes of memory.
-// * DBG_NO_GPIO: If defined, GPIO control is not compiled into the debugger service. Saves
-//   approximately 120 bytes of flash.
-// * DBG_NO_STACKTRACE: If defined, stack trace support is disabled. Frees up some memory
-//   if you don't plan to use the stacktrace capability.
 // * DBG_PRETTY_FUNCTIONS: Use pretty-printed function names in ASSERT() and TRACE().
 //   Without it, the filename (via __FILE__ macro) will be used instead. Function names will
 //   consume RAM whereas filenames are stored in Flash via the `F()` macro.
+// * DBG_SERIAL: The name of the serial interface to use. Default is `Serial`.
 // * DBG_SERIAL_SPEED: Speed of the serial connection. Default is 57600. The DBG_SERIAL_SPEED_FAST
 //   (57600) and DBG_SERIAL_SPEED_SLOW (9600) macros are available for your convenience.
 // * DBG_START_PAUSED: The sketch will immediately enter the debugger and require
@@ -40,16 +37,41 @@
 // * DBG_WAIT_FOR_CONNECT: The sketch will wait for a Serial connection before
 //   beginning. (On supported systems - Arduino Leonardo.)
 //
+// ** Optional component compilation:
+//
+// The following macros will suppress certain sections of the debugger from being compiled in,
+// for environments where memory is tight.
+//
+// * DBG_NO_GPIO: If defined, GPIO control is not compiled into the debugger service. Saves
+//   approximately 120 bytes of flash.
+// * DBG_NO_MEM_REPORT: If defined, memory usage reporting is disabled. Saves 6 bytes of RAM,
+//   ~70 flash.
+// * DBG_NO_STACKTRACE: If defined, stack trace support is disabled. Frees up flash as well as
+//   RAM (2 * DBG_MAX_STACK_FRAMES).
+// * DBG_NO_TIME: If defined, system time reporting is disabled.
+//
 // ** Stack tracing:
 //
 // To use stack tracing on AVR, you must enable function instrumentation hooks with
 // `gcc -finstrument-functions` and recompile your sketch and any libraries with this option.
 // If using the `arduino.mk` Makefile in this system, set `DBGFLAGS = -g -finstrument-functions`
-// before including `arduino.mk`. This will expand your sketch image size by approximately 20%.
+// before including `arduino.mk`. This will expand your sketch image size by approximately 5--15%.
+//
+// There is also some performance impact to using -finstrument-functions:
+//   __cyg_profile_func_enter: worst case ~44 instructions (~2.7us)
+//   __cyg_profile_func_exit: worst case ~25 instructions  (~1.6us)
+//
+// This may disrupt timing-sensitive code paths. You can declare a function with
+// __attribute__((no_instrument_function)) to suppress its inclusion in stacktrace logging.
 
 
 #ifndef _DBG_H
 #define _DBG_H
+
+// Set the serial interface to use.
+#ifndef DBG_SERIAL
+#define DBG_SERIAL Serial
+#endif
 
 #define DBG_SERIAL_SPEED_FAST (57600)
 #define DBG_SERIAL_SPEED_SLOW (9600)
@@ -125,6 +147,57 @@ extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const unsigned int lineno)
     __attribute__((no_instrument_function));
 
+// Forward-declare the inline methods to attach no_instrument_function attribute to each of them.
+inline bool __dbg_assert(uint8_t test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(uint8_t test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(uint8_t test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(uint8_t test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(int test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(int test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(int test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(int test, const __FlashStringHelper *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(long test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(long test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(long test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(long test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned int test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned int test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned int test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned int test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned long test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned long test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(void *test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(void *test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) __attribute__((no_instrument_function));
+
+// Define inline method-type overrides for __dbg_assert()
 inline bool __dbg_assert(uint8_t test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
   __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
@@ -232,22 +305,22 @@ inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertSt
 
 inline bool __dbg_assert(void *test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(void *test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
   return test;
 }
 
@@ -299,7 +372,7 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 #endif /* __AVR_ATmega32U4__ */
 
 #if WAIT_FOR_CONNECT_SUPPORTED == 1 && defined(DBG_WAIT_FOR_CONNECT)
-#  define __optional_wait_for_conn()  while (!Serial) { delay(1); };
+#  define __optional_wait_for_conn()  while (!DBG_SERIAL) { delay(1); };
 #else
 #  define __optional_wait_for_conn()
 #endif /* DBG_WAIT_FOR_CONNECT ? */

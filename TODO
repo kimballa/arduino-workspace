@@ -7,7 +7,6 @@ Debugger:
 ------------
 
 On-device service capabilities:
-  * annotate more debugger methods with no_instrument.
 
 Client:
   * Read ELF file and load symtab
@@ -38,6 +37,7 @@ Current stats: 9660 data, 514 RAM
     12016 / 576 (stacktrace) <<*with instrumentation; 9998/534 without>>
     11750 / 546 (gpio; more selective stacktrace instrumentation; *10114/534)
     11838 / 552 (memory usage reporting; *10192/540)
+    11838 / 552 *v1.0*
 
 
 empty program:  3896 / 150

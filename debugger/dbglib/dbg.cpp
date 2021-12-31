@@ -74,7 +74,7 @@ static inline void __dbg_reset() {
  * Activate I/O and IRQs required for debugger operation.
  */
 void __dbg_setup() {
-  Serial.begin(DBG_SERIAL_SPEED);
+  DBG_SERIAL.begin(DBG_SERIAL_SPEED);
 
   // Set up timer IRQ: 1Hz on Timer1
   // (see https://www.instructables.com/Arduino-Timer-Interrupts/)
@@ -94,7 +94,7 @@ void __dbg_setup() {
 
 /**
  * Called at breakpoint in user code (or via ISR if serial traffic arrives). Starts a service
- * that communicates over Serial about the state of the CPU until released to continue by
+ * that communicates over DBG_SERIAL about the state of the CPU until released to continue by
  * the client.
  */
 static void __dbg_service() {
@@ -106,13 +106,13 @@ static void __dbg_service() {
 
   static uint8_t cmd;
 
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(F("Paused."));
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(F("Paused."));
 
   while (true) {
-    while (!Serial.available()) { };
+    while (!DBG_SERIAL.available()) { };
 
-    cmd = Serial.read();
+    cmd = DBG_SERIAL.read();
     if (cmd == DBG_OP_NONE) {
       continue; // Empty input line.
     }
@@ -130,42 +130,42 @@ static void __dbg_service() {
       __dbg_callstack();
       break;
     case DBG_OP_RAMADDR:
-      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      b = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
-        Serial.println(*((uint32_t*)addr), HEX);
+        DBG_SERIAL.println(*((uint32_t*)addr), HEX);
       } else if (2 == b) {
-        Serial.println(*((uint16_t*)addr), HEX);
+        DBG_SERIAL.println(*((uint16_t*)addr), HEX);
       } else { // expect '1' but fallback to 1 byte in any err mode.
-        Serial.println(*((uint8_t*)addr), HEX);
+        DBG_SERIAL.println(*((uint8_t*)addr), HEX);
       }
       break;
     case DBG_OP_STACKREL:
-      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      offset = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      b = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      offset = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
-        Serial.println(*((uint32_t*)(SP + offset)), HEX);
+        DBG_SERIAL.println(*((uint32_t*)(SP + offset)), HEX);
       } else if (2 == b) {
-        Serial.println(*((uint16_t*)(SP + offset)), HEX);
+        DBG_SERIAL.println(*((uint16_t*)(SP + offset)), HEX);
       } else { // expect '1' but fallback to 1 byte in any err mode.
-        Serial.println(*((uint8_t*)(SP + offset)), HEX);
+        DBG_SERIAL.println(*((uint8_t*)(SP + offset)), HEX);
       }
       break;
     case DBG_OP_FLASHADDR:
-      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      b = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
-        Serial.println((uint32_t)pgm_read_dword(addr));
+        DBG_SERIAL.println((uint32_t)pgm_read_dword(addr));
       } else if (2 == b) {
-        Serial.println((uint16_t)pgm_read_word(addr));
+        DBG_SERIAL.println((uint16_t)pgm_read_word(addr));
       } else { // expect '1' but fallback to 1 byte in any err mode.
-        Serial.println((uint8_t)pgm_read_byte(addr));
+        DBG_SERIAL.println((uint8_t)pgm_read_byte(addr));
       }
       break;
     case DBG_OP_POKE:
-      b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      value = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      b = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      value = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
         *((uint32_t*)addr) = (uint32_t) value;
       } else if (2 == b) {
@@ -180,60 +180,70 @@ static void __dbg_service() {
       // client. The other values are dynamic and must be reported live, here. __malloc_heap_end
       // will be 0 if the dynamic allocator isn't initialized; __malloc_heap_start will point
       // to the end of the .bss section, where allocatable memory begins.
-      Serial.println(SP, HEX);
-      Serial.println((uint16_t)__malloc_heap_end, HEX);
-      Serial.println((uint16_t)__malloc_heap_start, HEX);
-      Serial.println('$');
+#ifndef DBG_NO_MEM_REPORT
+      DBG_SERIAL.println(SP, HEX);
+      DBG_SERIAL.println((uint16_t)__malloc_heap_end, HEX);
+      DBG_SERIAL.println((uint16_t)__malloc_heap_start, HEX);
+#endif /* DBG_NO_MEM_REPORT */
+      DBG_SERIAL.println('$');
       break;
     case DBG_OP_REGISTERS:
       // 32 general purpose registers exist at 0x00..0x1F (mega32u4 ds fig. 4-2)
       for(addr = 0; addr < 32; addr++) {
-        Serial.println(*((uint8_t*)addr), HEX);
+        DBG_SERIAL.println(*((uint8_t*)addr), HEX);
       }
       // Special registers: SP (note: 16 bit), SREG
-      Serial.println((uint16_t)SP, HEX);
-      Serial.println((uint8_t)SREG, HEX);
+      DBG_SERIAL.println((uint16_t)SP, HEX);
+      DBG_SERIAL.println((uint8_t)SREG, HEX);
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
-#ifndef DBG_NO_GPIO
+#ifdef DBG_NO_GPIO
     case DBG_OP_PORT_IN:
-      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      Serial.println((uint8_t)digitalRead((uint8_t)addr), HEX);
+      DBG_SERIAL.println(0, HEX);
+      break;
+#else /* DBG_NO_GPIO */
+    case DBG_OP_PORT_IN:
+      addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      DBG_SERIAL.println((uint8_t)digitalRead((uint8_t)addr), HEX);
       break;
     case DBG_OP_PORT_OUT:
       // Drive a specified value on a gpio pin. To prevent hardware damage by the
       // debugger, the pin must already be configured as OUTPUT mode.
-      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      value = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      value = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
       digitalWrite((uint8_t)addr, value != 0);
       break;
 #endif /* DBG_NO_GPIO */
     case DBG_OP_TIME:
-      while (!Serial.available()) { };
-      b = Serial.read();
+#ifdef DBG_NO_TIME
+      DBG_SERIAL.println(0, DEC);
+#else /* DBG_NO_TIME */
+      while (!DBG_SERIAL.available()) { };
+      b = DBG_SERIAL.read();
       if (b == DBG_TIME_MILLIS) {
-        Serial.println((uint32_t)millis(), DEC);
+        DBG_SERIAL.println((uint32_t)millis(), DEC);
       } else if (b == DBG_TIME_MICROS) {
-        Serial.println((uint32_t)micros(), DEC);
+        DBG_SERIAL.println((uint32_t)micros(), DEC);
       } else {
-        Serial.print(DBG_RET_PRINT);
-        Serial.println(F("Error"));
+        DBG_SERIAL.print(DBG_RET_PRINT);
+        DBG_SERIAL.println(F("Error"));
       }
+#endif /* DBG_NO_TIME */
       break;
     case DBG_OP_CONTINUE: // Continue main program execution; exit debugger.
-      if (Serial.available() && Serial.peek() == DBG_END) {
-        Serial.read(); // consume expected EOL marker before debugger exit.
+      if (DBG_SERIAL.available() && DBG_SERIAL.peek() == DBG_END) {
+        DBG_SERIAL.read(); // consume expected EOL marker before debugger exit.
       }
-      Serial.print(DBG_RET_PRINT);
-      Serial.println(F("Continuing..."));
+      DBG_SERIAL.print(DBG_RET_PRINT);
+      DBG_SERIAL.println(F("Continuing..."));
       goto exit_loop;
       break;
     default: // Unknown command or unconsumed trailing junk from prior command.
       break;
     }
 
-    if (Serial.available() && Serial.peek() == DBG_END) {
-      Serial.read(); // consume expected EOL marker before reading next command.
+    if (DBG_SERIAL.available() && DBG_SERIAL.peek() == DBG_END) {
+      DBG_SERIAL.read(); // consume expected EOL marker before reading next command.
     }
   }
 exit_loop:
@@ -252,15 +262,15 @@ bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
     return true; // Assert succeeded.
   }
 
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(FPSTR(_assert_fail_msg));
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(assertStr);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(FPSTR(_assert_fail_msg));
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(assertStr);
 
   return false;
 }
@@ -272,15 +282,15 @@ bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *f
     return true; // Assert succeeded.
   }
 
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(FPSTR(_assert_fail_msg));
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(assertStr);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(FPSTR(_assert_fail_msg));
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(assertStr);
 
   return false;
 }
@@ -292,15 +302,15 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *f
     return true; // Assert succeeded.
   }
 
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(FPSTR(_assert_fail_msg));
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(assertStr);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(FPSTR(_assert_fail_msg));
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(assertStr);
 
   return false;
 }
@@ -312,128 +322,128 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const __Flash
     return true; // Assert succeeded.
   }
 
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(FPSTR(_assert_fail_msg));
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(assertStr);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(FPSTR(_assert_fail_msg));
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(assertStr);
 
   return false;
 }
 
 
 void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t lineno) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(tracemsg);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(tracemsg);
 }
 
 void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(tracemsg);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(tracemsg);
 }
 
 void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, const uint16_t lineno) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(tracemsg);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(tracemsg);
 }
 
 void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
 
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(funcOrFile);
-  Serial.print('(');
-  Serial.print(lineno, DEC);
-  Serial.print(')');
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(tracemsg);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print('(');
+  DBG_SERIAL.print(lineno, DEC);
+  DBG_SERIAL.print(')');
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(tracemsg);
 }
 
 void __dbg_print(const char *message) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(message);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(message);
 }
 
 void __dbg_print(const __FlashStringHelper *message) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(message);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(message);
 }
 
 void __dbg_print(bool msg) {
-  Serial.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(DBG_RET_PRINT);
   if (msg) {
-    Serial.println(F("true"));
+    DBG_SERIAL.println(F("true"));
   } else {
-    Serial.println(F("false"));
+    DBG_SERIAL.println(F("false"));
   }
 }
 
 void __dbg_print(uint8_t msg) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(msg, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(msg, DEC);
 }
 
 void __dbg_print(int msg) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(msg, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(msg, DEC);
 }
 
 void __dbg_print(long msg) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(msg, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(msg, DEC);
 }
 
 void __dbg_print(unsigned int msg) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(msg, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(msg, DEC);
 }
 
 void __dbg_print(unsigned long msg) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.println(msg, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.println(msg, DEC);
 }
 
 void __dbg_break(const char *funcOrFile, const uint16_t lineno) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(FPSTR(_breakpoint_msg));
-  Serial.print(funcOrFile);
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(lineno, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(FPSTR(_breakpoint_msg));
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(lineno, DEC);
 
   __dbg_service();
 }
 
 void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  Serial.print(DBG_RET_PRINT);
-  Serial.print(FPSTR(_breakpoint_msg));
-  Serial.print(funcOrFile);
-  Serial.print(':');
-  Serial.print(' ');
-  Serial.println(lineno, DEC);
+  DBG_SERIAL.print(DBG_RET_PRINT);
+  DBG_SERIAL.print(FPSTR(_breakpoint_msg));
+  DBG_SERIAL.print(funcOrFile);
+  DBG_SERIAL.print(':');
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(lineno, DEC);
 
   __dbg_service();
 }
@@ -525,7 +535,7 @@ static inline void __dbg_callstack_epilogue() __attribute__((no_instrument_funct
 /** Clean-up code to call on all exit paths from __dbg_callstack(). */
 static inline void __dbg_callstack_epilogue() {
   sei();
-  Serial.println('$');
+  DBG_SERIAL.println('$');
 }
 
 /**
@@ -555,7 +565,7 @@ static void __dbg_callstack() {
 #endif /* __AVR_ARCH__ */
 
     sei();
-    Serial.println(fnPtr, HEX);
+    DBG_SERIAL.println(fnPtr, HEX);
     cli();
 
     if (stackElem == traceStackTop) {
@@ -575,18 +585,18 @@ static void __dbg_callstack() {
 
 static void __dbg_callstack() {
   // Stack tracing disabled; respond with empty stack.
-  Serial.println('$');
+  DBG_SERIAL.println('$');
 }
 
 #endif /* DBG_NO_STACKTRACE */
 
 
 /**
- * 1Hz timer fires for us to check whether data is available on Serial port.
+ * 1Hz timer fires for us to check whether data is available on DBG_SERIAL port.
  * If we have a request from the debugger client, we break into the debugger service.
  */
 ISR(TIMER1_COMPA_vect) {
-  if (!(debug_status & DBG_STATUS_IN_BREAK) && Serial.available()) {
+  if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
     // Enter debug service if serial traffic available, and we are not already within the dbg
     // service.
     __dbg_service();
