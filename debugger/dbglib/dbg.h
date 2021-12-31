@@ -96,13 +96,14 @@ extern void __dbg_break(const char *funcOrFile, const uint16_t lineno); /* Enter
 extern void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno);
 
 extern bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
-    const unsigned int lineno);
+    const unsigned int lineno) __attribute__((no_instrument_function));
 extern bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
-    const unsigned int lineno);
+    const unsigned int lineno) __attribute__((no_instrument_function));
 extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
-    const unsigned int lineno);
+    const unsigned int lineno) __attribute__((no_instrument_function));
 extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr,
-    const __FlashStringHelper *funcOrFile, const unsigned int lineno);
+    const __FlashStringHelper *funcOrFile, const unsigned int lineno)
+    __attribute__((no_instrument_function));
 
 inline bool __dbg_assert(uint8_t test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
@@ -230,20 +231,24 @@ inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr,
   return test;
 }
 
-extern void __dbg_print(const char *message);
-extern void __dbg_print(const __FlashStringHelper *msg);
-extern void __dbg_print(bool msg);
-extern void __dbg_print(uint8_t msg);
-extern void __dbg_print(int msg);
-extern void __dbg_print(long msg);
-extern void __dbg_print(unsigned int msg);
-extern void __dbg_print(unsigned long msg);
+extern void __dbg_print(const char *message) __attribute__((no_instrument_function));
+extern void __dbg_print(const __FlashStringHelper *msg) __attribute__((no_instrument_function));
+extern void __dbg_print(bool msg) __attribute__((no_instrument_function));
+extern void __dbg_print(uint8_t msg) __attribute__((no_instrument_function));
+extern void __dbg_print(int msg) __attribute__((no_instrument_function));
+extern void __dbg_print(long msg) __attribute__((no_instrument_function));
+extern void __dbg_print(unsigned int msg) __attribute__((no_instrument_function));
+extern void __dbg_print(unsigned long msg) __attribute__((no_instrument_function));
 
-extern void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t lineno);
-extern void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, const uint16_t lineno);
-extern void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, const uint16_t lineno);
+extern void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t lineno)
+    __attribute__((no_instrument_function));
+extern void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, const uint16_t lineno)
+    __attribute__((no_instrument_function));
+extern void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, const uint16_t lineno)
+    __attribute__((no_instrument_function));
 extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashStringHelper *funcOrFile,
-    const uint16_t lineno);
+    const uint16_t lineno)
+    __attribute__((no_instrument_function));
 
 
 void __dbg_disable_watchdog() __attribute__((naked, used, section(".init3"), no_instrument_function));

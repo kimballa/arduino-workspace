@@ -44,7 +44,8 @@ static inline void __dbg_reset() __attribute__((no_instrument_function));
 #define DBG_RET_PRINT    ('>') // prefix for logged messages that debugger client
                                // should output verbatim to console.
 
-
+// Character appended to 't' (OP_TIME) to specify units to report.
+// e.g. Use the command "tm\n" to get the current millis().
 #define DBG_TIME_MILLIS 'm' // get time in ms
 #define DBG_TIME_MICROS 'u' // get time in us
 
@@ -419,11 +420,23 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   __dbg_service();
 }
 
-// We need to record our own stack of calls since we can't walk the real stack frames.
-// This is performed with a circular buffer. If the call stack depth ever exceeds this
-// stack size, we continue to record deeper stack frames, dropping shallower ones (on the
-// theory that most debugging is deep in the core, and you're unlikely to care about
-// `main()` itself, or the other shallow method calls).
+//   *** Call stack tracing ***
+//
+// We need to record our own stack of calls since we can't walk the real stack frames on
+// AVR.  This is stored in a circular buffer, updated using profiling hooks on method
+// entry & exit.  If the call stack depth ever exceeds the size of traceStack, we continue
+// to record deeper stack frames, dropping shallower ones (on the theory that most
+// debugging is deep in the core, and you're unlikely to care about `main()` itself, or
+// the other shallow method calls).
+//
+// This can be controlled with DBG_MAX_STACK_FRAMES, although we put a hard cap @ 64 for
+// sanity.
+//
+// This does *not* memoize any methods defined with the `no_instrument_function`
+// attribute. We also configure (via gcc args) the Arduino core to be exempt from tracing.
+// And since libc wasn't compiled with tracing hooks enabled, it is also exempt; thus this
+// tracks method calls in user code & added libraries only.
+
 static void* traceStack[__dbg_internal_stack_frame_limit];
 static void** traceStackNext = &(traceStack[0]);
 static void** traceStackTop = NULL;
@@ -505,7 +518,7 @@ static void __dbg_callstack() {
     stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
   }
 
-  while(stackElem != traceStackTop) {
+  while(true) {
     uint16_t fnPtr = (uint16_t)*stackElem;
 #ifdef __AVR_ARCH__
     fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
@@ -515,6 +528,10 @@ static void __dbg_callstack() {
     Serial.println(fnPtr, HEX);
     cli();
 
+    if (stackElem == traceStackTop) {
+      break;
+    }
+
     stackElem--;
     if (stackElem < &(traceStack[0])) {
       stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
@@ -522,6 +539,7 @@ static void __dbg_callstack() {
   }
 
   sei();
+  Serial.println('$');
 }
 
 
