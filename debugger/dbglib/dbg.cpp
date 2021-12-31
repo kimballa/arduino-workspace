@@ -439,6 +439,8 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
 // And since libc wasn't compiled with tracing hooks enabled, it is also exempt; thus this
 // tracks method calls in user code & added libraries only.
 
+#ifndef DBG_NO_STACKTRACE // Stack-tracing enabled.
+
 static volatile void* traceStack[__dbg_internal_stack_frame_limit];
 static volatile void** traceStackNext = &(traceStack[0]);
 static volatile void** traceStackTop = NULL;
@@ -542,6 +544,15 @@ static void __dbg_callstack() {
   sei();
   Serial.println('$');
 }
+
+#else /* DBG_NO_STACKTRACE */
+
+static void __dbg_callstack() {
+  // Stack tracing disabled; respond with empty stack.
+  Serial.println('$');
+}
+
+#endif /* DBG_NO_STACKTRACE */
 
 
 /**

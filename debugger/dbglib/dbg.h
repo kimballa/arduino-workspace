@@ -26,6 +26,8 @@
 // * DBG_MAX_STACK_FRAMES: Max number of stack frames to trace on the call stack.
 //   Setting shallower than your deepest call stack will cause some backtrace info to be lost.
 //   However, this consumes `sizeof(void*) * DBG_MAX_STACK_FRAMES` bytes of memory.
+// * DBG_NO_STACKTRACE: If defined, stack trace support is disabled. Frees up some memory
+//   if you don't plan to use the stacktrace capability.
 // * DBG_PRETTY_FUNCTIONS: Use pretty-printed function names in ASSERT() and TRACE().
 //   Without it, the filename (via __FILE__ macro) will be used instead. Function names will
 //   consume RAM whereas filenames are stored in Flash via the `F()` macro.
@@ -55,22 +57,10 @@
 #endif
 
 // The call stack for backtracing will be tracked in a buffer of function
-// pointers, with this many elements.
+// pointers, with this many elements. You can set this to any value between
+// 1 and 64.
 #ifndef DBG_MAX_STACK_FRAMES
-#define DBG_MAX_STACK_FRAMES 16
-#endif
-
-// Under no circumstances enumerate more than this many stack frames.
-#define __DBG_STACK_FRAME_LIMIT 64
-
-#if (__DBG_STACK_FRAME_LIMIT != 64) // No, really, don't be clever.
-#  pragma GCC warning "DBG stack frame limit must be 64. Resetting."
-#  undef __DBG_STACK_FRAME_LIMIT
-#  define __DBG_STACK_FRAME_LIMIT 64
-#endif /* limit != 64 */
-
-#if (DBG_MAX_STACK_FRAMES > __DBG_STACK_FRAME_LIMIT)
-#  pragma GCC warning "Max call stack unwind count set higher than limit; unwind count will be capped at 64."
+#define DBG_MAX_STACK_FRAMES 8
 #endif
 
 // Determine whether to enable the debugger, based on preprocessor flags.
@@ -97,6 +87,23 @@
 
 #else /* DBG_ENABLED */
 // Debugger support enabled.
+
+// Under no circumstances enumerate more than this many stack frames.
+#define __DBG_STACK_FRAME_LIMIT 64
+
+#ifndef DBG_NO_STACKTRACE
+#  if (__DBG_STACK_FRAME_LIMIT != 64) // No, really, don't be clever.
+#    pragma GCC warning "DBG stack frame limit must be 64. Resetting."
+#    undef __DBG_STACK_FRAME_LIMIT
+#    define __DBG_STACK_FRAME_LIMIT 64
+#  endif /* limit != 64 */
+
+#  if (DBG_MAX_STACK_FRAMES > __DBG_STACK_FRAME_LIMIT)
+#    pragma GCC warning "Max call stack unwind count set higher than limit; unwind count will be capped at 64."
+#  elif (DBG_MAX_STACK_FRAMES < 1)
+#    pragma GCC error "Max call stack unwind count (DBG_MAX_STACK_FRAMES) must be greater than 0."
+#  endif
+#endif /* DBG_NO_STACKTRACE */
 
 #include<Arduino.h>  // For typedefs e.g. uint8_t
 #include<avr/wdt.h>  // For watchdog timer control
