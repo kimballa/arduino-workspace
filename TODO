@@ -8,7 +8,6 @@ Debugger:
 
 On-device service capabilities:
   * MEMSTATS (can this be done w/o incl'ing malloc?)
-  * gpio in/out
 
 Client:
   * Read ELF file and load symtab
@@ -17,6 +16,11 @@ Client:
   * Read global var by sym
   * Write global var by sym
   * Deconvolve stacktrace addr's to fn names (and display args?)
+    ... use addr2line(1) ?
+    See https://balau82.wordpress.com/2010/10/06/trace-and-profile-function-calls-with-gcc/
+    ... we should probably be recording the caller addr not (just) the callee method.
+    (only method you don't get that way is the leaf; but maybe we can pull the RETI target
+    from the ISR or __dbg_break() with some clever asm that knows the specific fn well.)
   * 'help' text
   * Interact w/ all device service capabilities
 
@@ -24,6 +28,7 @@ SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 * Breakpoint unit support
 * Watchpoint unit support
 * Single-step support 
+* ... cleaner backtrace via ARM-standard frame pointer record walking.
 
 
 Current stats: 9660 data, 514 RAM
@@ -31,3 +36,10 @@ Current stats: 9660 data, 514 RAM
     9826 / 514 (length byte and STACKREL)
     9880 / 514 (poke)
     12016 / 576 (stacktrace) <<*with instrumentation; 9998/534 without>>
+    11750 / 546 (gpio; more selective stacktrace instrumentation)
+
+
+empty program:  3896 / 150
+with dbg:       5564 / 173
+instrumented:   5900 / 173
+

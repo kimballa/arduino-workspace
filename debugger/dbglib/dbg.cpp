@@ -120,7 +120,7 @@ static void __dbg_service() {
     // Interpret client request sentence.
     unsigned int addr = 0;
     unsigned long value = 0;
-    int rel = 0;
+    int offset = 0;
     uint8_t b = 0;
     switch(cmd) {
     case DBG_OP_RESET:
@@ -142,13 +142,13 @@ static void __dbg_service() {
       break;
     case DBG_OP_STACKREL:
       b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      rel = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      offset = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
-        Serial.println(*((uint32_t*)(SP + rel)), DEC);
+        Serial.println(*((uint32_t*)(SP + offset)), DEC);
       } else if (2 == b) {
-        Serial.println(*((uint16_t*)(SP + rel)), DEC);
+        Serial.println(*((uint16_t*)(SP + offset)), DEC);
       } else { // expect '1' but fallback to 1 byte in any err mode.
-        Serial.println(*((uint8_t*)(SP + rel)), DEC);
+        Serial.println(*((uint8_t*)(SP + offset)), DEC);
       }
       break;
     case DBG_OP_FLASHADDR:
@@ -186,10 +186,19 @@ static void __dbg_service() {
       Serial.println((uint8_t)SREG, DEC);
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
+#ifndef DBG_NO_GPIO
     case DBG_OP_PORT_IN:
+      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      Serial.println((uint8_t)digitalRead((uint8_t)addr), DEC);
       break;
     case DBG_OP_PORT_OUT:
+      // Drive a specified value on a gpio pin. To prevent hardware damage by the
+      // debugger, the pin must already be configured as OUTPUT mode.
+      addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      value = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      digitalWrite((uint8_t)addr, value != 0);
       break;
+#endif /* DBG_NO_GPIO */
     case DBG_OP_TIME:
       while (!Serial.available()) { };
       b = Serial.read();
@@ -441,12 +450,14 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
 
 #ifndef DBG_NO_STACKTRACE // Stack-tracing enabled.
 
+#ifdef DBG_ENABLED
 static volatile void* traceStack[__dbg_internal_stack_frame_limit];
 static volatile void** traceStackNext = &(traceStack[0]);
 static volatile void** traceStackTop = NULL;
+#endif
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
-#ifdef DBG_ENABLED
+#ifdef DBG_ENABLED // If we're compiling dbg in degenerate mode, avoid fn-call overhead.
   uint8_t SREG_old = SREG;
   cli(); // Disable interrupts during logging.
 

@@ -26,6 +26,8 @@
 // * DBG_MAX_STACK_FRAMES: Max number of stack frames to trace on the call stack.
 //   Setting shallower than your deepest call stack will cause some backtrace info to be lost.
 //   However, this consumes `sizeof(void*) * DBG_MAX_STACK_FRAMES` bytes of memory.
+// * DBG_NO_GPIO: If defined, GPIO control is not compiled into the debugger service. Saves
+//   approximately 120 bytes of flash.
 // * DBG_NO_STACKTRACE: If defined, stack trace support is disabled. Frees up some memory
 //   if you don't plan to use the stacktrace capability.
 // * DBG_PRETTY_FUNCTIONS: Use pretty-printed function names in ASSERT() and TRACE().
@@ -269,7 +271,7 @@ extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashString
     __attribute__((no_instrument_function));
 
 
-void __dbg_disable_watchdog() __attribute__((naked, used, section(".init3"), no_instrument_function));
+void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function, section(".init3")));
 
 #ifdef DBG_PRETTY_FUNCTIONS
 #  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
