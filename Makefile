@@ -1,7 +1,7 @@
 # (c) Copyright 2021 Aaron Kimball
 
 LIBS = i2cparallel LCD-NHD0440 debugger/dbglib
-APPS = poetrybot empty
+APPS = empty poetrybot
 
 TAGS_FILE = tags
 

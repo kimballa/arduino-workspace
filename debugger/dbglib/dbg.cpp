@@ -133,22 +133,22 @@ static void __dbg_service() {
       b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
-        Serial.println(*((uint32_t*)addr), DEC);
+        Serial.println(*((uint32_t*)addr), HEX);
       } else if (2 == b) {
-        Serial.println(*((uint16_t*)addr), DEC);
+        Serial.println(*((uint16_t*)addr), HEX);
       } else { // expect '1' but fallback to 1 byte in any err mode.
-        Serial.println(*((uint8_t*)addr), DEC);
+        Serial.println(*((uint8_t*)addr), HEX);
       }
       break;
     case DBG_OP_STACKREL:
       b = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       offset = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
       if (4 == b) {
-        Serial.println(*((uint32_t*)(SP + offset)), DEC);
+        Serial.println(*((uint32_t*)(SP + offset)), HEX);
       } else if (2 == b) {
-        Serial.println(*((uint16_t*)(SP + offset)), DEC);
+        Serial.println(*((uint16_t*)(SP + offset)), HEX);
       } else { // expect '1' but fallback to 1 byte in any err mode.
-        Serial.println(*((uint8_t*)(SP + offset)), DEC);
+        Serial.println(*((uint8_t*)(SP + offset)), HEX);
       }
       break;
     case DBG_OP_FLASHADDR:
@@ -175,21 +175,23 @@ static void __dbg_service() {
       }
       break;
     case DBG_OP_MEMSTATS:
+      // Print back stats on memory usage
+      Serial.println(RAMEND, HEX);
       break;
     case DBG_OP_REGISTERS:
       // 32 general purpose registers exist at 0x00..0x1F (mega32u4 ds fig. 4-2)
       for(addr = 0; addr < 32; addr++) {
-        Serial.println(*((uint8_t*)addr), DEC);
+        Serial.println(*((uint8_t*)addr), HEX);
       }
       // Special registers: SP (note: 16 bit), SREG
-      Serial.println((uint16_t)SP, DEC);
-      Serial.println((uint8_t)SREG, DEC);
+      Serial.println((uint16_t)SP, HEX);
+      Serial.println((uint8_t)SREG, HEX);
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
 #ifndef DBG_NO_GPIO
     case DBG_OP_PORT_IN:
       addr = Serial.parseInt(LookaheadMode::SKIP_WHITESPACE);
-      Serial.println((uint8_t)digitalRead((uint8_t)addr), DEC);
+      Serial.println((uint8_t)digitalRead((uint8_t)addr), HEX);
       break;
     case DBG_OP_PORT_OUT:
       // Drive a specified value on a gpio pin. To prevent hardware damage by the
