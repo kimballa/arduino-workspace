@@ -414,6 +414,7 @@ user_ram := $(strip $(shell grep -e "^$(VARIANT).upload.maximum_data_size" $(boa
 
 
 size_report_file = $(build_dir)/size_stats.txt
+size_summary_file = $(build_dir)/size_summary.txt
 
 # A short bash script that uses the size(1) command to calculate the memory consumption of the
 # compiled image:
@@ -433,8 +434,12 @@ endef
 
 $(size_report_file): $(TARGET) $(eeprom_file) $(flash_file)
 	$(SIZE) -A $(TARGET) > $(size_report_file)
+
+$(size_summary_file): $(size_report_file)
+	@bash -c '$(SIZE_SCRIPT)' > $(size_summary_file)
 	@echo ""
-	@bash -c '$(SIZE_SCRIPT)'
+	@cat $(size_summary_file)
+
 
 ifneq ($(origin prog_name), undefined)
 # Build the main ELF executable containing user code, Arduino core, any required libraries.
@@ -462,7 +467,7 @@ flash: $(flash_file)
 ifneq ($(origin prog_name), undefined)
 
 # Main compile/link target for programs. Convert from the ELF executable into files to flash to EEPROM.
-image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_report_file)
+image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_summary_file)
 
 FLASH_ARGS = -C$(AVRDUDE_CONF) -v -p$(build_mcu) -c$(AVR_PROGRAMMER) -P$(UPLOAD_PORT) -D -Uflash:w:$(flash_file):i
 upload: image

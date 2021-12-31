@@ -37,9 +37,14 @@ Current stats: 9660 data, 514 RAM
     9880 / 514 (poke)
     12016 / 576 (stacktrace) <<*with instrumentation; 9998/534 without>>
     11750 / 546 (gpio; more selective stacktrace instrumentation; *10114/534)
+    11838 / 552 (memory usage reporting; *10192/540)
 
 
 empty program:  3896 / 150
 with dbg-gpio:  5564 / 173 (+1668)
 instrumented:   5900 / 173
+dbg-memusage:   5952 / 179 (*5618/179)
+
+Minimum debugger o.h. is 1722 flash, 29 sram (without instrumentation). 
+Minimum instrumentation is +334 bytes (~6%), including tiny user program. 
 
