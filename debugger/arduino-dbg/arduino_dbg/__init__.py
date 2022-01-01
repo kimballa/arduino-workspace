@@ -2,7 +2,33 @@
 
 import argparse
 from elftools.elf.elffile import ELFFile
+import locale
 import serial
+import subprocess
+
+
+def _demangle(name):
+    """
+        Use c++filt in binutils to demangle a C++ name into a human-readable one.
+    """
+    args = ['c++filt', '-t', name]
+    pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
+        encoding=locale.getpreferredencoding())
+    stdout, _ = pipe.communicate()
+    demangled = stdout.split("\n")
+    return demangled[0]
+
+
+def _pc_to_source_line(elf_file, addr):
+    """
+        Given a program counter ($PC) value, establish what line of source it comes from.
+    """
+    args = ["addr2line", "-s", "-e", elf_file, ("%x" % addr)]
+    pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
+        encoding=locale.getpreferredencoding())
+    stdout, _ = pipe.communicate()
+    source_lines = stdout.split("\n")
+    return source_lines[0]
 
 
 class Debugger(object):
@@ -10,10 +36,16 @@ class Debugger(object):
         Main debugger state object.
     """
 
-    def __init__(self, elf_name, port, baud=9600, timeout=1):
+    def __init__(self, elf_name, port, baud=57600, timeout=1):
         self._conn = None
         self.reopen(port, baud, timeout)
         self.elf_name = elf_name
+        self._sections = {}
+        self._addr_to_symbol = {}
+        self._symbols = {}
+
+        self._read_elf()
+
 
     def close(self):
         """
@@ -21,6 +53,7 @@ class Debugger(object):
         """
         self._conn.close()
         self._conn = None
+
 
     def reopen(self, port, baud, timeout):
         """
@@ -32,9 +65,34 @@ class Debugger(object):
         if port is not None and port != '':
             self._conn = serial.Serial(port, baud, timeout=timeout)
 
-    def read_elf(self):
+
+    def sym_for_addr(self, addr):
         """
-            Read the target ELF file and print some stuff.
+            Return the name of the symbol keyed to a particular address.
+        """
+        return self._addr_to_symbol[addr]
+
+
+    def function_sym_by_pc(self, pc):
+        """
+            Given a $PC pointing somewhere within a function body, return the name of
+            the symbol for the function.
+        """
+        for (addr, name) in self._addr_to_symbol.items():
+            if addr > pc:
+                continue # Definitely not this one.
+
+            sym = self._symbols[name]
+            if sym['st_info']['type'] != "STT_FUNC":
+                continue # Not a function
+
+            if addr + sym['st_size'] >= pc:
+                return name # Found it.
+
+
+    def _read_elf(self):
+        """
+            Read the target ELF file to load debugging information.
         """
         if self.elf_name is None:
             print("No ELF filename given")
@@ -42,31 +100,39 @@ class Debugger(object):
 
         with open(self.elf_name, 'rb') as f:
             elf = ELFFile(f)
-            if not elf.has_dwarf_info():
-                print("Warning: No debug info (DWARF) in ELF file")
 
             for sect in elf.iter_sections():
-                print("Section: %s at offset 0x%.8x with size %d" % (sect.name,
-                    sect.header['sh_offset'], sect.header['sh_size']))
+                my_section = {}
+                my_section["name"] = sect.name
+                my_section["size"] = sect.header['sh_size']
+                my_section["offset"] = sect.header['sh_offset']
+                self._sections[sect.name] = my_section
 
-            dwarfinfo = elf.get_dwarf_info()
-            if dwarfinfo is not None:
-                pub_names = dwarfinfo.get_pubnames()
-                if pub_names is None:
-                    print("Error: No .debug_pubnames section")
-                else:
-                    for name, entry in pub_names.items():
-                        print("%s" % name)
+                #print("Section: %s at offset 0x%.8x with size %d" % (sect.name,
+                #    sect.header['sh_offset'], sect.header['sh_size']))
 
             syms = elf.get_section_by_name(".symtab")
             if syms is not None:
-                print("*** Symbols (.symtab)")
                 for sym in syms.iter_symbols():
-                    print("%s: %s" % (sym.name, sym.entry))
+                    sym_type = sym.entry['st_info']['type']
+                    if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
+                        # This has a location worth memorizing
+                        self._addr_to_symbol[sym.entry['st_value']] = sym.name
+                        continue
+                    self._symbols[sym.name] = sym
+
+
+                #print("*** Symbols (.symtab)")
+                #for sym in syms.iter_symbols():
+                #    print("%s: %s" % (sym.name, sym.entry))
+
+        # Sort the symbols by address
+        self._addr_to_symbol = dict(sorted(self._addr_to_symbol.items()))
+        for (addr, name) in self._addr_to_symbol.items():
+            print("%08x => %s (%s)" % (addr, name, _demangle(name)))
 
 
 
-    
 def _parseArgs():
     parser = argparse.ArgumentParser(description="Serial debugger client for Arduino apps")
     parser.add_argument("-p", "--port", required=True)
@@ -77,4 +143,3 @@ def _parseArgs():
 def main(argv):
     args = _parseArgs()
     d = Debugger(args.file, args.port)
-    d.read_elf()
