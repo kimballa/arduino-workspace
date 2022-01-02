@@ -10,6 +10,26 @@ _dbg_conf_keys = [
     "arduino.arch",
 ]
 
+def _load_conf_module(module_name, resource_name):
+    """
+        Open a resource (file) within a module with a '.conf' extension and treat it like python
+        code; execute it in a sheltered environment and return the processed globals as a k-v map.
+
+        We use this for Arduino Platform and cpu architecture (Arch) definitions.
+    """
+    if resource_name is None or len(resource_name) == 0:
+        return None # Nothing to load.
+
+    conf_resource_name = resource_name.strip() + ".conf"
+    conf_text = resources.read_text(module_name, conf_resource_name)
+    conf = {} # Create an empty environment in which to run the config code.
+    exec(conf_text, conf, conf)
+
+    print("Loading config profile: %s; read %d keys" % (conf_resource_name, len(conf)))
+    # conf is now populated with the globals from executing the conf file.
+    return conf
+
+
 class Debugger(object):
     """
         Main debugger state object.
@@ -39,16 +59,11 @@ class Debugger(object):
             If the arduino.platform key is set, use it to load the platform-specific config.
         """
         platform_name = self.get_conf("arduino.platform")
-        if platform_name is None or len(platform_name) == 0:
-            return # Nothing to load.
+        new_conf = _load_conf_module("arduino_dbg.platforms", platform_name)
+        if new_conf is None:
+            return
 
-        conf_resource_name = platform_name.strip() + ".conf"
-        conf_text = resources.read_text("arduino_dbg.platforms", conf_resource_name)
-        conf = {}
-        exec(conf_text, conf, conf)
-        self._platform = conf
-
-        print("Loading platform profile: %s; read %d keys" % (conf_resource_name, len(self._platform)))
+        self._platform = new_conf
         self.set_conf("arduino.arch", self._platform["arch"]) # Triggers refresh of arch config.
 
 
@@ -57,15 +72,11 @@ class Debugger(object):
             If the arduino.arch key is set, use it to load the arch-specific config.
         """
         arch_name = self.get_conf("arduino.arch")
-        if arch_name is None or len(arch_name) == 0:
+        new_conf = _load_conf_module("arduino_dbg.arch", arch_name)
+        if new_conf is None:
             return # Nothing to load.
 
-        conf_resource_name = arch_name.strip() + ".conf"
-        conf_text = resources.read_text("arduino_dbg.arch", conf_resource_name)
-        conf = {}
-        exec(conf_text, conf, conf)
-        self._arch = conf
-        print("Loading arch profile: %s; read %d keys" % (conf_resource_name, len(self._arch)))
+        self._arch = new_conf
 
 
     def set_conf(self, key, val):
@@ -89,8 +100,39 @@ class Debugger(object):
         return self._config[key]
 
     def get_full_config(self):
+        """
+            Return all user-configurable configuration key/val pairs.
+            Does not include architecture or platform config.
+        """
         return self._config.items()
 
+    def get_arch_conf(self, key):
+        """
+            Return an architecture-specific property setting. These are read-only 
+            from outside the Debugger object. If the architecture is not set, or
+            the architecture lacks the requested property definition, this returns None. 
+        """
+        try:
+            return self._arch[key]
+        except KeyError:
+            return None
+
+    def get_platform_conf(self, key):
+        """
+            Return an Arduino platform-specific property setting. These are read-only 
+            from outside the Debugger object. If the platform name is not set, or
+            the platform lacks the requested property definition, this returns None. 
+        """
+        try:
+            return self._platform[key]
+        except KeyError:
+            return None
+
+    def get_full_arch_config(self):
+        return self._arch.items()
+
+    def get_full_platform_config(self):
+        return self._platform.items()
 
 
     def close(self):

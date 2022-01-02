@@ -101,14 +101,24 @@ class Repl(object):
 
         registers = self._debugger.get_registers()
 
+        has_sph = self._debugger.get_arch_conf("instruction_set") == "avr" and \
+            self._debugger.get_arch_conf("has_sph")
+
         cur_width = 0
         for (reg, regval) in registers.items():
-            # TODO if reg=SP and we have SPH in the arch conf, use 04x for regval.
-            print(f"{reg.rjust(4)}:{regval:02x}  ", end='')
+            if reg == "SP" and has_sph:
+                # if reg=SP and we have SPH in the arch conf, it's a 16-bit reg; use 04x for regval.
+                print(f"{reg.rjust(4)}:{regval:04x} ", end='')
+            else:
+                # normal 8-bit register
+                print(f"{reg.rjust(4)}:{regval:02x}  ", end='')
+
             cur_width += 9
             if cur_width >= MAX_WIDTH:
                 cur_width = 0
                 print("")
+
+        print("")
 
 
     def _reset(self, argv):
