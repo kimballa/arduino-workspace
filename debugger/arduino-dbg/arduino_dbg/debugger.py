@@ -2,12 +2,17 @@
 
 from elftools.elf.elffile import ELFFile
 import importlib.resources as resources
+import os
 import serial
 import arduino_dbg.binutils as binutils
+
+_LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
+_DBG_CONF_FMT_VERSION = 1
 
 _dbg_conf_keys = [
     "arduino.platform",
     "arduino.arch",
+    "dbg.conf.formatversion",
 ]
 
 def _load_conf_module(module_name, resource_name):
@@ -23,7 +28,13 @@ def _load_conf_module(module_name, resource_name):
     conf_resource_name = resource_name.strip() + ".conf"
     conf_text = resources.read_text(module_name, conf_resource_name)
     conf = {} # Create an empty environment in which to run the config code.
-    exec(conf_text, conf, conf)
+    try:
+        exec(conf_text, conf, conf)
+        del conf["__builtins__"] # Pull python internals from gloabls map we're using as config.
+    except:
+        # Error parsing/executing conf; return empty result.
+        print("Error loading config profile: %s" % conf_resource_name)
+        return None
 
     print("Loading config profile: %s; read %d keys" % (conf_resource_name, len(conf)))
     # conf is now populated with the globals from executing the conf file.
@@ -43,15 +54,97 @@ class Debugger(object):
         self._addr_to_symbol = {}
         self._symbols = {}
 
-        # TODO - load latest config from a dotfile in user's $HOME.
-        self._config = {} # General user-accessible config.
+        # General user-accessible config.
+        # Load latest config from a dotfile in user's $HOME.
+        self._init_config_from_file()
+
+        self._read_elf()
+
+    def _init_config_from_file(self):
+        """
+            If the user has a config file (see _LOCAL_CONF_FILENAME) then initialize self._config
+            from that.
+        """
+        new_conf = {}
         for k in _dbg_conf_keys:
-            self._config[k] = None
+            new_conf[k] = None
+
+        # If we open a file it can overwrite this but we start with this non-None default val.
+        new_conf["dbg.conf.formatversion"] = _DBG_CONF_FMT_VERSION
+
+        # The loaded config will be a map named 'config' within an otherwise-empty environment
+        init_env = {}
+        init_env['config'] = {}
+
+        if os.path.exists(_LOCAL_CONF_FILENAME):
+            with open(_LOCAL_CONF_FILENAME, "r") as f:
+                conf_text = f.read()
+                try:
+                    exec(conf_text, init_env, init_env)
+                except:
+                    # error parsing or executing the config file. 
+                    print("Warning: error parsing config file '%s'" % _LOCAL_CONF_FILENAME)
+                    init_env['config'] = {}
+
+        loaded_conf = init_env['config']
+
+        # Merge loaded data on top of our default config.
+        for (k, v) in loaded_conf.items():
+            new_conf[k] = v
+
+        self._config = new_conf
         self._platform = {} # Arduino platform-specific config (filled from conf file)
         self._arch = {} # CPU architecture-specific config (filled from conf file)
 
-        self._read_elf()
-        self._load_platform()
+        self._load_platform() # cascade platform def from config, arch def from platform.
+
+    def __persist_conf_var(self, f, k, v):
+        """
+            Persist k=v in serialized form to the file handle 'f'.
+
+            Can be called with k=None to serialize a nested value in a complex type.
+        """
+
+        if k:
+            f.write(f'  {repr(k)}: ')
+
+        if v is None or type(v) == str or type(v) == int or type(v) == float or type(v) == bool:
+            f.write(repr(v))
+        elif type(v) == list:
+            f.write('[')
+            for elem in v:
+                self.__persist_conf_var(f, None, elem)
+                f.write(", ")
+            f.write(']')
+        elif type(v) == dict:
+            f.write("{")
+            for (dirK, dirV) in v.items():
+                self.__persist_conf_var(f, None, dirK) # keys in a dir can be any type, not just str
+                f.write(": ")
+                self.__persist_conf_var(f, None, dirV)
+                f.write(", ")
+            f.write("}")
+        else:
+            print("Warning: unknown type serialization '%s'" % str(type(v)))
+            # Serialize it as an abstract map; filter out python internals and methods 
+            objdir = dict([(dirK, dirV) for (dirK, dirV) in dir(v).items() if \
+                (not dirK.startswith("__") and not dirK.endswith("__") and \
+                not callable(getattr(v, dirK))) ])
+
+            self.__persist_conf_var(f, None, objdir)
+
+        if k:
+            f.write(",\n")
+
+    def _persist_config(self):
+        """
+            Write the current config out to a file to reload the next time we use the debugger.
+        """
+        with open(_LOCAL_CONF_FILENAME, "w") as f:
+            f.write("config = {\n\n")
+            for (k, v) in self._config.items():
+                self.__persist_conf_var(f, k, v)
+            f.write("\n}\n")
 
 
     def _load_platform(self):
@@ -59,8 +152,10 @@ class Debugger(object):
             If the arduino.platform key is set, use it to load the platform-specific config.
         """
         platform_name = self.get_conf("arduino.platform")
+        if not platform_name:
+            return
         new_conf = _load_conf_module("arduino_dbg.platforms", platform_name)
-        if new_conf is None:
+        if not new_conf:
             return
 
         self._platform = new_conf
@@ -72,8 +167,10 @@ class Debugger(object):
             If the arduino.arch key is set, use it to load the arch-specific config.
         """
         arch_name = self.get_conf("arduino.arch")
+        if not arch_name:
+            return
         new_conf = _load_conf_module("arduino_dbg.arch", arch_name)
-        if new_conf is None:
+        if not new_conf:
             return # Nothing to load.
 
         self._arch = new_conf
@@ -94,6 +191,8 @@ class Debugger(object):
         if key == "arduino.arch":
             self._load_arch()
 
+        self._persist_config() # Write changes to conf file.
+
     def get_conf(self, key):
         if key not in _dbg_conf_keys:
             raise KeyError("Not a valid conf key: %s" % key)
@@ -108,9 +207,9 @@ class Debugger(object):
 
     def get_arch_conf(self, key):
         """
-            Return an architecture-specific property setting. These are read-only 
+            Return an architecture-specific property setting. These are read-only
             from outside the Debugger object. If the architecture is not set, or
-            the architecture lacks the requested property definition, this returns None. 
+            the architecture lacks the requested property definition, this returns None.
         """
         try:
             return self._arch[key]
@@ -119,9 +218,9 @@ class Debugger(object):
 
     def get_platform_conf(self, key):
         """
-            Return an Arduino platform-specific property setting. These are read-only 
+            Return an Arduino platform-specific property setting. These are read-only
             from outside the Debugger object. If the platform name is not set, or
-            the platform lacks the requested property definition, this returns None. 
+            the platform lacks the requested property definition, this returns None.
         """
         try:
             return self._platform[key]

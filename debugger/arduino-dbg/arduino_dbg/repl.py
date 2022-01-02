@@ -126,9 +126,50 @@ class Repl(object):
 
 
     def _set_conf(self, argv):
+        """
+            Set or print configuration variables.
+
+            If called with no argv, this dumps the entire config to stdout.
+            If called with just a setting name, it prints the setting value.
+            If called with "keyname val", "keyname = val", or "keyname=val" then it updates
+            the configuration with that value.
+
+            Successful updates to the config are performed silently.
+            Attempting to set a config key that does not exist will print a message.
+
+            Successful updates to the config cause the config to be persisted to a conf
+            file in the user's home dir by the Debugger object.
+        """
+
         if len(argv) == 0:
+            # No 
+            print("Configurable debugger settings:")
+            print("-------------------------------")
             for (k, v) in self._debugger.get_full_config():
                 print("%s = %s" % (k, v))
+
+            print("")
+            print("Arduino platform configuration:")
+            print("-------------------------------")
+            platform = self._debugger.get_full_platform_config()
+            if len(platform) == 0:
+                print("No platform set; configure with 'set arduino.platform ...'.")
+            else:
+                for (k, v) in platform:
+                    print("%s = %s" % (k, v))
+
+            print("")
+            print("CPU architecture configuration:")
+            print("-------------------------------")
+            arch = self._debugger.get_full_arch_config()
+            if len(platform) == 0:
+                print("No architecture set; configure 'set arduino.platform ...' or " +
+                    "'set arduino.arch ...' directly.")
+            else:
+                for (k, v) in arch:
+                    print("%s = %s" % (k, v))
+
+            
         elif len(argv) == 1 and len(argv[0].split("=")) == 1:
             # Got something of the form `set x`; just print value of x.
             try:
