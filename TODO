@@ -9,7 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Read ELF file and load symtab
   * Search symtab for mangled symbol
   * Connect to debugger
   * Read global var by sym

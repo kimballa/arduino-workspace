@@ -5,6 +5,7 @@ import importlib.resources as resources
 import os
 import serial
 import arduino_dbg.binutils as binutils
+import arduino_dbg.protocol as protocol
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
 _DBG_CONF_FMT_VERSION = 1
@@ -13,6 +14,7 @@ _dbg_conf_keys = [
     "arduino.platform",
     "arduino.arch",
     "dbg.conf.formatversion",
+    "dbg.verbose",
 ]
 
 def _load_conf_module(module_name, resource_name):
@@ -60,17 +62,28 @@ class Debugger(object):
 
         self._read_elf()
 
+    def _set_conf_defaults(self, conf_map=None):
+        """
+            Populate conf_map with all our config keys, and initialize any default values.
+        """
+        if conf_map is None:
+            conf_map = {}
+
+        for k in _dbg_conf_keys:
+            conf_map[k] = None
+
+        # If we open a file it can overwrite this but we start with this non-None default val.
+        conf_map["dbg.conf.formatversion"] = _DBG_CONF_FMT_VERSION
+        conf_map["dbg.verbose"] = False
+
+        return conf_map
+
     def _init_config_from_file(self):
         """
             If the user has a config file (see _LOCAL_CONF_FILENAME) then initialize self._config
             from that.
         """
-        new_conf = {}
-        for k in _dbg_conf_keys:
-            new_conf[k] = None
-
-        # If we open a file it can overwrite this but we start with this non-None default val.
-        new_conf["dbg.conf.formatversion"] = _DBG_CONF_FMT_VERSION
+        new_conf = self._set_conf_defaults({})
 
         # The loaded config will be a map named 'config' within an otherwise-empty environment
         init_env = {}
@@ -82,11 +95,21 @@ class Debugger(object):
                 try:
                     exec(conf_text, init_env, init_env)
                 except:
-                    # error parsing or executing the config file. 
+                    # error parsing or executing the config file.
                     print("Warning: error parsing config file '%s'" % _LOCAL_CONF_FILENAME)
                     init_env['config'] = {}
 
-        loaded_conf = init_env['config']
+        try:
+            fmtver = initenv['formatversion']
+            if not isinstance(fmtver, int) or fmtver > _DBG_CONF_FMT_VERSION:
+                print(f"Error: Cannot read config file '{_LOCAL_CONF_FILENAME}' with version {fmtver}")
+                init_env['config'] = {} # Disregard the unsupported configuration data.
+
+            loaded_conf = init_env['config']
+        except:
+            print(f"Error in format for config file '{_LOCAL_CONF_FILENAME}'")
+            loaded_conf = {}
+
 
         # Merge loaded data on top of our default config.
         for (k, v) in loaded_conf.items():
@@ -126,7 +149,7 @@ class Debugger(object):
             f.write("}")
         else:
             print("Warning: unknown type serialization '%s'" % str(type(v)))
-            # Serialize it as an abstract map; filter out python internals and methods 
+            # Serialize it as an abstract map; filter out python internals and methods
             objdir = dict([(dirK, dirV) for (dirK, dirV) in dir(v).items() if \
                 (not dirK.startswith("__") and not dirK.endswith("__") and \
                 not callable(getattr(v, dirK))) ])
@@ -140,7 +163,13 @@ class Debugger(object):
         """
             Write the current config out to a file to reload the next time we use the debugger.
         """
+
+        # Don't let user session change this value; we know what serialization version we're
+        # writing.
+        self._config["dbg.conf.formatversion"] = _DBG_CONF_FMT_VERSION
+
         with open(_LOCAL_CONF_FILENAME, "w") as f:
+            f.write(f"formatversion = {_DBG_CONF_FMT_VERSION}\n")
             f.write("config = {\n\n")
             for (k, v) in self._config.items():
                 self.__persist_conf_var(f, k, v)
@@ -183,6 +212,7 @@ class Debugger(object):
         """
         if key not in _dbg_conf_keys:
             raise KeyError("Not a valid conf key: %s" % key)
+
         self._config[key] = val
 
         # Process triggers for specific keys
@@ -297,7 +327,7 @@ class Debugger(object):
             register_map = self._arch["register_list_fmt"]
             num_general_regs = self._arch["general_regs"]
 
-        reg_values = self.send_cmd("r", self.RESULT_LIST)
+        reg_values = self.send_cmd(protocol.DBG_OP_REGISTERS, self.RESULT_LIST)
         registers = {}
         idx = 0
         general_reg_num = 0

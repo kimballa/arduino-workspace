@@ -2,6 +2,17 @@
 
 import signal
 import arduino_dbg.debugger as dbg
+import arduino_dbg.protocol as protocol
+
+def _softint(intstr, base=10):
+    """
+        Try to convert intstr to an int; if it fails, return None instead of ValueError like int()
+    """
+    try:
+        v = int(intstr, base)
+    except ValueError:
+        return None
+
 
 """
     The interactive command-line the user interacts with directly.
@@ -122,7 +133,7 @@ class Repl(object):
 
 
     def _reset(self, argv):
-        self._debugger.send_cmd(["R"], self._debugger.RESULT_SILENT)
+        self._debugger.send_cmd([protocol.DBG_OP_RESET], self._debugger.RESULT_SILENT)
 
 
     def _set_conf(self, argv):
@@ -146,7 +157,10 @@ class Repl(object):
             print("Configurable debugger settings:")
             print("-------------------------------")
             for (k, v) in self._debugger.get_full_config():
-                print("%s = %s" % (k, v))
+                if k == k.upper() and isinstance(v, int):
+                    print("%s = 0x%x" % (k, v)) # CAPS keys are printed in hex.
+                else:
+                    print("%s = %s" % (k, v))
 
             print("")
             print("Arduino platform configuration:")
@@ -156,7 +170,10 @@ class Repl(object):
                 print("No platform set; configure with 'set arduino.platform ...'.")
             else:
                 for (k, v) in platform:
-                    print("%s = %s" % (k, v))
+                    if k == k.upper() and isinstance(v, int):
+                        print("%s = 0x%x" % (k, v)) # CAPS keys are printed in hex.
+                    else:
+                        print("%s = %s" % (k, v))
 
             print("")
             print("CPU architecture configuration:")
@@ -167,10 +184,13 @@ class Repl(object):
                     "'set arduino.arch ...' directly.")
             else:
                 for (k, v) in arch:
-                    print("%s = %s" % (k, v))
+                    if k == k.upper() and isinstance(v, int):
+                        print("%s = 0x%x" % (k, v)) # CAPS keys are printed in hex.
+                    else:
+                        print("%s = %s" % (k, v))
 
             
-        elif len(argv) == 1 and len(argv[0].split("=")) == 1:
+        elif len(argv) == 1 and len(argv[0].split("=", 1)) == 1:
             # Got something of the form `set x`; just print value of x.
             try:
                 k = argv[0]
@@ -179,10 +199,10 @@ class Repl(object):
             except KeyError as e:
                 print(str(e))
         else:
-            if len(argv) == 1 and len(argv[0].split("=")) == 2:
+            if len(argv) == 1 and len(argv[0].split("=", 1)) == 2:
                 # Support `set k=v` format
-                k = argv[0].split("=")[0]
-                v = argv[0].split("=")[1]
+                k = argv[0].split("=", 1)[0]
+                v = argv[0].split("=", 1)[1]
             else:
                 k = argv[0]
                 start = 1
@@ -190,6 +210,24 @@ class Repl(object):
                     start = start + 1
                 v = " ".join(argv[start:])
 
+            k = k.strip()
+            v = v.strip()
+
+            # We now have a single string for key (k) and a single string for value (v).
+            # Convert user-input strings into the correct data types.
+            # We support bool, int (dec and 0xHEX), and empty string as 'None'.
+            if isinstance(v, str) and v.lower() == "true":
+                v = True
+            elif isinstance(v, str) and v.lower() == "false":
+                v = False
+            elif isinstance(v, str) and v == str(_softint(v)):
+                v = int(v)
+            elif isinstance(v, str) and v.startswith("0x") and v == str(_softint(v[2:], base=16)):
+                v = int(v[2:], base=16)
+            elif isinstance(v, str) and len(v) == 0:
+                v = None
+
+            # Actually push this (k, v) pair to the debugger's config state.
             try:
                 self._debugger.set_conf(k, v)
             except KeyError as e:
