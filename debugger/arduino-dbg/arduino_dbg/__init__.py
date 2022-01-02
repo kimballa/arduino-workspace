@@ -3,6 +3,7 @@
 import argparse
 
 from .debugger import Debugger
+from .repl import Repl
 
 
 def _parseArgs():
@@ -14,4 +15,10 @@ def _parseArgs():
 
 def main(argv):
     args = _parseArgs()
-    d = Debugger(args.file, args.port)
+    debugger = Debugger(args.file, args.port)
+    repl = Repl(debugger)
+
+    quit = False
+    while not quit:
+        quit = repl.loop()
+
