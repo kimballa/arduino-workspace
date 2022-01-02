@@ -23,14 +23,16 @@ class Debugger(object):
         self._addr_to_symbol = {}
         self._symbols = {}
 
+        # TODO - load latest config from a dotfile in user's $HOME.
         self._config = {} # General user-accessible config.
         for k in _dbg_conf_keys:
             self._config[k] = None
-        self._platform = {} # Arduino platform-specific config
-        self._arch = {} # CPU architecture-specific config
+        self._platform = {} # Arduino platform-specific config (filled from conf file)
+        self._arch = {} # CPU architecture-specific config (filled from conf file)
 
         self._read_elf()
         self._load_platform()
+
 
     def _load_platform(self):
         """
@@ -43,12 +45,12 @@ class Debugger(object):
         conf_resource_name = platform_name.strip() + ".conf"
         conf_text = resources.read_text("arduino_dbg.platforms", conf_resource_name)
         conf = {}
-        eval(conf_text, conf, conf)
+        exec(conf_text, conf, conf)
         self._platform = conf
 
         print("Loading platform profile: %s; read %d keys" % (conf_resource_name, len(self._platform)))
-        self.set_conf("arduino.arch", self._platform["arch"])
-        self._load_arch() # New platform => new architecture; refresh this too.
+        self.set_conf("arduino.arch", self._platform["arch"]) # Triggers refresh of arch config.
+
 
     def _load_arch(self):
         """
@@ -61,7 +63,7 @@ class Debugger(object):
         conf_resource_name = arch_name.strip() + ".conf"
         conf_text = resources.read_text("arduino_dbg.arch", conf_resource_name)
         conf = {}
-        eval(conf_text, conf, conf)
+        exec(conf_text, conf, conf)
         self._arch = conf
         print("Loading arch profile: %s; read %d keys" % (conf_resource_name, len(self._arch)))
 
@@ -74,6 +76,12 @@ class Debugger(object):
         if key not in _dbg_conf_keys:
             raise KeyError("Not a valid conf key: %s" % key)
         self._config[key] = val
+
+        # Process triggers for specific keys
+        if key == "arduino.platform":
+            self._load_platform()
+        if key == "arduino.arch":
+            self._load_arch()
 
     def get_conf(self, key):
         if key not in _dbg_conf_keys:
@@ -136,6 +144,45 @@ class Debugger(object):
         """
         pass
 
+    def get_registers(self):
+        """
+            Get snapshot of system registers.
+        """
+        if len(self._arch) == 0:
+            print("Warning: No architecture specified; cannot assign specific registers")
+            register_map = [ "general_regs" ]
+            num_general_regs = -1
+        else:
+            register_map = self._arch["register_list_fmt"]
+            num_general_regs = self._arch["general_regs"]
+
+        reg_values = self.send_cmd("r", self.RESULT_LIST)
+        registers = {}
+        idx = 0
+        general_reg_num = 0
+        for reg_name in register_map:
+            if reg_name == "general_regs":
+                # The next 'n' entries are r0, r1, r2...
+                # The arch config tells us how many to pull from the list (with the `general_regs`
+                # config value).
+                if num_general_regs == -1: # Undefined architecture; take all of them.
+                    last = len(reg_values)
+                else:
+                    last = num_general_regs + idx
+
+                start_idx = idx
+                for rval in reg_values[start_idx:last]:
+                    registers["r" + str(general_reg_num)] = int(rval, base=16)
+                    general_reg_num += 1
+                    idx += 1
+            else:
+                # We have a specific named register to assign.
+                registers[reg_name] = int(reg_values[idx], base=16)
+                idx += 1
+
+        return registers
+
+
     RESULT_SILENT = 0
     RESULT_ONELINE = 1
     RESULT_LIST = 2
@@ -150,24 +197,42 @@ class Debugger(object):
 
         if type(dbg_cmd) == list:
             dbg_cmd = dbg_cmd.join(" ") + "\n"
+        elif type(dbg_cmd) != str:
+            dbg_cmd = str(dbg_cmd)
+
+        if not dbg_cmd.endswith("\n"):
+            dbg_cmd = dbg_cmd + "\n"
 
         if not self.is_open():
             print("Error: No debug server connection open")
             return None
 
         self._conn.write(dbg_cmd.encode("utf-8"))
-        if result_type == RESULT_SILENT:
+        #print("--> %s" % dbg_cmd.strip())
+        # TODO(aaron): add debug verbosity that enables these i/o lines.
+
+        # TODO(aaron): if we get any ">..." lines we should print them immediately and disregard them
+        # as a response to send_cmd.
+
+        # TODO(aaron): Monitor for unprompted text console responses and print them while the user's
+        # still at the prompt.
+
+        if result_type == self.RESULT_SILENT:
             return None
-        elif result_type == RESULT_ONELINE:
-            return self._conn.readline().strip()
-        elif result_type == RESULT_LIST:
+        elif result_type == self.RESULT_ONELINE:
+            return self._conn.readline().decode("utf-8").strip()
+        elif result_type == self.RESULT_LIST:
             lines = []
             while True:
-                thisline = self._conn.readline().strip()
-                if thisline == "$":
+                thisline = self._conn.readline().decode("utf-8").strip()
+                #print("<-- %s" % thisline.strip())
+                if len(thisline) == 0:
+                    continue
+                elif thisline == "$":
                     break
                 else:
-                    lines.append(thisline)
+                    lines.append(thisline.strip())
+            return lines
         else:
             raise RuntimeError("Invalid 'result_type' arg (%d) sent to send_cmd" % result_type)
 

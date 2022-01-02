@@ -195,6 +195,7 @@ static void __dbg_service() {
       // Special registers: SP (note: 16 bit), SREG
       DBG_SERIAL.println((uint16_t)SP, HEX);
       DBG_SERIAL.println((uint8_t)SREG, HEX);
+      DBG_SERIAL.println('$');
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
 #ifdef DBG_NO_GPIO

@@ -94,7 +94,21 @@ class Repl(object):
 
 
     def _regs(self, argv):
-        pass
+        """
+            Print register values for user
+        """
+        MAX_WIDTH = 65
+
+        registers = self._debugger.get_registers()
+
+        cur_width = 0
+        for (reg, regval) in registers.items():
+            # TODO if reg=SP and we have SPH in the arch conf, use 04x for regval.
+            print(f"{reg.rjust(4)}:{regval:02x}  ", end='')
+            cur_width += 9
+            if cur_width >= MAX_WIDTH:
+                cur_width = 0
+                print("")
 
 
     def _reset(self, argv):
@@ -105,17 +119,30 @@ class Repl(object):
         if len(argv) == 0:
             for (k, v) in self._debugger.get_full_config():
                 print("%s = %s" % (k, v))
-        elif len(argv) == 1:
-            k = argv[0]
-            v = self._debugger.get_conf(k)
-            print("%s = %s" % (k, v))
+        elif len(argv) == 1 and len(argv[0].split("=")) == 1:
+            # Got something of the form `set x`; just print value of x.
+            try:
+                k = argv[0]
+                v = self._debugger.get_conf(k)
+                print("%s = %s" % (k, v))
+            except KeyError as e:
+                print(str(e))
         else:
-            k = argv[0]
-            start = 1
-            if argv[start] == "=": # allow 'set x y' or 'set x = y' format.
-                start = start + 1
-            v = " ".join(argv[start:])
-            self._debugger.set_conf(k, v)
+            if len(argv) == 1 and len(argv[0].split("=")) == 2:
+                # Support `set k=v` format
+                k = argv[0].split("=")[0]
+                v = argv[0].split("=")[1]
+            else:
+                k = argv[0]
+                start = 1
+                if argv[start] == "=": # allow 'set x y' or 'set x = y' format.
+                    start = start + 1
+                v = " ".join(argv[start:])
+
+            try:
+                self._debugger.set_conf(k, v)
+            except KeyError as e:
+                print(str(e))
 
 
     def _stack_mem(self, argv):
