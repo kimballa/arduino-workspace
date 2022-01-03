@@ -9,8 +9,7 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Add #n indexing into sym lookup cache; substition in cmd argv
-  * Add '$' substitution in cmd argv.
+  * Catch EOFError and gracefully quit.
   * Remove / [clone .constprop.*]$/ from demangled names.
   * Read global var by sym
   * Write global var by sym

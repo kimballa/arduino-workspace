@@ -9,7 +9,7 @@ def _softint(intstr, base=10):
         Try to convert intstr to an int; if it fails, return None instead of ValueError like int()
     """
     try:
-        v = int(intstr, base)
+        return int(intstr, base)
     except ValueError:
         return None
 
@@ -160,7 +160,7 @@ class Repl(object):
         """
 
         if len(argv) == 0:
-            # No
+            ### No key argument -- display entire configuration ###
             print("Configurable debugger settings:")
             print("-------------------------------")
             for (k, v) in self._debugger.get_full_config():
@@ -198,7 +198,7 @@ class Repl(object):
 
 
         elif len(argv) == 1 and len(argv[0].split("=", 1)) == 1:
-            # Got something of the form `set x`; just print value of x.
+            ### Got something of the form `set x`; just print value of x. ###
             try:
                 k = argv[0]
                 v = self._debugger.get_conf(k)
@@ -206,6 +206,7 @@ class Repl(object):
             except KeyError as e:
                 print(str(e))
         else:
+            ### Received key and value (`set k v` or `set k=v`); update the config ###
             if len(argv) == 1 and len(argv[0].split("=", 1)) == 2:
                 # Support `set k=v` format
                 k = argv[0].split("=", 1)[0]
@@ -227,9 +228,10 @@ class Repl(object):
                 v = True
             elif isinstance(v, str) and v.lower() == "false":
                 v = False
-            elif isinstance(v, str) and v == str(_softint(v)):
+            elif isinstance(v, str) and v == str(_softint(v)) and v != "None":
                 v = int(v)
-            elif isinstance(v, str) and v.startswith("0x") and v == str(_softint(v[2:], base=16)):
+            elif isinstance(v, str) and v.startswith("0x") and len(v) > 2 and \
+                    v == "0x" + str(_softint(v[2:], base=16)) and v != "0xNone":
                 v = int(v[2:], base=16)
             elif isinstance(v, str) and len(v) == 0:
                 v = None
@@ -350,7 +352,23 @@ class Repl(object):
         raw_tokens = cmdline.split(" ")
         tokens = []
         for t in raw_tokens: # Filter extra empty-whitespace tokens
-            if t is not None and t != "":
+            if t == "$":
+                if self._last_sym_used:
+                    # Replace '$' with last-referenced symbol.
+                    tokens.append(self._last_sym_used)
+                else:
+                    print("Warning: no prior symbol reference for '$'")
+                    tokens.append("$") # try it raw...
+            elif isinstance(t, str) and t.startswith("#") and len(t) > 1 and t[1:] == str(_softint(t[1:])):
+                idx = _softint(t[1:])
+                try:
+                    # replace '#n' with n'th item in last symbol search.
+                    sym = self._last_sym_search[idx]
+                    tokens.append(sym)
+                except IndexError:
+                    print(f"Warning: no symbol for index {t}")
+                    tokens.append(t) # try it raw...
+            elif t is not None and t != "":
                 tokens.append(t)
 
         if len(tokens) == 0:
