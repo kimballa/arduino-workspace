@@ -1,6 +1,7 @@
 # (c) Copyright 2021 Aaron Kimball
 
 import argparse
+import sys
 
 from .debugger import Debugger
 from .repl import Repl
@@ -18,7 +19,5 @@ def main(argv):
     debugger = Debugger(args.file, args.port)
     repl = Repl(debugger)
 
-    quit = False
-    while not quit:
-        quit = repl.loop()
+    sys.exit(repl.loop())
 

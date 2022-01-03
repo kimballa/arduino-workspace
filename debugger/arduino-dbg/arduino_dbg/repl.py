@@ -76,12 +76,12 @@ class Repl(object):
         pass
 
 
-    def _break(self, argv):
-        print ("broken")
+    def _break(self, argv=None):
+        self._debugger.send_break()
 
 
-    def _continue(self, argv):
-        pass
+    def _continue(self, argv=None):
+        self._debugger.send_continue()
 
 
     def _flash(self, argv):
@@ -132,8 +132,8 @@ class Repl(object):
         print("")
 
 
-    def _reset(self, argv):
-        self._debugger.send_cmd([protocol.DBG_OP_RESET], self._debugger.RESULT_SILENT)
+    def _reset(self, argv=None):
+        self._debugger.reset_sketch()
 
 
     def _set_conf(self, argv):
@@ -153,7 +153,7 @@ class Repl(object):
         """
 
         if len(argv) == 0:
-            # No 
+            # No
             print("Configurable debugger settings:")
             print("-------------------------------")
             for (k, v) in self._debugger.get_full_config():
@@ -189,7 +189,7 @@ class Repl(object):
                     else:
                         print("%s = %s" % (k, v))
 
-            
+
         elif len(argv) == 1 and len(argv[0].split("=", 1)) == 1:
             # Got something of the form `set x`; just print value of x.
             try:
@@ -279,7 +279,7 @@ class Repl(object):
         print("quit -- Quit the debugger console")
 
 
-    def loop(self):
+    def loop_input_body(self):
         """
             Primary function to call inside a loop; executes one flow of Read-eval-print.
             Returns True if we want to quit, False to continue.
@@ -290,7 +290,7 @@ class Repl(object):
         except KeyboardInterrupt:
             # Received '^C'; call the break function
             print('') # Terminate line after visible '^C' in input.
-            self._break([])
+            self._break()
             return False
 
         raw_tokens = cmdline.split(" ")
@@ -313,3 +313,30 @@ class Repl(object):
             print("Unknown command '%s'; try 'help'." % cmd)
 
         return False
+
+
+    def loop(self):
+        """
+            The actual main loop.
+
+            Returns the exit status for the program. (0 for success)
+        """
+        quit = False
+        while not quit:
+            if self._debugger.process_state() == dbg.PROCESS_STATE_BREAK:
+                # Program execution is paused; we accept commands from the user.
+                quit = self.loop_input_body()
+            else:
+                # The program is (maybe?) running. It could send debug/trace messages back,
+                # so we sit and wait for those and display them if/when they appear.
+                print("Press ^C to interrupt Arduino sketch for debugging.")
+                try:
+                    self._debugger.wait_for_traces()
+                except KeyboardInterrupt as ki:
+                    # Received '^C'; call the break function
+                    print('') # Terminate line after visible '^C' in input.
+                    self._break() # This will update the process_state to BREAK.
+
+        return 0
+
+

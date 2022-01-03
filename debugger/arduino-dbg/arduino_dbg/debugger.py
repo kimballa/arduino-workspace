@@ -4,6 +4,8 @@ from elftools.elf.elffile import ELFFile
 import importlib.resources as resources
 import os
 import serial
+import time
+
 import arduino_dbg.binutils as binutils
 import arduino_dbg.protocol as protocol
 
@@ -16,6 +18,12 @@ _dbg_conf_keys = [
     "dbg.conf.formatversion",
     "dbg.verbose",
 ]
+
+# When we connect to the device, which state are we in?
+PROCESS_STATE_UNKNOWN = 0
+PROCESS_STATE_RUNNING = 1
+PROCESS_STATE_BREAK   = 2
+
 
 def _load_conf_module(module_name, resource_name):
     """
@@ -62,6 +70,10 @@ class Debugger(object):
 
         self._read_elf()
 
+        self._process_state = PROCESS_STATE_UNKNOWN
+
+    ###### Configuration file / config key management functions.
+
     def _set_conf_defaults(self, conf_map=None):
         """
             Populate conf_map with all our config keys, and initialize any default values.
@@ -100,7 +112,7 @@ class Debugger(object):
                     init_env['config'] = {}
 
         try:
-            fmtver = initenv['formatversion']
+            fmtver = init_env['formatversion']
             if not isinstance(fmtver, int) or fmtver > _DBG_CONF_FMT_VERSION:
                 print(f"Error: Cannot read config file '{_LOCAL_CONF_FILENAME}' with version {fmtver}")
                 init_env['config'] = {} # Disregard the unsupported configuration data.
@@ -263,152 +275,7 @@ class Debugger(object):
     def get_full_platform_config(self):
         return self._platform.items()
 
-
-    def close(self):
-        """
-            Close serial connection.
-        """
-        self._conn.close()
-        self._conn = None
-
-
-    def reopen(self, port, baud, timeout):
-        """
-          (Re)establish serial connection.
-        """
-        if self._conn is not None:
-            self.close()
-
-        if port is not None and port != '':
-            self._conn = serial.Serial(port, baud, timeout=timeout)
-
-    def is_open(self):
-        return self._conn is not None and self._conn.is_open
-
-    def sym_for_addr(self, addr):
-        """
-            Return the name of the symbol keyed to a particular address.
-        """
-        return self._addr_to_symbol[addr]
-
-
-    def function_sym_by_pc(self, pc):
-        """
-            Given a $PC pointing somewhere within a function body, return the name of
-            the symbol for the function.
-        """
-        for (addr, name) in self._addr_to_symbol.items():
-            if addr > pc:
-                continue # Definitely not this one.
-
-            sym = self._symbols[name]
-            if sym['st_info']['type'] != "STT_FUNC":
-                continue # Not a function
-
-            if addr + sym['st_size'] >= pc:
-                return name # Found it.
-
-
-    def breakpoint(self):
-        """
-            Break program execution and get the attention of the debug server.
-        """
-        pass
-
-    def get_registers(self):
-        """
-            Get snapshot of system registers.
-        """
-        if len(self._arch) == 0:
-            print("Warning: No architecture specified; cannot assign specific registers")
-            register_map = [ "general_regs" ]
-            num_general_regs = -1
-        else:
-            register_map = self._arch["register_list_fmt"]
-            num_general_regs = self._arch["general_regs"]
-
-        reg_values = self.send_cmd(protocol.DBG_OP_REGISTERS, self.RESULT_LIST)
-        registers = {}
-        idx = 0
-        general_reg_num = 0
-        for reg_name in register_map:
-            if reg_name == "general_regs":
-                # The next 'n' entries are r0, r1, r2...
-                # The arch config tells us how many to pull from the list (with the `general_regs`
-                # config value).
-                if num_general_regs == -1: # Undefined architecture; take all of them.
-                    last = len(reg_values)
-                else:
-                    last = num_general_regs + idx
-
-                start_idx = idx
-                for rval in reg_values[start_idx:last]:
-                    registers["r" + str(general_reg_num)] = int(rval, base=16)
-                    general_reg_num += 1
-                    idx += 1
-            else:
-                # We have a specific named register to assign.
-                registers[reg_name] = int(reg_values[idx], base=16)
-                idx += 1
-
-        return registers
-
-
-    RESULT_SILENT = 0
-    RESULT_ONELINE = 1
-    RESULT_LIST = 2
-
-    def send_cmd(self, dbg_cmd, result_type):
-        """
-            Send a low-level debugger command across the wire and return the results.
-            @param dbg_cmd either a formatted command string or list of cmd and arguments.
-            @param result_type an integer/enum specifying whether to expect 0, 1, or 'n'
-            ($-terminated list) lines in response.
-        """
-
-        if type(dbg_cmd) == list:
-            dbg_cmd = dbg_cmd.join(" ") + "\n"
-        elif type(dbg_cmd) != str:
-            dbg_cmd = str(dbg_cmd)
-
-        if not dbg_cmd.endswith("\n"):
-            dbg_cmd = dbg_cmd + "\n"
-
-        if not self.is_open():
-            print("Error: No debug server connection open")
-            return None
-
-        self._conn.write(dbg_cmd.encode("utf-8"))
-        #print("--> %s" % dbg_cmd.strip())
-        # TODO(aaron): add debug verbosity that enables these i/o lines.
-
-        # TODO(aaron): if we get any ">..." lines we should print them immediately and disregard them
-        # as a response to send_cmd.
-
-        # TODO(aaron): Monitor for unprompted text console responses and print them while the user's
-        # still at the prompt.
-
-        if result_type == self.RESULT_SILENT:
-            return None
-        elif result_type == self.RESULT_ONELINE:
-            return self._conn.readline().decode("utf-8").strip()
-        elif result_type == self.RESULT_LIST:
-            lines = []
-            while True:
-                thisline = self._conn.readline().decode("utf-8").strip()
-                #print("<-- %s" % thisline.strip())
-                if len(thisline) == 0:
-                    continue
-                elif thisline == "$":
-                    break
-                else:
-                    lines.append(thisline.strip())
-            return lines
-        else:
-            raise RuntimeError("Invalid 'result_type' arg (%d) sent to send_cmd" % result_type)
-
-
-
+    ###### ELF-file and symbol functions
 
     def _read_elf(self):
         """
@@ -450,4 +317,232 @@ class Debugger(object):
         self._addr_to_symbol = dict(sorted(self._addr_to_symbol.items()))
         for (addr, name) in self._addr_to_symbol.items():
             print("%08x => %s (%s)" % (addr, name, binutils.demangle(name)))
+
+
+
+    def sym_for_addr(self, addr):
+        """
+            Return the name of the symbol keyed to a particular address.
+        """
+        return self._addr_to_symbol[addr]
+
+
+    def function_sym_by_pc(self, pc):
+        """
+            Given a $PC pointing somewhere within a function body, return the name of
+            the symbol for the function.
+        """
+        for (addr, name) in self._addr_to_symbol.items():
+            if addr > pc:
+                continue # Definitely not this one.
+
+            sym = self._symbols[name]
+            if sym['st_info']['type'] != "STT_FUNC":
+                continue # Not a function
+
+            if addr + sym['st_size'] >= pc:
+                return name # Found it.
+
+    ###### Low-level serial interface
+
+    def process_state(self):
+        return self._process_state
+
+    def close(self):
+        """
+            Close serial connection.
+        """
+        self._conn.close()
+        self._conn = None
+
+
+    def reopen(self, port, baud, timeout):
+        """
+          (Re)establish serial connection.
+        """
+        if self._conn is not None:
+            self.close()
+
+        if port is not None and port != '':
+            self._conn = serial.Serial(port, baud, timeout=timeout)
+
+    def is_open(self):
+        return self._conn is not None and self._conn.is_open
+
+    def wait_for_traces(self):
+        """
+            When the process is running, listen patiently to the socket for debug_msg() or trace()
+            data; print to the screen when it appears.
+
+            If the user wants to break from this, they can ^C and the caller should trap
+            KeyboardInterrupt.
+        """
+
+        if not self.is_open():
+            raise Exception("No debug server connection open")
+
+        while self._process_state != PROCESS_STATE_BREAK:
+            line = self._conn.readline().decode("utf-8").strip()
+            if len(line) == 0:
+                continue
+            elif line.startswith(protocol.DBG_RET_PRINT):
+                # got a message for the user.
+                print(line[1:])
+            elif line == protocol.DBG_PAUSE_MSG:
+                # Server has informed us that it switched to break mode.
+                # (e.g. program-triggered hardcoded breakpoint.)
+                print("Paused.")
+                self._process_state = PROCESS_STATE_BREAK
+                break;
+            else:
+                # Got a line of ... something but it didn't start with '>'.
+                # Either it _is_ for the user and we connected to the socket mid-message,
+                # or this client is somehow are in the non-break state while the server IS
+                # in the break state and sending a response to some earlier message...
+                print(f"Server: [{line}]")
+
+
+    RESULT_SILENT = 0
+    RESULT_ONELINE = 1
+    RESULT_LIST = 2
+
+    def send_cmd(self, dbg_cmd, result_type):
+        """
+            Send a low-level debugger command across the wire and return the results.
+            @param dbg_cmd either a formatted command string or list of cmd and arguments.
+            @param result_type an integer/enum specifying whether to expect 0, 1, or 'n'
+            ($-terminated list) lines in response.
+        """
+
+        if not self.is_open():
+            print("Error: No debug server connection open")
+            return None
+
+        # Before sending a command, make sure there is no pent-up data from the server.
+        # Discard all service-level data in the buffer and echo any debug statemetns to the console.
+        while self._conn.in_waiting > 0:
+            line = self._conn.readline().decode("utf-8").strip()
+            #print("<-- %s" % line.strip())
+            if len(line) == 0:
+                continue
+            elif line.startswith(protocol.DBG_RET_PRINT):
+                # This is debug output for the user to see.
+                print(line[1:])
+
+
+        if type(dbg_cmd) == list:
+            dbg_cmd = " ".join(dbg_cmd) + "\n"
+        elif type(dbg_cmd) != str:
+            dbg_cmd = str(dbg_cmd)
+
+        if not dbg_cmd.endswith("\n"):
+            dbg_cmd = dbg_cmd + "\n"
+
+        self._conn.write(dbg_cmd.encode("utf-8"))
+        #print("--> %s" % dbg_cmd.strip())
+        # TODO(aaron): add debug verbosity that enables these i/o lines.
+
+        if result_type == self.RESULT_SILENT:
+            return None
+        elif result_type == self.RESULT_ONELINE:
+            line = None
+            while True:
+                line = self._conn.readline().decode("utf-8").strip()
+                #print("<-- %s" % line.strip())
+                if len(line) == 0:
+                    continue
+                elif line.startswith(protocol.DBG_RET_PRINT):
+                    # This is debug output for the user to see.
+                    print(line[1:])
+                else:
+                    break
+            return line
+        elif result_type == self.RESULT_LIST:
+            lines = []
+            while True:
+                thisline = self._conn.readline().decode("utf-8").strip()
+                #print("<-- %s" % thisline.strip())
+                if len(thisline) == 0:
+                    continue
+                elif thisline.startswith(protocol.DBG_RET_PRINT):
+                    # Just a message from the debugger/sketch; not part of response.
+                    print(thisline[1:])
+                elif thisline == "$":
+                    break
+                else:
+                    lines.append(thisline.strip())
+            return lines
+        else:
+            raise RuntimeError("Invalid 'result_type' arg (%d) sent to send_cmd" % result_type)
+
+
+    ###### Higher-level commands to communicate with server
+
+    def send_break(self):
+        break_ok = self.send_cmd(protocol.DBG_OP_BREAK, self.RESULT_ONELINE)
+        # Wait up to 1 second for the interrupt to fire to connect the debugger.
+        #time.sleep(_break_interrupt_delay)
+        # Process state now known as in-break.
+        if break_ok == "Paused":
+            self._process_state = PROCESS_STATE_BREAK
+            print("Paused.")
+        else:
+            self._process_state = PROCESS_STATE_UNKNOWN
+            print("Could not interrupt sketch.")
+
+
+    def send_continue(self):
+        continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, self.RESULT_ONELINE)
+        if continue_ok == "Continuing":
+            self._process_state = PROCESS_STATE_RUNNING
+            print("Continuing...")
+        else:
+            self._process_state = PROCESS_STATE_UNKNOWN
+            print("Could not continue sketch.")
+            print("Received unexpected response [%s]" % continue_ok)
+
+
+    def reset_sketch(self):
+        self.send_cmd(protocol.DBG_OP_RESET, self._debugger.RESULT_SILENT)
+        self._process_state = PROCESS_STATE_UNKNOWN
+
+
+    def get_registers(self):
+        """
+            Get snapshot of system registers.
+        """
+        if len(self._arch) == 0:
+            print("Warning: No architecture specified; cannot assign specific registers")
+            register_map = [ "general_regs" ]
+            num_general_regs = -1
+        else:
+            register_map = self._arch["register_list_fmt"]
+            num_general_regs = self._arch["general_regs"]
+
+        reg_values = self.send_cmd(protocol.DBG_OP_REGISTERS, self.RESULT_LIST)
+        registers = {}
+        idx = 0
+        general_reg_num = 0
+        for reg_name in register_map:
+            if reg_name == "general_regs":
+                # The next 'n' entries are r0, r1, r2...
+                # The arch config tells us how many to pull from the list (with the `general_regs`
+                # config value).
+                if num_general_regs == -1: # Undefined architecture; take all of them.
+                    last = len(reg_values)
+                else:
+                    last = num_general_regs + idx
+
+                start_idx = idx
+                for rval in reg_values[start_idx:last]:
+                    registers["r" + str(general_reg_num)] = int(rval, base=16)
+                    general_reg_num += 1
+                    idx += 1
+            else:
+                # We have a specific named register to assign.
+                registers[reg_name] = int(reg_values[idx], base=16)
+                idx += 1
+
+        return registers
+
 

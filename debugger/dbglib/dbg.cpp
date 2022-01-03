@@ -29,6 +29,7 @@ static inline void __dbg_reset() __attribute__((no_instrument_function));
 
 #define DBG_OP_RAMADDR   '@' // Return data at RAM address
 #define DBG_OP_STACKREL  '$' // Return data at addr relative to SP.
+#define DBG_OP_BREAK     'B' // Break execution of the program. (Redundant if within server)
 #define DBG_OP_CONTINUE  'C' // continue execution
 #define DBG_OP_FLASHADDR 'f' // Return data at Flash address.
 #define DBG_OP_POKE      'K' // Insert data to RAM address.
@@ -92,6 +93,10 @@ void __dbg_setup() {
   sei();
 }
 
+// Keyword sent from sketch/server to client whenever breakpoint is triggered (either
+// from sketch source code or via interrupt) to let client know we're in the dbg server.
+static const char _paused_msg[] PROGMEM = "Paused";
+
 /**
  * Called at breakpoint in user code (or via ISR if serial traffic arrives). Starts a service
  * that communicates over DBG_SERIAL about the state of the CPU until released to continue by
@@ -106,8 +111,7 @@ static void __dbg_service() {
 
   static uint8_t cmd;
 
-  DBG_SERIAL.print(DBG_RET_PRINT);
-  DBG_SERIAL.println(F("Paused."));
+  DBG_SERIAL.println(FPSTR(_paused_msg));
 
   while (true) {
     while (!DBG_SERIAL.available()) { };
@@ -123,6 +127,9 @@ static void __dbg_service() {
     int offset = 0;
     uint8_t b = 0;
     switch(cmd) {
+    case DBG_OP_BREAK:
+      DBG_SERIAL.println(FPSTR(_paused_msg));
+      break;
     case DBG_OP_RESET:
       __dbg_reset();
       break;
@@ -228,15 +235,18 @@ static void __dbg_service() {
       } else {
         DBG_SERIAL.print(DBG_RET_PRINT);
         DBG_SERIAL.println(F("Error"));
+        DBG_SERIAL.println(0, DEC);
       }
 #endif /* DBG_NO_TIME */
       break;
     case DBG_OP_CONTINUE: // Continue main program execution; exit debugger.
-      if (DBG_SERIAL.available() && DBG_SERIAL.peek() == DBG_END) {
-        DBG_SERIAL.read(); // consume expected EOL marker before debugger exit.
+      // Eat remainder of the line.
+      b = 0;
+      while ((char)b != DBG_END) {
+        while (!DBG_SERIAL.available()) { }
+        b = DBG_SERIAL.read(); // consume expected EOL marker before debugger exit.
       }
-      DBG_SERIAL.print(DBG_RET_PRINT);
-      DBG_SERIAL.println(F("Continuing..."));
+      DBG_SERIAL.println(F("Continuing")); // client expects this exact string
       goto exit_loop;
       break;
     default: // Unknown command or unconsumed trailing junk from prior command.
