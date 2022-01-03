@@ -63,6 +63,7 @@ class Debugger(object):
         self._sections = {}
         self._addr_to_symbol = {}
         self._symbols = {}
+        self._demangled_to_symbol = {}
 
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
@@ -305,19 +306,44 @@ class Debugger(object):
                     if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
                         # This has a location worth memorizing
                         self._addr_to_symbol[sym.entry['st_value']] = sym.name
-                        continue
-                    self._symbols[sym.name] = sym
+
+                        self._symbols[sym.name] = sym
 
 
                 #print("*** Symbols (.symtab)")
                 #for sym in syms.iter_symbols():
                 #    print("%s: %s" % (sym.name, sym.entry))
 
-        # Sort the symbols by address
+        # Sort the symbols by address and memorize demangled names too.
         self._addr_to_symbol = dict(sorted(self._addr_to_symbol.items()))
         for (addr, name) in self._addr_to_symbol.items():
-            print("%08x => %s (%s)" % (addr, name, binutils.demangle(name)))
+            self._demangled_to_symbol[binutils.demangle(name)] = name
 
+
+    def syms_by_substr(self, substr):
+        """
+            Return all symbol names that contain the specified substr.
+        """
+        candidates = []
+        all_names = []
+        all_names.extend(self._symbols.keys())
+        all_names.extend(self._demangled_to_symbol.keys())
+        for name in all_names:
+            try:
+                name.index(substr)
+                # If we get here, 
+                candidates.append(name)
+            except ValueError:
+                pass # Not a match.
+
+        candidates.sort() # Return symbol matches in sorted order.
+        out = []
+        for sym in candidates:
+            if len(out) and out[len(out) - 1] == sym:
+                continue # skip duplicate from sorted input list
+            out.append(sym)
+
+        return out
 
 
     def sym_for_addr(self, addr):
@@ -342,6 +368,33 @@ class Debugger(object):
 
             if addr + sym['st_size'] >= pc:
                 return name # Found it.
+
+    def lookup_sym(self, name):
+        """
+            Given a symbol name (regular or demangled), return a struct
+            of information about the symbol.
+        """
+
+        try:
+            # Is the input a demangled name?
+            true_name = self._demangled_to_symbol[name]
+        except KeyError:
+            # No it is not.
+            true_name = name
+
+        try:
+            sym = self._symbols[true_name]
+        except KeyError:
+            return None 
+
+        out = {}
+        out['name'] = true_name
+        out['demangled'] = binutils.demangle(true_name)
+        out['size'] = sym.entry['st_size']
+        out['addr'] = sym.entry['st_value']
+
+        return out
+
 
     ###### Low-level serial interface
 

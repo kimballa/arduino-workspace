@@ -9,8 +9,9 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Search symtab for mangled symbol
-  * Connect to debugger
+  * Add #n indexing into sym lookup cache; substition in cmd argv
+  * Add '$' substitution in cmd argv.
+  * Remove / [clone .constprop.*]$/ from demangled names.
   * Read global var by sym
   * Write global var by sym
   * Deconvolve stacktrace addr's to fn names (and display args?)

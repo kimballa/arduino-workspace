@@ -25,8 +25,14 @@ class Repl(object):
 
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
+        self._last_sym_search = []   # results of most-recent symbol substr search.
+        self._last_sym_used = None   # last symbol referenced by the user.
+
     def _setup_cmd_map(self):
         m = {}
+        m["addr"] = self._addr_for_sym
+        m["."] = self._addr_for_sym
+
         m["backtrace"] = self._backtrace
         m["\\t"] = self._backtrace
 
@@ -69,6 +75,7 @@ class Repl(object):
 
         m["sym"] = self._symbol_search
         m["?"] = self._symbol_search
+        m["syms"] = self._list_symbols
 
         self._cmd_map = m
 
@@ -255,11 +262,52 @@ class Repl(object):
 
 
     def _symbol_search(self, argv):
-        pass
+        if len(argv) == 0:
+            print("Syntax: sym <substring>")
+            return
+
+        # Perform the symbol search and also cache it.
+        self._last_sym_search = self._debugger.syms_by_substr(argv[0])
+        if len(self._last_sym_search) == 0:
+            print("(No matching symbols)")
+        elif len(self._last_sym_search) == 1:
+            # Found a unique hit.
+            print(self._last_sym_search[i])
+            self._last_sym_used = self._last_sym_search[0] # last-used symbol is the unique match.
+        else:
+            # Multiple results
+            for i in range(0, len(self._last_sym_search)):
+                print(f"#{i}. {self._last_sym_search[i]}")
+
+
+    def _list_symbols(self, argv):
+        all_syms = self._debugger.syms_by_substr("")
+        if len(all_syms) == 0:
+            print("No symbol information available")
+            return
+
+        for i in range(0, len(all_syms)):
+            print(f"#{i}. {all_syms[i]}")
+
+
+    def _addr_for_sym(self, argv):
+        if len(argv) == 0:
+            print("Syntax: addr <symbol_name>")
+            return
+
+        sym = self._debugger.lookup_sym(argv[0])
+        if sym is None:
+            print(f"No symbol found: {argv[0]}")
+            return
+
+        print(f'{sym["demangled"]}: {sym["addr"]:08x} ({sym["size"]})')
+        self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
+
 
 
     def print_help(self, argv):
 
+        print("addr (.) -- Show address of a symbol")
         print("backtrace (\\t) -- Show the function call stack")
         print("break (^C) -- Interrupt program execution for debugging")
         print("continue (c, \\c) -- Continue main program execution")
@@ -276,7 +324,13 @@ class Repl(object):
         print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
         print("setv (!) -- Update the value of a global variable")
         print("sym (?) -- Look up symbols containing a substring")
+        print("syms -- List all symbols")
         print("quit -- Quit the debugger console")
+        print("")
+        print("After doing a symbol search wuth sym or '?', you can reference")
+        print("results by number, e.g.: print #3  // look up value of 3rd symbol in the list")
+        print("The most recently-used such number--or '#0' if '?' gave a unique result--can")
+        print("then be referenced as '$'. e.g.: print $  // look up the same value again")
 
 
     def loop_input_body(self):
