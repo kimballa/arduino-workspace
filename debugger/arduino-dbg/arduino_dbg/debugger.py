@@ -366,7 +366,7 @@ class Debugger(object):
             if sym['st_info']['type'] != "STT_FUNC":
                 continue # Not a function
 
-            if addr + sym['st_size'] >= pc:
+            if addr + sym['st_size'] > pc:
                 return name # Found it.
 
     def lookup_sym(self, name):
@@ -654,11 +654,26 @@ class Debugger(object):
         mem_map.update(list(zip(mem_report_fmt, lines)))
         return mem_map
 
+    def get_backtrace(self):
+        """
+            Retrieve a list of memory addresses representing the call stack.
 
+            Return a list of dicts that describe each frame of the stack.
+        """
 
+        lines = self.send_cmd(protocol.DBG_OP_CALLSTACK, self.RESULT_LIST)
 
+        addrs = [int(line, 16) for line in lines]
+        funcs = [self.function_sym_by_pc(addr) for addr in addrs]
+        demangled = [binutils.demangle(func) for func in funcs]
 
+        out = []
+        for i in range(0, len(addrs)):
+            frame = {}
+            frame["addr"] = addrs[i]
+            frame["name"] = funcs[i]
+            frame["demangled"] = demangled[i]
+            out.append(frame)
 
-
-
+        return out
 

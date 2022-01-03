@@ -82,7 +82,9 @@ class Repl(object):
         self._cmd_map = m
 
     def _backtrace(self, argv):
-        print("Unimplemented")
+        frames = self._debugger.get_backtrace()
+        for i in range(0, len(frames)):
+            print(f"{i}. {frames[i]['addr']:04x}: {frames[i]['demangled']}")
 
 
     def _break(self, argv=None):
@@ -571,7 +573,7 @@ class Repl(object):
         print("setv (!) -- Update the value of a global variable")
         print("sym (?) -- Look up symbols containing a substring")
         print("syms -- List all symbols")
-        print("quit -- Quit the debugger console")
+        print("quit (\q) -- Quit the debugger console")
         print("")
         print("After doing a symbol search with sym or '?', you can reference results by")
         print("number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
@@ -624,7 +626,7 @@ class Repl(object):
 
         cmd = tokens[0]
 
-        if cmd == "quit" or cmd == "exit":
+        if cmd == "quit" or cmd == "exit" or cmd == "\\q":
             return True # Actually quit.
         elif cmd in self._cmd_map.keys():
             fn = self._cmd_map[cmd]
