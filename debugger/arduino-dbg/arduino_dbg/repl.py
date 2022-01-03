@@ -82,7 +82,7 @@ class Repl(object):
         self._cmd_map = m
 
     def _backtrace(self, argv):
-        pass
+        print("Unimplemented")
 
 
     def _break(self, argv=None):
@@ -120,7 +120,7 @@ class Repl(object):
 
 
     def _gpio(self, argv):
-        pass
+        print("Unimplemented")
 
     def _memstats(self, argv):
         """
@@ -175,7 +175,7 @@ class Repl(object):
 
 
     def _poke(self, argv):
-        pass
+        print("Unimplemented")
 
 
     def _print(self, argv):
@@ -190,6 +190,8 @@ class Repl(object):
         if sym is None:
             print(f"No symbol found: {argv[0]}")
             return
+
+        self._last_sym_used = argv[0] # Symbol argument saved as last symbol used.
 
         addr = sym["addr"]
         size = 1 # set default...
@@ -217,11 +219,6 @@ class Repl(object):
             print(f"{v:04x}")
         elif size == 4:
             print(f"{v:08x}")
-
-
-
-
-
 
 
     def _regs(self, argv):
@@ -357,7 +354,7 @@ class Repl(object):
 
 
     def _stack_mem(self, argv):
-        pass
+        print("Unimplemented")
 
 
     def _print_time(self, argv):
@@ -376,15 +373,16 @@ class Repl(object):
 
 
     def _print_time_millis(self, argv):
-        pass
+        print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
 
 
     def _print_time_micros(self, argv):
-        pass
+        print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
 
 
     def _set_var(self, argv):
-        pass
+        print("Unimplemented")
+        #self._last_sym_used = argv[0] # Save symbol argument as last symbol used.
 
 
     def _symbol_search(self, argv):
@@ -433,6 +431,8 @@ class Repl(object):
 
     def print_help(self, argv):
 
+        print("Commands")
+        print("--------")
         print("addr (.) -- Show address of a symbol")
         print("backtrace (\\t) -- Show the function call stack")
         print("break (^C) -- Interrupt program execution for debugging")
@@ -446,7 +446,7 @@ class Repl(object):
         print("print (v, \\v) -- Print a variable's value")
         print("regs -- Dump contents of registers")
         print("reset -- Reset the Arduino device")
-        print("set -- Set a config variable of the debugger")
+        print("set -- Set or retrieve a config variable of the debugger")
         print("stack (xs) -- Read an address relative to the SP register")
         print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
         print("setv (!) -- Update the value of a global variable")

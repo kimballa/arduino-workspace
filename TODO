@@ -10,15 +10,18 @@ On-device service capabilities:
 
 Client:
   * Remove / [clone .constprop.*]$/ from demangled names.
-  * Read global var by sym
-  * Write global var by sym
-  * Deconvolve stacktrace addr's to fn names (and display args?)
-    ... use addr2line(1) ?
-    See https://balau82.wordpress.com/2010/10/06/trace-and-profile-function-calls-with-gcc/
-    ... we should probably be recording the caller addr not (just) the callee method.
-    (only method you don't get that way is the leaf; but maybe we can pull the RETI target
-    from the ISR or __dbg_break() with some clever asm that knows the specific fn well.)
-  * 'help' text
+  * gpio r/w
+  * Write global var by sym (_set_var)
+  * poke
+  * SP-relative addr read
+  * show backtrace
+    * Deconvolve stacktrace addr's to fn names (and display args?)
+      ... use addr2line(1) ?
+      See https://balau82.wordpress.com/2010/10/06/trace-and-profile-function-calls-with-gcc/
+      ... we should probably be recording the caller addr not (just) the callee method.
+      (only method you don't get that way is the leaf; but maybe we can pull the RETI target
+      from the ISR or __dbg_break() with some clever asm that knows the specific fn well.)
+  * Better command-specific 'help' text
   * Interact w/ all device service capabilities
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)

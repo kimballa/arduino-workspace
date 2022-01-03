@@ -1,5 +1,5 @@
 # (c) Copyright 2021 Aaron Kimball
-# 
+#
 # Definitions of how to communicate with the debug server
 # (pulled directly from dbg.cpp and reformatted).
 
@@ -19,10 +19,12 @@ DBG_OP_RESET     = 'R' # Reset CPU.
 DBG_OP_REGISTERS = 'r' # Dump registers
 DBG_OP_CALLSTACK = 's' # Return call stack info
 DBG_OP_TIME      = 't' # Return cpu timekeeping info.
+DBG_OP_TIME_MILLIS = 'tm' # Return millisecs since boot.
+DBG_OP_TIME_MICROS = 'tu' # Return microseconds since boot.
 DBG_OP_NONE      = DBG_END
 
 # prefix for logged messages that debugger client should output verbatim to console.
-DBG_RET_PRINT    = '>' 
+DBG_RET_PRINT    = '>'
 
 # Character appended to 't' (OP_TIME) to specify units to report.
 # e.g. Use the command "tm\n" to get the current millis().
