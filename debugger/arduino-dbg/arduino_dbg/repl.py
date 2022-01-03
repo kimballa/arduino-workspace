@@ -126,6 +126,25 @@ class Repl(object):
         """
             Print metrics about how much memory is in use.
         """
+        mem_map = self._debugger.get_memstats()
+        ram_end = mem_map["RAMEND"]
+        ram_start = mem_map["RAMSTART"]
+        total_ram = ram_end - ram_start + 1
+        stack_size = ram_end - mem_map["SP"]
+        if mem_map["HeapEnd"] != 0:
+            heap_size = mem_map["HeapEnd"] - mem_map["HeapStart"]
+        else:
+            heap_size = 0 # No allocation performed
+
+        global_size = mem_map["HeapStart"] - ram_start
+        free_ram = total_ram - stack_size - heap_size - global_size
+
+        print(f'   Total RAM:  {total_ram:>4}  RAMEND={ram_end:04x} .. RAMSTART={ram_start:04x}')
+        print(f'  Stack size:  {stack_size:>4}      SP={mem_map["SP"]:04x}')
+        print(f'      (free):  {free_ram:>4}')
+        print(f'   Heap size:  {heap_size:>4}')
+        print(f'     Globals:  {global_size:>4} (.data + .bss)')
+
 
     def _mem(self, argv):
         """
@@ -422,6 +441,7 @@ class Repl(object):
         print("gpio -- Read or write a GPIO pin")
         print("help -- Show this help text")
         print("mem (x, \\m) -- Read a memory address on the Arduino")
+        print("memstats -- Display info about memory map and RAM usage")
         print("poke -- Write to a variable or memory address on the Arduino")
         print("print (v, \\v) -- Print a variable's value")
         print("regs -- Dump contents of registers")

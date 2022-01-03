@@ -620,5 +620,27 @@ class Debugger(object):
         result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], self.RESULT_ONELINE)
         return int(result, base=16)
 
+    def get_memstats(self):
+        """
+            Return info about memory map of the CPU and usage.
+        """
+        lines = self.send_cmd(protocol.DBG_OP_MEMSTATS, self.RESULT_LIST)
+        lines = [int(x, base=16) for x in lines]
+
+        mem_map = {}
+        mem_map['RAMSTART'] = self._arch["RAMSTART"]
+        mem_map['RAMEND'] = self._arch["RAMEND"]
+        mem_map['FLASHEND'] = self._arch["FLASHEND"]
+
+        mem_report_fmt = self._arch["mem_list_fmt"]
+        mem_map.update(list(zip(mem_report_fmt, lines)))
+        return mem_map
+
+
+            
+        
+
+
+
 
 
