@@ -175,7 +175,58 @@ class Repl(object):
 
 
     def _poke(self, argv):
-        print("Unimplemented")
+        base = 10
+        if len(argv) < 2:
+            print("Syntax: poke <addr (hex)> <value> [size=1] [base=10]")
+            return
+        else:
+            addr = argv[0]
+            val = argv[1]
+
+        if len(argv) > 2:
+            size = argv[2]
+        else:
+            size = 1
+
+        if len(argv) > 3:
+            try:
+                base = int(argv[3])
+            except ValueError:
+                print(f"Warning: could not set base={argv[3]}. Using base 10")
+                base = 10
+
+        # Convert argument to integer. (TODO(aaron): Handle floating point some day?)
+        try:
+            val = int(val, base=base)
+        except ValueError:
+            print(f"Error: Cannot parse integer value {val} in base {base}")
+            return
+
+        # Resolve memory address
+        try:
+            addr = int(addr, base=16)
+        except ValueError:
+            print(f"Error: Cannot parse memory address {addr} in base 16")
+            return
+
+        # Resolve size
+        try:
+            size = int(size)
+        except ValueError:
+            print(f"Error: Cannot parse memory size {size}")
+
+        if size < 1:
+            size = 1
+        elif size > 4 or size == 3:
+            size = 4
+
+        data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
+        if data_addr_mask and (addr & data_addr_mask) == addr:
+            # We're trying to update something in flash.
+            print(f"Error: Cannot write to flash segment at address {addr:x}")
+        else:
+            # We're trying to update something in SRAM:
+            self._debugger.set_sram(addr, val, size)
 
 
     def _print(self, argv):
@@ -387,7 +438,7 @@ class Repl(object):
         base = 10
         hwm = 0 # high-water mark for tokens consumed
         if len(argv) == 0:
-            print("Syntax: setv <symbol_name> [=] <value> [base]")
+            print("Syntax: setv <symbol_name> [=] <value> [base=10]")
             return
         elif len(argv[0].split("=", 1)) == 2:
             # setv sym=val [base]
@@ -415,7 +466,7 @@ class Repl(object):
             except ValueError:
                 print(f"Warning: could not set base={argv[hwm]}. Using base 10")
                 base = 10
-        
+
 
         sym = self._debugger.lookup_sym(name)
         if sym is None:
@@ -426,11 +477,11 @@ class Repl(object):
 
         # Convert argument to integer. (TODO(aaron): Handle floating point some day?)
         try:
-            val = int(val, base=base) 
+            val = int(val, base=base)
         except ValueError:
             print(f"Error: Cannot parse integer value {val} in base {base}")
             return
-        
+
         # Resolve symbol to memory address
         addr = sym["addr"]
         size = 1 # set default...
