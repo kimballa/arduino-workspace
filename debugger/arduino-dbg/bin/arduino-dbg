@@ -9,7 +9,7 @@
 PY3=`which python3`
 PY3=`readlink -f "${PY3}"`
 
-dbgroot=`pwd`/../
+dbgroot=`dirname $0`/../
 dbgroot=`readlink -f "${dbgroot}"`
 
 export PYTHONPATH="${dbgroot}":"${PYTHONPATH}"

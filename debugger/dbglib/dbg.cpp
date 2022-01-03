@@ -477,6 +477,11 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
 // attribute. We also configure (via gcc args) the Arduino core to be exempt from tracing.
 // And since libc wasn't compiled with tracing hooks enabled, it is also exempt; thus this
 // tracks method calls in user code & added libraries only.
+//
+// As a complicated wrinkle to the above point about instrumentation: Our method actually
+// logs the PC at the *caller* of the method, not the method we're jumping into. The breakpoint
+// logic captures the PC within the interrupted method regardless of whether that method is
+// instrumented.
 
 #ifndef DBG_NO_STACKTRACE // Stack-tracing enabled.
 
@@ -484,6 +489,7 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
 static volatile void* traceStack[__dbg_internal_stack_frame_limit];
 static volatile void** traceStackNext = &(traceStack[0]);
 static volatile void** traceStackTop = NULL;
+static volatile void* pcAtBreakpoint = NULL; // PC where break triggered.
 #endif
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
@@ -501,7 +507,8 @@ void __cyg_profile_func_enter(void *this_fn, void *call_site) {
     }
   }
 
-  *traceStackNext = this_fn;
+  //*traceStackNext = this_fn;
+  *traceStackNext = call_site;
 
   if (NULL == traceStackTop) {
     traceStackTop = traceStackNext; // Non-empty buffer now has a top-of-stack.
@@ -557,7 +564,21 @@ static inline void __dbg_callstack_epilogue() {
  * function-pointer stack in a circular buffer.
  */
 static void __dbg_callstack() {
+  uint16_t fnPtr;
+
   cli(); // When directly reading 2-byte values from stack, don't let interrupts interfere.
+
+  if (NULL != pcAtBreakpoint) {
+    // The very top of the callstack is the PC running before we hit the breakpoint/ISR.
+    // This is stored in its own variable off the instrumented stack. Send back as top-most frame.
+    fnPtr = (uint16_t)pcAtBreakpoint;
+#ifdef __AVR_ARCH__
+    fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
+#endif /* __AVR_ARCH__ */
+    sei();
+    DBG_SERIAL.println(fnPtr, HEX);
+    cli();
+  }
 
   if (NULL == traceStackTop) {
     // Empty call stack traced.
@@ -570,7 +591,7 @@ static void __dbg_callstack() {
   }
 
   while(true) {
-    uint16_t fnPtr = (uint16_t)*stackElem;
+    fnPtr = (uint16_t)*stackElem;
 #ifdef __AVR_ARCH__
     fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
 #endif /* __AVR_ARCH__ */
@@ -607,9 +628,40 @@ static void __dbg_callstack() {
  * If we have a request from the debugger client, we break into the debugger service.
  */
 ISR(TIMER1_COMPA_vect) {
-  if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
+  
+  if (debug_status & DBG_STATUS_IN_BREAK) {
+    return; // Already in debugger service; don't clobber saved link register or re-enter debugger.
+  }
+
+#ifndef DBG_NO_STACKTRACE
+  // The ISR pushes 15 register values to the stack and we push two more to save Y/FP.
+  // Memorize the "calling" address (RETI return point) as where the breakpoint fired.
+  // If the ISR changes how many regs it pushes, this might break. It seems to save
+  // everything (except Y, which we took care of) though, so probably stable. If this
+  // gives trouble, redefine the ISR as `naked` and push everything by ourselves.
+  #define ISR_RET_SLOT_LO (17 + 2)
+  #define ISR_RET_SLOT_HI (17 + 1)
+  __asm__ volatile(
+    "push r28\n\t"                    // save Y (FP) on stack (only regs not saved by ISR)
+    "push r29\n\t"
+    "in r28, __SP_L__\n\t"            // Yl <- SPL  (Set up our own frame pointer)
+    "in r29, __SP_H__\n\t"            // Yh <- SPH 
+    "ldd r24, Y+(%[ret_slot_lo])\n\t" // r24 <- lo(*(Y + ret_slot)) - copy link slot on stack to r25..r24.
+    "ldd r25, Y+(%[ret_slot_hi])\n\t" // r25 <- hi(*(Y + ret_slot)) - offset is 17x push reg + 2 for the PC.
+    "sts %[link_reg]+1, r25\n\t"      // pcAtBreakpoint <- (r25, r24)
+    "sts %[link_reg], r24\n\t"    
+    "pop r29\n\t"                     // Unwind our usage of the stack
+    "pop r28\n\t"                     // Restore prior Y 
+    : [link_reg] "=m" (pcAtBreakpoint)     // '=m' 16-bit memory address value (output)
+    : [ret_slot_lo] "I" (ISR_RET_SLOT_LO), // 'I' 6-bit positive displacement value
+      [ret_slot_hi] "I" (ISR_RET_SLOT_HI)  // 'I' 6-bit positive displacement value
+    : "r24", "r25"  // clobbered regs.
+  );
+#endif /* DBG_NO_STACKTRACE */
+
+  if (DBG_SERIAL.available()) {
     // Enter debug service if serial traffic available, and we are not already within the dbg
-    // service.
+    // service (checked earlier).
     __dbg_service();
   }
 }

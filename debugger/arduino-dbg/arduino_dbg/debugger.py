@@ -59,7 +59,7 @@ class Debugger(object):
     def __init__(self, elf_name, port, baud=57600, timeout=1):
         self._conn = None
         self.reopen(port, baud, timeout)
-        self.elf_name = elf_name
+        self.elf_name = os.path.realpath(elf_name)
         self._sections = {}
         self._addr_to_symbol = {}
         self._symbols = {}
@@ -283,11 +283,12 @@ class Debugger(object):
             Read the target ELF file to load debugging information.
         """
         if self.elf_name is None:
-            print("No ELF filename given")
+            print("No ELF file provided; cannot load symbols")
             return
 
         with open(self.elf_name, 'rb') as f:
             elf = ELFFile(f)
+            print(f"Loading image and symbols from {self.elf_name}")
 
             for sect in elf.iter_sections():
                 my_section = {}
@@ -664,7 +665,11 @@ class Debugger(object):
         lines = self.send_cmd(protocol.DBG_OP_CALLSTACK, self.RESULT_LIST)
 
         addrs = [int(line, 16) for line in lines]
+        print("backtrace addrs:")
+        print(str(addrs))
         funcs = [self.function_sym_by_pc(addr) for addr in addrs]
+        print("backtrace funcs:")
+        print(str(funcs))
         demangled = [binutils.demangle(func) for func in funcs]
 
         out = []
