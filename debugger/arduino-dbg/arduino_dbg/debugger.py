@@ -599,6 +599,17 @@ class Debugger(object):
 
         return registers
 
+    def set_sram(self, addr, value, size=1):
+        """
+            Update data in SRAM on the instance.
+        """
+        if self._arch["DATA_ADDR_MASK"]:
+            # On AVR, ELF file thinks .data starts at 800000h; it actually starts at 0h, aliased
+            # with the separate segment containing .text in flash RAM.
+            addr = addr & self._arch["DATA_ADDR_MASK"]
+
+        self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], self.RESULT_SILENT)
+
     def get_sram(self, addr, size=1):
         """
             Return data from SRAM on the instance.
@@ -633,6 +644,13 @@ class Debugger(object):
         mem_map['FLASHEND'] = self._arch["FLASHEND"]
 
         mem_report_fmt = self._arch["mem_list_fmt"]
+
+        if len(lines) == 0:
+            return None # Debugger server does not have memstats capability compiled in.
+        elif len(lines) != len(mem_report_fmt):
+            print("Warning: got response inconsistent with expected report format for arch.")
+            return None # Debugger server didn't respond with the right mem_list_fmt..?!
+
         mem_map.update(list(zip(mem_report_fmt, lines)))
         return mem_map
 

@@ -381,8 +381,76 @@ class Repl(object):
 
 
     def _set_var(self, argv):
-        print("Unimplemented")
-        #self._last_sym_used = argv[0] # Save symbol argument as last symbol used.
+        """
+            Update data in RAM, by symbol.
+        """
+        base = 10
+        hwm = 0 # high-water mark for tokens consumed
+        if len(argv) == 0:
+            print("Syntax: setv <symbol_name> [=] <value> [base]")
+            return
+        elif len(argv[0].split("=", 1)) == 2:
+            # setv sym=val [base]
+            name = argv[0].split("=", 1)[0]
+            val = argv[0].split("=", 1)[1]
+            hwm = 1
+        elif len(argv) >= 2:
+            name = argv[0]
+            if argv[1] == "=" and len(argv) >= 3:
+                # setv sym = val [base]
+                val = argv[2]
+                hwm = 3
+            else:
+                # setv sym val [base]
+                val = argv[1]
+                hwm = 2
+        else:
+            # len(argv) = 1 but no equality; just 'setv sym'.
+            print("Syntax: setv <symbol_name> [=] <value> [base]")
+            return
+
+        if hwm < len(argv):
+            try:
+                base = int(argv[hwm])
+            except ValueError:
+                print(f"Warning: could not set base={argv[hwm]}. Using base 10")
+                base = 10
+        
+
+        sym = self._debugger.lookup_sym(name)
+        if sym is None:
+            print(f"No symbol found: {name}")
+            return
+
+        self._last_sym_used = name # Symbol argument saved as last symbol used.
+
+        # Convert argument to integer. (TODO(aaron): Handle floating point some day?)
+        try:
+            val = int(val, base=base) 
+        except ValueError:
+            print(f"Error: Cannot parse integer value {val} in base {base}")
+            return
+        
+        # Resolve symbol to memory address
+        addr = sym["addr"]
+        size = 1 # set default...
+        try:
+            size = sym["size"] # override if available.
+        except KeyError:
+            pass
+
+        if size < 1:
+            size = 1
+        elif size > 4 or size == 3:
+            size = 4
+
+        data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
+        if data_addr_mask and (addr & data_addr_mask) == addr:
+            # We're trying to update something in flash.
+            print(f"Error: Cannot write to flash segment at address {addr:x}")
+        else:
+            # We're trying to update something in SRAM:
+            self._debugger.set_sram(addr, val, size)
 
 
     def _symbol_search(self, argv):

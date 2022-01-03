@@ -11,7 +11,6 @@ On-device service capabilities:
 Client:
   * Remove / [clone .constprop.*]$/ from demangled names.
   * gpio r/w
-  * Write global var by sym (_set_var)
   * poke
   * SP-relative addr read
   * show backtrace
