@@ -9,7 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Catch EOFError and gracefully quit.
   * Remove / [clone .constprop.*]$/ from demangled names.
   * Read global var by sym
   * Write global var by sym

@@ -331,7 +331,7 @@ class Debugger(object):
         for name in all_names:
             try:
                 name.index(substr)
-                # If we get here, 
+                # If we get here, it's a match.
                 candidates.append(name)
             except ValueError:
                 pass # Not a match.
@@ -385,7 +385,7 @@ class Debugger(object):
         try:
             sym = self._symbols[true_name]
         except KeyError:
-            return None 
+            return None
 
         out = {}
         out['name'] = true_name
@@ -484,6 +484,7 @@ class Debugger(object):
 
 
         if type(dbg_cmd) == list:
+            dbg_cmd = [str(x) for x in dbg_cmd]
             dbg_cmd = " ".join(dbg_cmd) + "\n"
         elif type(dbg_cmd) != str:
             dbg_cmd = str(dbg_cmd)
@@ -597,5 +598,27 @@ class Debugger(object):
                 idx += 1
 
         return registers
+
+    def get_sram(self, addr, size=1):
+        """
+            Return data from SRAM on the instance.
+        """
+
+        if self._arch["DATA_ADDR_MASK"]:
+            # On AVR, ELF file thinks .data starts at 800000h; it actually starts at 0h, aliased
+            # with the separate segment containing .text in flash RAM.
+            addr = addr & self._arch["DATA_ADDR_MASK"]
+
+        result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], self.RESULT_ONELINE)
+        return int(result, base=16)
+
+    def get_flash(self, addr, size=1):
+        """
+            Return data from Flash on the instance.
+        """
+
+        result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], self.RESULT_ONELINE)
+        return int(result, base=16)
+
 
 

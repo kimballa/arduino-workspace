@@ -53,6 +53,8 @@ class Repl(object):
         m["x"] = self._mem
         m["\\m"] = self._mem
 
+        m["memstats"] = self._memstats
+
         m["poke"] = self._poke
 
         m["print"] = self._print
@@ -92,15 +94,65 @@ class Repl(object):
 
 
     def _flash(self, argv):
-        pass
+        if len(argv) == 0:
+            print("Syntax: flash [<size>] <addr (hex)>")
+            return
+        elif len(argv) == 1:
+            size = 1
+            addr = int(argv[0], base=16)
+        else:
+            size = int(argv[0])
+            addr = int(argv[1], base=16)
+
+        if size < 1:
+            size = 1
+        elif size > 4 or size == 3:
+            size = 4
+
+        v = self._debugger.get_flash(addr, size)
+        print(f"<{v}>")
+        if size == 1:
+            print(f"{v:02x}")
+        elif size == 2:
+            print(f"{v:04x}")
+        elif size == 4:
+            print(f"{v:08x}")
 
 
     def _gpio(self, argv):
         pass
 
+    def _memstats(self, argv):
+        """
+            Print metrics about how much memory is in use.
+        """
 
     def _mem(self, argv):
-        pass
+        """
+            Retrieve data from RAM, by address.
+        """
+        if len(argv) == 0:
+            print("Syntax: mem [<size>] <addr (hex)>")
+            return
+        elif len(argv) == 1:
+            size = 1
+            addr = int(argv[0], base=16)
+        else:
+            size = int(argv[0])
+            addr = int(argv[1], base=16)
+
+        if size < 1:
+            size = 1
+        elif size > 4 or size == 3:
+            size = 4
+
+        v = self._debugger.get_sram(addr, size)
+        if size == 1:
+            print(f"{v:02x}")
+        elif size == 2:
+            print(f"{v:04x}")
+        elif size == 4:
+            print(f"{v:08x}")
 
 
     def _poke(self, argv):
@@ -108,7 +160,49 @@ class Repl(object):
 
 
     def _print(self, argv):
-        pass
+        """
+            Retrieve data from flash or RAM, by symbol.
+        """
+        if len(argv) == 0:
+            print("Syntax: print <symbol_name>")
+            return
+
+        sym = self._debugger.lookup_sym(argv[0])
+        if sym is None:
+            print(f"No symbol found: {argv[0]}")
+            return
+
+        addr = sym["addr"]
+        size = 1 # set default...
+        try:
+            size = sym["size"] # override if available.
+        except KeyError:
+            pass
+
+        if size < 1:
+            size = 1
+        elif size > 4 or size == 3:
+            size = 4
+
+        data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
+        if data_addr_mask and (addr & data_addr_mask) == addr:
+            # We're requesting something in flash.
+            v = self._debugger.get_flash(addr, size)
+        else:
+            # We're requesting something in SRAM:
+            v = self._debugger.get_sram(addr, size)
+
+        if size == 1:
+            print(f"{v:02x}")
+        elif size == 2:
+            print(f"{v:04x}")
+        elif size == 4:
+            print(f"{v:08x}")
+
+
+
+
+
 
 
     def _regs(self, argv):
@@ -248,7 +342,18 @@ class Repl(object):
 
 
     def _print_time(self, argv):
-        pass
+        if len(argv) == 0:
+            print("Syntax: time [millis|micros]")
+            return
+
+        if argv[0] == "millis":
+            return self._print_time_millis(argv)
+        elif argv[0] == "micros":
+            return self._print_time_micros(argv)
+        else:
+            print("Syntax: time [millis|micros]")
+            return
+
 
 
     def _print_time_millis(self, argv):
@@ -329,10 +434,10 @@ class Repl(object):
         print("syms -- List all symbols")
         print("quit -- Quit the debugger console")
         print("")
-        print("After doing a symbol search wuth sym or '?', you can reference")
-        print("results by number, e.g.: print #3  // look up value of 3rd symbol in the list")
+        print("After doing a symbol search with sym or '?', you can reference results by")
+        print("number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
         print("The most recently-used such number--or '#0' if '?' gave a unique result--can")
-        print("then be referenced as '$'. e.g.: print $  // look up the same value again")
+        print("then be referenced as '$'. e.g.: `print $`  // look up the same value again")
 
 
     def loop_input_body(self):
@@ -348,6 +453,10 @@ class Repl(object):
             print('') # Terminate line after visible '^C' in input.
             self._break()
             return False
+        except EOFError:
+            # Received '^D'; time to quit
+            print('')
+            return True
 
         raw_tokens = cmdline.split(" ")
         tokens = []
