@@ -65,8 +65,10 @@ class Repl(object):
         m["reset"] = self._reset
         m["set"] = self._set_conf
 
-        m["stack"] = self._stack_mem
-        m["xs"] = self._stack_mem
+        m["stack"] = self._stack_display
+
+        m["stackaddr"] = self._stack_mem_read
+        m["xs"] = self._stack_mem_read
 
         m["time"] = self._print_time
         m["tm"] = self._print_time_millis
@@ -463,8 +465,35 @@ class Repl(object):
                 print(str(e))
 
 
-    def _stack_mem(self, argv):
+    def _stack_display(self, argv):
+        """ Read several values from the stack and display them """
         print("Unimplemented")
+
+
+    def _stack_mem_read(self, argv):
+        """ stackaddr <offset> - read a memory address relative to SP """
+        if len(argv) == 0:
+            print("Syntax: stackaddr [<size>] <offset (hex)>")
+            return
+        elif len(argv) == 1:
+            size = 1
+            offset = int(argv[0], base=16)
+        else:
+            size = int(argv[0])
+            offset = int(argv[1], base=16)
+
+        if size < 1:
+            size = 1
+        elif size > 4 or size == 3:
+            size = 4
+
+        v = self._debugger.get_stack_sram(offset, size)
+        if size == 1:
+            print(f"{v:02x}")
+        elif size == 2:
+            print(f"{v:04x}")
+        elif size == 4:
+            print(f"{v:08x}")
 
 
     def _print_time(self, argv):
@@ -625,7 +654,8 @@ class Repl(object):
         print("regs -- Dump contents of registers")
         print("reset -- Reset the Arduino device")
         print("set -- Set or retrieve a config variable of the debugger")
-        print("stack (xs) -- Read an address relative to the SP register")
+        print("stack -- Display the bottom values of the stack")
+        print("stackaddr (xs) -- Read an address relative to the SP register")
         print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
         print("setv (!) -- Update the value of a global variable")
         print("sym (?) -- Look up symbols containing a substring")

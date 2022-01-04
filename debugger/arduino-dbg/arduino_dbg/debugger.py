@@ -624,6 +624,13 @@ class Debugger(object):
         result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], self.RESULT_ONELINE)
         return int(result, base=16)
 
+    def get_stack_sram(self, offset, size=1):
+        """
+            Return data from SRAM on the instance, relative to the stack pointer.
+        """
+        result = self.send_cmd([protocol.DBG_OP_STACKREL, size, offset], self.RESULT_ONELINE)
+        return int(result, base=16)
+
     def get_flash(self, addr, size=1):
         """
             Return data from Flash on the instance.

@@ -9,8 +9,9 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * Show the last ~16 or so bytes on the stack. (repl._stack_display)
+    ... detect 2-byte sequences within .text and label them?
   * Remove / [clone .constprop.*]$/ from demangled names.
-  * SP-relative addr read
   * Better command-specific 'help' text
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
