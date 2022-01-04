@@ -10,7 +10,6 @@ On-device service capabilities:
 
 Client:
   * Remove / [clone .constprop.*]$/ from demangled names.
-  * gpio r/w
   * SP-relative addr read
   * Better command-specific 'help' text
 
@@ -29,7 +28,7 @@ Current stats: 9660 data, 514 RAM
     11750 / 546 (gpio; more selective stacktrace instrumentation; *10114/534)
     11838 / 552 (memory usage reporting; *10192/540)
     11838 / 552 *v1.0*
-    12870 / 572 (with dual call stack) <-- why an extra 1K flash?!
+    12870 / 572 (with dual call stack) <-- Extra size is 18 bytes / fn o.h. of including call_site.
 
 
 empty program:  3896 / 150

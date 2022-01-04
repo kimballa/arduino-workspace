@@ -136,7 +136,50 @@ class Repl(object):
 
 
     def _gpio(self, argv):
-        print("Unimplemented")
+        """ set or retrieve a gpio pin value """
+
+        if len(argv) == 0:
+            print("Syntax: gpio <pinId> [<value>]")
+            return
+        elif len(argv) == 1:
+            try:
+                pin = int(argv[0])
+            except ValueError:
+                print(f"Error: could not parse pin id {argv[0]}")
+                return
+
+            num_pins = self._debugger.get_platform_conf("gpio_pins")
+            if pin < 0 or pin >= num_pins:
+                print(f"Error: available gpio pins are between [0, {num_pins}).")
+
+            v = self._debugger.get_gpio_value(pin)
+            if v is not None:
+                print(v)
+        else:
+            # 2+ args => set the pin value.
+            try:
+                pin = int(argv[0])
+            except ValueError:
+                print(f"Error: could not parse pin id {argv[0]}")
+                return
+
+            try:
+                val = int(argv[1])
+            except ValueError:
+                print(f"Error: could not parse value ({argv[1]})")
+                return
+
+            if val != 0 and val != 1:
+                print("Error: value must be 0 or 1")
+                return
+
+            num_pins = self._debugger.get_platform_conf("gpio_pins")
+            if pin < 0 or pin >= num_pins:
+                print(f"Error: available gpio pins are between [0, {num_pins}).")
+
+            self._debugger.set_gpio_value(pin, val)
+
+
 
     def _memstats(self, argv):
         """
@@ -643,8 +686,11 @@ class Repl(object):
         if cmd == "quit" or cmd == "exit" or cmd == "\\q":
             return True # Actually quit.
         elif cmd in self._cmd_map.keys():
-            fn = self._cmd_map[cmd]
-            fn(tokens[1:])
+            try:
+                fn = self._cmd_map[cmd]
+                fn(tokens[1:])
+            except Exception as e:
+                print(f"Error running '{cmd}': {e}")
         else:
             print("Unknown command '%s'; try 'help'." % cmd)
 

@@ -757,3 +757,27 @@ class Debugger(object):
 
         return out
 
+
+    def get_gpio_value(self, pin):
+        """
+            Retrieve the value (1 or 0) of a GPIO pin on the device.
+        """
+        if pin < 0 or pin >= self._platform["gpio_pins"]:
+            return None
+
+        v = self.send_cmd([protocol.DBG_OP_PORT_IN, pin], self.RESULT_ONELINE)
+        if len(v):
+            return int(v)
+        else:
+            return None
+
+
+    def set_gpio_value(self, pin, val):
+        """
+            Set a GPIO pin to 1 or 0 based on 'val'.
+        """
+        if pin < 0 or pin >= self._platform["gpio_pins"]:
+            return
+
+        self.send_cmd([protocol.DBG_OP_PORT_OUT, pin, val], self.RESULT_SILENT)
+
