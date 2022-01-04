@@ -211,7 +211,7 @@ static void __dbg_service() {
       break;
 #ifdef DBG_NO_GPIO
     case DBG_OP_PORT_IN:
-      DBG_SERIAL.println(0, HEX);
+      DBG_SERIAL.println('0');
       break;
 #else /* DBG_NO_GPIO */
     case DBG_OP_PORT_IN:
@@ -228,7 +228,7 @@ static void __dbg_service() {
 #endif /* DBG_NO_GPIO */
     case DBG_OP_TIME:
 #ifdef DBG_NO_TIME
-      DBG_SERIAL.println(0, DEC);
+      DBG_SERIAL.println('0');
 #else /* DBG_NO_TIME */
       while (!DBG_SERIAL.available()) { };
       b = DBG_SERIAL.read();
@@ -238,8 +238,7 @@ static void __dbg_service() {
         DBG_SERIAL.println((uint32_t)micros(), DEC);
       } else {
         DBG_SERIAL.print(DBG_RET_PRINT);
-        DBG_SERIAL.println(F("Error"));
-        DBG_SERIAL.println(0, DEC);
+        DBG_SERIAL.println(F("Error\n0"));
       }
 #endif /* DBG_NO_TIME */
       break;
@@ -268,7 +267,7 @@ exit_loop:
 
 static const char _breakpoint_msg[] PROGMEM = "Breakpoint at ";
 static const char _assert_fail_msg[] PROGMEM = "Assertion failure in ";
-
+static const char _separator[] PROGMEM = "): ";
 
 bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
     const unsigned int lineno) {
@@ -282,9 +281,7 @@ bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -302,9 +299,7 @@ bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *f
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -322,9 +317,7 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *f
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -342,9 +335,7 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const __Flash
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -356,9 +347,7 @@ void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t li
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(tracemsg);
 }
 
@@ -367,9 +356,7 @@ void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, co
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(tracemsg);
 }
 
@@ -378,9 +365,7 @@ void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, co
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(tracemsg);
 }
 
@@ -391,9 +376,7 @@ void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashStringHelper 
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(')');
-  DBG_SERIAL.print(':');
-  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(_separator);
   DBG_SERIAL.println(tracemsg);
 }
 
