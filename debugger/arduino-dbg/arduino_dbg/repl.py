@@ -84,7 +84,21 @@ class Repl(object):
     def _backtrace(self, argv):
         frames = self._debugger.get_backtrace()
         for i in range(0, len(frames)):
-            print(f"{i}. {frames[i]['addr']:04x}: {frames[i]['demangled']}")
+            frame = frames[i]
+
+            if frame["addr"] == 0:
+                # Got a stack trace gap. Just print the gap tombstone.
+                print(f"{i}. {frame['demangled']}")
+                continue
+
+            if frame["source_line"]:
+                src = f'  ({frame["source_line"]})'
+            else:
+                src = ''
+            print(f"{i}. {frame['addr']:04x}: {frame['demangled']}{src}")
+
+        # TODO(aaron): Should the 'frames' get cached like a 'sym' lookup (enabling
+        # reference to methods on the call stack via #1, #2, $, etc...)
 
 
     def _break(self, argv=None):

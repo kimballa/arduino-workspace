@@ -12,6 +12,10 @@
 // Debugger status bits.
 volatile uint8_t debug_status = 0;
 
+#ifdef DBG_ENABLED
+static volatile void* pcAtBreakpoint = NULL; // PC where break triggered.
+#endif
+
 // Forward declarations.
 static void __dbg_service() __attribute__((no_instrument_function));
 static void __dbg_callstack() __attribute__((no_instrument_function));
@@ -438,23 +442,37 @@ void __dbg_print(unsigned long msg) {
 }
 
 void __dbg_break(const char *funcOrFile, const uint16_t lineno) {
+  debug_status |= DBG_STATUS_IN_BREAK; // Mark debugger as started so we don't recursively re-enter.
   DBG_SERIAL.print(DBG_RET_PRINT);
   DBG_SERIAL.print(FPSTR(_breakpoint_msg));
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print(':');
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
+
+#ifndef DBG_NO_STACKTRACE
+  // Top of stack trace was captured on entry into this method.
+  // Don't take a final reading of PC.
+  pcAtBreakpoint = NULL;
+#endif /* DBG_NO_STACKTRACE */
 
   __dbg_service();
 }
 
 void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+  debug_status |= DBG_STATUS_IN_BREAK; // Mark debugger as started so we don't recursively re-enter.
   DBG_SERIAL.print(DBG_RET_PRINT);
   DBG_SERIAL.print(FPSTR(_breakpoint_msg));
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print(':');
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
+
+#ifndef DBG_NO_STACKTRACE
+  // Top of stack trace was captured on entry into this method.
+  // Don't take a final reading of PC.
+  pcAtBreakpoint = NULL;
+#endif /* DBG_NO_STACKTRACE */
 
   __dbg_service();
 }
@@ -486,10 +504,17 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
 #ifndef DBG_NO_STACKTRACE // Stack-tracing enabled.
 
 #ifdef DBG_ENABLED
+// traceStack holds addresses of instrumented functions we enter.
 static volatile void* traceStack[__dbg_internal_stack_frame_limit];
 static volatile void** traceStackNext = &(traceStack[0]);
 static volatile void** traceStackTop = NULL;
-static volatile void* pcAtBreakpoint = NULL; // PC where break triggered.
+
+// the companion callerStack holds return addresses into callers captured
+// simultaneously when we put a top-of-function addr on traceStack.
+static volatile void* callerStack[__dbg_internal_stack_frame_limit];
+static volatile void** callerStackNext = &(callerStack[0]);
+// We don't need a 'Top' pointer here b/c the cursor moves in sync with
+// traceStackNext; we know when to roll around to the other end of the array.
 #endif
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
@@ -507,17 +532,19 @@ void __cyg_profile_func_enter(void *this_fn, void *call_site) {
     }
   }
 
-  //*traceStackNext = this_fn;
-  *traceStackNext = call_site;
+  *traceStackNext = this_fn;
+  *callerStackNext = call_site;
 
   if (NULL == traceStackTop) {
     traceStackTop = traceStackNext; // Non-empty buffer now has a top-of-stack.
   }
 
   traceStackNext++;
+  callerStackNext++;
   if (traceStackNext > &(traceStack[__dbg_internal_stack_frame_limit - 1])) {
     // wrap around. Next call will eat an earlier stacktrace element.
     traceStackNext = &(traceStack[0]);
+    callerStackNext = &(callerStack[0]);
   }
 
   SREG = SREG_old; // Restore prior interrupt flag status.
@@ -533,10 +560,12 @@ void __cyg_profile_func_exit(void *this_fn, void *call_site) {
     // We're forgetting the bottom-most call on the call stack.
     // Throw away one pointer level.
     traceStackNext--;
+    callerStackNext--;
   } else {
     // The bottom-most call stack is in the first slot of the ring buffer.
     // Point to the last slot of the ring buffer instead.
     traceStackNext = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+    callerStackNext = &(callerStack[__dbg_internal_stack_frame_limit - 1]);
   }
 
   if (traceStackNext == traceStackTop) {
@@ -552,7 +581,6 @@ void __cyg_profile_func_exit(void *this_fn, void *call_site) {
 static inline void __dbg_callstack_epilogue() __attribute__((no_instrument_function));
 /** Clean-up code to call on all exit paths from __dbg_callstack(). */
 static inline void __dbg_callstack_epilogue() {
-  sei();
   DBG_SERIAL.println('$');
 }
 
@@ -566,47 +594,57 @@ static inline void __dbg_callstack_epilogue() {
 static void __dbg_callstack() {
   uint16_t fnPtr;
 
-  cli(); // When directly reading 2-byte values from stack, don't let interrupts interfere.
-
-  if (NULL != pcAtBreakpoint) {
-    // The very top of the callstack is the PC running before we hit the breakpoint/ISR.
-    // This is stored in its own variable off the instrumented stack. Send back as top-most frame.
-    fnPtr = (uint16_t)pcAtBreakpoint;
+  // The very top of the callstack is the PC running before we hit the ISR.
+  // This is stored in its own variable off the instrumented stack.
+  // (This will be NULL if we entered this through an instrumented DBG_BREAK() call.)
+  // Either way, send back as top-most frame.
+  fnPtr = (uint16_t)pcAtBreakpoint;
 #ifdef __AVR_ARCH__
-    fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
+  fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
 #endif /* __AVR_ARCH__ */
-    sei();
-    DBG_SERIAL.println(fnPtr, HEX);
-    cli();
-  }
+  DBG_SERIAL.println(fnPtr, HEX);
 
   if (NULL == traceStackTop) {
-    // Empty call stack traced.
+    // Empty call stack traced. Nothing more to report.
     return __dbg_callstack_epilogue();
   }
 
-  volatile void **stackElem = traceStackNext - 1;
-  if (stackElem < &(traceStack[0])) {
-    stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+  volatile void **traceElem = traceStackNext - 1;
+  volatile void **callerElem = callerStackNext - 1;
+  if (traceElem < &(traceStack[0])) {
+    traceElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+    callerElem = &(callerStack[__dbg_internal_stack_frame_limit - 1]);
   }
 
   while(true) {
-    fnPtr = (uint16_t)*stackElem;
+    // Alternate between reporting elements of traceStack and callerStack to
+    // allow the client to reproduce as much of the call stack as possible.
+    // Deduplication is caller's responsibility since we lack the symbol detail
+    // data here to perform that job (specifically, we need to know the size of
+    // each method in bytes).
+    fnPtr = (uint16_t)*traceElem;
 #ifdef __AVR_ARCH__
     fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
 #endif /* __AVR_ARCH__ */
 
-    sei();
     DBG_SERIAL.println(fnPtr, HEX);
-    cli();
 
-    if (stackElem == traceStackTop) {
+    fnPtr = (uint16_t)*callerElem;
+#ifdef __AVR_ARCH__
+    fnPtr <<= 1; // Function pointer values on AVR must mul by 2 to relate to .text section.
+#endif /* __AVR_ARCH__ */
+
+    DBG_SERIAL.println(fnPtr, HEX);
+
+    if (traceElem == traceStackTop) {
       break;
     }
 
-    stackElem--;
-    if (stackElem < &(traceStack[0])) {
-      stackElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+    traceElem--;
+    callerElem--;
+    if (traceElem < &(traceStack[0])) {
+      traceElem = &(traceStack[__dbg_internal_stack_frame_limit - 1]);
+      callerElem = &(callerStack[__dbg_internal_stack_frame_limit - 1]);
     }
   }
 
@@ -628,40 +666,13 @@ static void __dbg_callstack() {
  * If we have a request from the debugger client, we break into the debugger service.
  */
 ISR(TIMER1_COMPA_vect) {
-  
-  if (debug_status & DBG_STATUS_IN_BREAK) {
-    return; // Already in debugger service; don't clobber saved link register or re-enter debugger.
-  }
-
-#ifndef DBG_NO_STACKTRACE
-  // The ISR pushes 15 register values to the stack and we push two more to save Y/FP.
-  // Memorize the "calling" address (RETI return point) as where the breakpoint fired.
-  // If the ISR changes how many regs it pushes, this might break. It seems to save
-  // everything (except Y, which we took care of) though, so probably stable. If this
-  // gives trouble, redefine the ISR as `naked` and push everything by ourselves.
-  #define ISR_RET_SLOT_LO (17 + 2)
-  #define ISR_RET_SLOT_HI (17 + 1)
-  __asm__ volatile(
-    "push r28\n\t"                    // save Y (FP) on stack (only regs not saved by ISR)
-    "push r29\n\t"
-    "in r28, __SP_L__\n\t"            // Yl <- SPL  (Set up our own frame pointer)
-    "in r29, __SP_H__\n\t"            // Yh <- SPH 
-    "ldd r24, Y+(%[ret_slot_lo])\n\t" // r24 <- lo(*(Y + ret_slot)) - copy link slot on stack to r25..r24.
-    "ldd r25, Y+(%[ret_slot_hi])\n\t" // r25 <- hi(*(Y + ret_slot)) - offset is 17x push reg + 2 for the PC.
-    "sts %[link_reg]+1, r25\n\t"      // pcAtBreakpoint <- (r25, r24)
-    "sts %[link_reg], r24\n\t"    
-    "pop r29\n\t"                     // Unwind our usage of the stack
-    "pop r28\n\t"                     // Restore prior Y 
-    : [link_reg] "=m" (pcAtBreakpoint)     // '=m' 16-bit memory address value (output)
-    : [ret_slot_lo] "I" (ISR_RET_SLOT_LO), // 'I' 6-bit positive displacement value
-      [ret_slot_hi] "I" (ISR_RET_SLOT_HI)  // 'I' 6-bit positive displacement value
-    : "r24", "r25"  // clobbered regs.
-  );
-#endif /* DBG_NO_STACKTRACE */
-
-  if (DBG_SERIAL.available()) {
+  if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
     // Enter debug service if serial traffic available, and we are not already within the dbg
-    // service (checked earlier).
+    // service.
+#ifndef DBG_NO_STACKTRACE
+    // But first, record the top of the stacktrace (where this ISR would RETI back to)
+    pcAtBreakpoint = __builtin_extract_return_addr(__builtin_return_address(0));
+#endif /* DBG_NO_STACKTRACE */
     __dbg_service();
   }
 }

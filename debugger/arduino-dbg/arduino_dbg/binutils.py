@@ -24,5 +24,8 @@ def pc_to_source_line(elf_file, addr):
         encoding=locale.getpreferredencoding())
     stdout, _ = pipe.communicate()
     source_lines = stdout.split("\n")
-    return source_lines[0]
+    src_line = source_lines[0]
+    if src_line.startswith("??:"):
+        return None
+    return src_line
 

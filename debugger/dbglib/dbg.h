@@ -134,8 +134,10 @@
 
 extern void __dbg_setup() __attribute__((no_instrument_function));
 
-extern void __dbg_break(const char *funcOrFile, const uint16_t lineno); /* Enter user breakpoint. */
-extern void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno);
+/* Enter user breakpoint. */
+extern void __dbg_break(const char *funcOrFile, const uint16_t lineno) __attribute__((noinline));
+extern void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno)
+    __attribute__((noinline));
 
 extern bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
     const unsigned int lineno) __attribute__((no_instrument_function));
