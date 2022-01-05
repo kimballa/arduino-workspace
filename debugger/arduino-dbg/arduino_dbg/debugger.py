@@ -38,9 +38,25 @@ def _load_conf_module(module_name, resource_name):
     conf_resource_name = resource_name.strip() + ".conf"
     conf_text = resources.read_text(module_name, conf_resource_name)
     conf = {} # Create an empty environment in which to run the config code.
+
+    def _include_fn(extra_resource_name):
+        """
+            Provide an 'include' method within the exec() scope so a .conf file can include
+            more .conf files. This is restricted to the same module_name as the exterior binding
+            scope.
+        """
+        included_map = _load_conf_module(module_name, extra_resource_name) 
+        # Copy the items from the included map into the namespace of the including conf file
+        for (k, v) in included_map.items():
+            conf[k] = v
+
+        return None
+
+    conf['include'] = _include_fn # Give the 'include' function to the scope.
     try:
         exec(conf_text, conf, conf)
         del conf["__builtins__"] # Pull python internals from gloabls map we're using as config.
+        del conf["include"] # Pull out the include() function we provided.
     except:
         # Error parsing/executing conf; return empty result.
         print("Error loading config profile: %s" % conf_resource_name)
@@ -638,6 +654,26 @@ class Debugger(object):
 
         result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], self.RESULT_ONELINE)
         return int(result, base=16)
+
+    def get_stack_snapshot(self, size=16):
+        """
+            Retrieve the `size` bytes above SP (but not past RAMEND).
+
+            @return ($SP + 1, snapshot_array). snapshot_array[0] holds the byte at $SP + 1;
+            subsequent entries hold mem at addresses through $SP + size. i.e., the "top of the
+            stack" is in array[0] and the bottom of the stack (highest physical addr) at array[n].
+        """
+        regs = self.get_registers()
+        sp = regs["SP"]
+        ramend = self._arch["RAMEND"]
+        max_len = ramend - sp + 1
+        size = min(size, max_len)
+        snapshot = []
+        for i in range(sp + 1, sp + 1 + size):
+            v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, 1, i], self.RESULT_ONELINE), base=16)
+            snapshot.append(v)
+        return (sp + 1, snapshot) 
+
 
     def get_memstats(self):
         """

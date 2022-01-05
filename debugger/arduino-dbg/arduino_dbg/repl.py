@@ -468,6 +468,14 @@ class Repl(object):
     def _stack_display(self, argv):
         """ Read several values from the stack and display them """
         print("Unimplemented")
+        (top, snapshot) = self._debugger.get_stack_snapshot()
+        length = len(snapshot)
+
+        snapshot.reverse()
+        addr = top + length - 1
+        for b in snapshot:
+            print(f'{addr:04x}: {b:02x}')
+            addr -= 1
 
 
     def _stack_mem_read(self, argv):
