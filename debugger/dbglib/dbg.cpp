@@ -17,10 +17,13 @@ static volatile void* pcAtBreakpoint = NULL; // PC where break triggered.
 #endif
 
 // Forward declarations.
-static void __dbg_service() __attribute__((no_instrument_function));
-static void __dbg_callstack() __attribute__((no_instrument_function));
+extern "C" {
+  static void __dbg_service() __attribute__((no_instrument_function));
+  static void __dbg_callstack() __attribute__((no_instrument_function));
+  static inline void __dbg_reset() __attribute__((no_instrument_function));
+}
+
 ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
-static inline void __dbg_reset() __attribute__((no_instrument_function));
 
 #define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
 
@@ -515,7 +518,10 @@ void __cyg_profile_func_enter(void *this_fn, void *call_site) {
     }
   }
 
-  *traceStackNext = this_fn;
+  // Use return site into *our* caller as stand-in for this_fn; generates smaller code
+  // when creating calls to __cyg_profile_func_enter() while still identifying the
+  // entered function correctly.
+  *traceStackNext = __builtin_extract_return_addr(__builtin_return_address(0)); // this_fn;
   *callerStackNext = call_site;
 
   if (NULL == traceStackTop) {
