@@ -209,6 +209,14 @@ static void __dbg_service() {
       // Special registers: SP (note: 16 bit), SREG
       DBG_SERIAL.println((uint16_t)SP, HEX);
       DBG_SERIAL.println((uint8_t)SREG, HEX);
+      // PC can only be read by pushing it to the stack via a 'method call'.
+      asm volatile (
+          "rcall .    \n\t" // push PC value as of the next instruction point.
+          "pop %B0    \n\t" // pop PChi into hi(addr)
+          "pop %A0    \n\t" // pop PClo into lo(addr)
+      : "=e" (addr)
+      );
+      DBG_SERIAL.println(addr << 1, HEX); // addr now holds PC[15:1]; lsh by 1 to get a 'real' addr.
       DBG_SERIAL.println('$');
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;

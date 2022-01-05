@@ -306,12 +306,19 @@ class Debugger(object):
             elf = ELFFile(f)
             print(f"Loading image and symbols from {self.elf_name}")
 
-            for sect in elf.iter_sections():
-                my_section = {}
-                my_section["name"] = sect.name
-                my_section["size"] = sect.header['sh_size']
-                my_section["offset"] = sect.header['sh_offset']
-                self._sections[sect.name] = my_section
+            for elf_sect in elf.iter_sections():
+                section = {}
+                section["name"] = elf_sect.name
+                section["size"] = elf_sect.header['sh_size']
+                section["offset"] = elf_sect.header['sh_offset']
+                self._sections[elf_sect.name] = section
+
+                print("****************************")
+                print(f'Section {elf_sect.name} has header {elf_sect.header}')
+                print(f'offset: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
+                print("--data follows--")
+                print(f'{elf_sect.data()}')
+
 
                 #print("Section: %s at offset 0x%.8x with size %d" % (sect.name,
                 #    sect.header['sh_offset'], sect.header['sh_size']))

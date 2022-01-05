@@ -11,8 +11,20 @@ On-device service capabilities:
 Client:
   * Show the last ~16 or so bytes on the stack. (repl._stack_display)
     ... detect 2-byte sequences within .text and label them?
+
+__vector_17 does 16 bytes of push's + 2 bytes to call __dbg_service. (18 total)
+__dbg_service itself does 4 bytes.
+__dbg_break() only pushes 4 bytes (+2 to call _dbg_service).
+
+_stack_display() should take size and skip arguments, default size=16, skip=auto
+
+** Check whether __dbg_break is on top of the stack. If so, then 10 bytes of stack
+   are junk to skip. 
+** If not, then 22 bytes of stack are junk to skip.
+
   * Remove / [clone .constprop.*]$/ from demangled names.
   * Better command-specific 'help' text
+
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 * Breakpoint unit support
@@ -30,6 +42,7 @@ Current stats: 9660 data, 514 RAM
     11838 / 552 (memory usage reporting; *10192/540)
     11838 / 552 *v1.0*
     12870 / 572 (with dual call stack) <-- Extra size is 18 bytes / fn o.h. of including call_site.
+    12708 / 572 optimized instrumentation
 
 
 empty program:  3896 / 150
