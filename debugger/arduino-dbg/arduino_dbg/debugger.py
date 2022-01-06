@@ -45,7 +45,7 @@ def _load_conf_module(module_name, resource_name):
             more .conf files. This is restricted to the same module_name as the exterior binding
             scope.
         """
-        included_map = _load_conf_module(module_name, extra_resource_name) 
+        included_map = _load_conf_module(module_name, extra_resource_name)
         # Copy the items from the included map into the namespace of the including conf file
         for (k, v) in included_map.items():
             conf[k] = v
@@ -311,6 +311,8 @@ class Debugger(object):
                 section["name"] = elf_sect.name
                 section["size"] = elf_sect.header['sh_size']
                 section["offset"] = elf_sect.header['sh_offset']
+                section["addr"] = elf_sect.header['sh_addr']
+                section["elf"] = elf_sect
                 self._sections[elf_sect.name] = section
 
                 print("****************************")
@@ -342,6 +344,51 @@ class Debugger(object):
         self._addr_to_symbol = dict(sorted(self._addr_to_symbol.items()))
         for (addr, name) in self._addr_to_symbol.items():
             self._demangled_to_symbol[binutils.demangle(name)] = name
+
+
+    def get_section(self, section_name):
+        """
+            Return a section with the specified name.
+        """
+        return self._sections[section_name]
+
+    def get_image_bytes(self, start_addr, length):
+        """
+            Return a `bytes` object containing the "length" in-memory image bytes
+            beginning at "start_addr".
+
+            This may retrieve from sections like .text, .data, .bss, etc.
+            * This function does not resolve relocations or perform any post-processing on the ELF.
+            * This function does not return spans across multiple sections. If start_addr + length
+              exceeds the endpoint of the section containing start_addr, it will be truncated to
+              the section in question.
+
+            returns None if the start_addr cannot be localized within any section.
+        """
+        img_section = None
+        for (name, section) in self._sections.items():
+            if section["addr"] < start_addr and section["addr"] + section["size"] >= start_addr:
+                img_section = section
+                break
+
+        if img_section is None:
+            return None
+
+        data = img_section["elf"].data()
+        start_within_section = start_addr - img_section["addr"]
+        return data[start_within_section : start_within_section + length]
+
+    def image_for_symbol(self, symname):
+        """
+            Return the image bytes associated with a symbol (the initialized value of a variable
+            in .data, or the machine code within .text for a method)
+        """
+        symdata = self.lookup_sym(symname)
+        if symdata is None:
+            return None
+
+        return self.get_image_bytes(symdata["addr"], symdata["size"])
+
 
 
     def syms_by_substr(self, substr):
@@ -679,7 +726,7 @@ class Debugger(object):
         for i in range(sp + 1, sp + 1 + size):
             v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, 1, i], self.RESULT_ONELINE), base=16)
             snapshot.append(v)
-        return (sp + 1, snapshot) 
+        return (sp + 1, snapshot)
 
 
     def get_memstats(self):
