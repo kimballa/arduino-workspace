@@ -1,6 +1,8 @@
 # (c) Copyright 2021 Aaron Kimball
 
 import signal
+import traceback
+
 import arduino_dbg.debugger as dbg
 import arduino_dbg.protocol as protocol
 
@@ -729,6 +731,7 @@ class Repl(object):
                 fn(tokens[1:])
             except Exception as e:
                 print(f"Error running '{cmd}': {e}")
+                traceback.print_tb(e.__traceback__)
         else:
             print("Unknown command '%s'; try 'help'." % cmd)
 

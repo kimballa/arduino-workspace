@@ -7,7 +7,7 @@ _debugger_methods = [
   "__vector_17",     # timer interrupt
   "__dbg_service",   # The debugger interactive service loop
   ".*__dbg_break.*", # The overloaded __dbg_break() methods
-}
+]
 
 
 
@@ -40,10 +40,18 @@ def stack_frame_size_for_method(debugger, pc, method_name):
 
     fn_body = debugger.image_for_symbol(method_name)
     fn_sym = debugger.lookup_sym(method_name)
+    if fn_sym is None:
+        print(f"No function symbol for method: {method_name}")
+        return None
+
     fn_start_pc = fn_sym['addr']
     fn_size = fn_sym['size']
 
     default_fetch_width = max(default_fetch_width, push_op_width, pop_op_width)
+
+    print(f"Getting frame size for method {method_name} (@PC {pc:04x})")
+    print(f"start addr {fn_start_pc:04x}, size {fn_size} bytes")
+    #print(f"Function body:\n{fn_body}")
 
     depth = 0
     virt_pc = fn_start_pc
@@ -59,7 +67,9 @@ def stack_frame_size_for_method(debugger, pc, method_name):
     # operation, we need to be able to rely on an explicit frame pointer.
     while virt_pc < (fn_start_pc + fn_size) and virt_pc < pc:
         width = default_fetch_width
-        op = fn_body[virt_pc: virt_pc + width]
+        op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width], 
+            "little", signed=False)
+        #print(f'vpc {virt_pc:04x} (w={width}) -- op {op:02x} {op:016b}')
 
         if (op & pop_op_mask) == pop_op:
             # it's a pop
@@ -75,7 +85,8 @@ def stack_frame_size_for_method(debugger, pc, method_name):
 
                 if prologue_op_widths[i] != default_fetch_width:
                     width = prologue_op_widths[i]
-                    this_op = fn_body[virt_pc: virt_pc + width]
+                    this_op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width], 
+                        "little", signed=False)
 
                 if (this_op & prologue_op_masks[i]) == prologue_opcodes[i]:
                     is_prologue = True # non-stack-modifying prologue opcode confirmed
@@ -87,6 +98,9 @@ def stack_frame_size_for_method(debugger, pc, method_name):
                 break
 
         virt_pc += width
+
+    print(f"Got final depth {depth}")
+    return depth
 
 
 def stack_frame_size_by_pc(debugger, pc):

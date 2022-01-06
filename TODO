@@ -6,11 +6,23 @@ Makefile:
 Debugger:
 ------------
 
+* Remove all that b.s. about finstrument-functions.
+* ... remove it from the makefile
+* ... remove it from the docs
+* Remove protocol.stacktrace from server 
+* ... from client
+* client: `set` should format list[int] in dec or hex based on caps just like literal int.
+  (same in dicts)
+* Add a 'verboseprint' method that is controlled by dbg.verbose flag.
+* clean up should-be verboseprints.
+* Filter __dbg_service and __vector17 out of stack traces.
+
+
 On-device service capabilities:
 
 Client:
   * Show the last ~16 or so bytes on the stack. (repl._stack_display)
-    ... detect 2-byte sequences within .text and label them?
+    * Use stack frame analyzer to determine any ret addrs on the stack and label them.
 
 __vector_17 does 16 bytes of push's + 2 bytes to call __dbg_service. (18 total)
 __dbg_service itself does 4 bytes.

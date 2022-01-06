@@ -8,6 +8,7 @@ import time
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.protocol as protocol
+import arduino_dbg.stack as stack
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
 _DBG_CONF_FMT_VERSION = 1
@@ -313,17 +314,14 @@ class Debugger(object):
                 section["offset"] = elf_sect.header['sh_offset']
                 section["addr"] = elf_sect.header['sh_addr']
                 section["elf"] = elf_sect
+                section["image"] = elf_sect.data()[0: section["size"]] # Copy out the section image data.
                 self._sections[elf_sect.name] = section
 
                 print("****************************")
                 print(f'Section {elf_sect.name} has header {elf_sect.header}')
                 print(f'offset: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
-                print("--data follows--")
-                print(f'{elf_sect.data()}')
-
-
-                #print("Section: %s at offset 0x%.8x with size %d" % (sect.name,
-                #    sect.header['sh_offset'], sect.header['sh_size']))
+                #print("--data follows--")
+                #print(f'{section["image"]}')
 
             syms = elf.get_section_by_name(".symtab")
             if syms is not None:
@@ -374,15 +372,18 @@ class Debugger(object):
         if img_section is None:
             return None
 
-        data = img_section["elf"].data()
+        print(f"Image bytes for {start_addr:x} --> {length} in section {img_section['name']}")
+        data = img_section["image"]
         start_within_section = start_addr - img_section["addr"]
-        return data[start_within_section : start_within_section + length]
+        img_slice = data[start_within_section : start_within_section + length]
+        return img_slice
 
     def image_for_symbol(self, symname):
         """
             Return the image bytes associated with a symbol (the initialized value of a variable
             in .data, or the machine code within .text for a method)
         """
+        print(f"Getting image for symbol {symname}")
         symdata = self.lookup_sym(symname)
         if symdata is None:
             return None
@@ -758,84 +759,40 @@ class Debugger(object):
 
             Return a list of dicts that describe each frame of the stack.
         """
+        ramend = self._arch["RAMEND"]
+        ret_addr_size = self._arch["ret_addr_size"] # nr of bytes on stack for a return address.
 
-        # Step 1 is to acquire the backtrace data from the client. This returns a list of
-        # alternating pairs -- call-site, start-of-method, call-site... *
-        # If interrupted by BREAK(), the top-most call-site item will be NULL since __dbg_break()
-        # already captured its caller before halting.
-        #
-        # * technically it's the PC right after the call; the /return/ site addr.
-        #
-        # e.g if main() calls foo() calls bar(), we receive entries like:
-        # 4B <location in bar() where debugger interrupted>
-        # 3A <top of bar()>
-        # 3B <location in foo() that called bar>
-        # 2A <top of foo()>
-        # 2B <location in main() that called foo>
-        # 1A <top of main()>
-        # 1B <point in .init that kicked off main()>
-        #
-        # This list is enumerated from the server top-to-bottom. `lines[0]` is 4B, `lines[n]` is 1B.
+        # Start by establishing where we are right now.
+        regs = self.get_registers()
+        pc = regs["PC"]
+        sp = regs["SP"]
 
-        lines = self.send_cmd(protocol.DBG_OP_CALLSTACK, self.RESULT_LIST)
+        addrs = []
+        funcs = []
 
-        addrs = [int(line, 16) for line in lines]
-        funcs = [self.function_sym_by_pc(addr) for addr in addrs]
+        # Walk back through the stack to establish the method calls that got us
+        # to where we are.
+        while sp < ramend and pc != 0:
+            addrs.append(pc)
 
-        # Once captured, we need to process it as follows, to get a useful call stack:
-        #
-        # 1) throw away any nulls.
-        # 2) resolve all locations to the method they're in.
-        # 2) if nB and (n-1)A are in the same method, drop the '(n-1)A' containing
-        #    top-of-method; call site within that method is better info to display.
-        # 3) otoh, if nB and (n-1)A are in *different* methods then there was at least
-        #    one call to a non-instrumented function in the middle; we may have missed
-        #    an arbitrary amount of stack frames in the middle, so add a '...???...' flag
-        # 4) Process intra-method addresses to source file & line number
-        #
-        # The result is the best backtrace we can reconstruct with the methods we have instrumented,
-        # indicating PC within method where available, or at least what method(s) are on the stack.
-        # We also have detected and marked any incomplete gaps in the call stack record.
+            func = self.function_sym_by_pc(pc)
+            funcs.append(func)
+            frame_size = stack.stack_frame_size_for_method(self, pc, func)
 
-        i = 0
-        is_call_site = True # first elem of the list is a call site
-        call_site_elems = []
-        while i < len(addrs):
-            addr = addrs[i]
-            func = funcs[i]
-            do_delete = False
+            #print(f"function {func} has frame {frame_size}; sp: {sp:04x}, pc: {pc:04x}")
 
-            if addr == 0 or addr is None:
-                do_delete = True
-                del addrs[i]
-                del funcs[i]
-                # keep 'i' where it is to get the next item.
-                is_call_site = not is_call_site # next item has different call-site-ness.
-                # do not append to call_site_elems since we deleted the current list entry.
-            elif is_call_site and i < len(funcs) - 1 and func == funcs[i + 1]:
-                # remove top-of-method, when we have intra-method PC
-                del addrs[i + 1]
-                del funcs[i + 1]
+            sp += frame_size # move past the stack frame
 
-                call_site_elems.append(True)
+            # next 'ret_addr_size' bytes are the return address consumed by RET opcode.
+            # pop the bytes off 1-by-1 and consume them as the ret_addr (PC in next fn)
+            ret_addr = 0
+            for i in range(0, ret_addr_size):
+                sp += 1
+                addr_byte = self.get_sram(sp, 1)
+                ret_addr = (ret_addr << 8) | (addr_byte & 0xFF) # little endian 
 
-                # increment 'i' to get the next item.
-                # but note that next item has same call-site-ness as this one
-                i += 1
-            elif is_call_site and i < len(funcs) - 1 and func != funcs[i + 1]:
-                # We've found a gap in the call stack; make a note.
-                addrs.insert(i + 1, 0x0)
-                funcs.insert(i + 1, "...???...")
-
-                call_site_elems.append(True)  # This item is a call site.
-                call_site_elems.append(False) # the '???' is not.
-
-                i += 2 # increment 'i' an extra time to hop over the tombstone record.
-                is_call_site = not is_call_site
-            else:
-                call_site_elems.append(is_call_site)
-                i += 1
-                is_call_site = not is_call_site
+            pc = ret_addr << 1 # AVR: PC extracted from stack must LSH by 1 to be a real addr.
+            #print(f"returning to pc {pc:04x}, sp {sp:04x}")
 
         demangled = [binutils.demangle(func) for func in funcs]
 
@@ -845,10 +802,7 @@ class Debugger(object):
             frame["addr"] = addrs[i]
             frame["name"] = funcs[i]
             frame["demangled"] = demangled[i]
-            if call_site_elems[i]:
-                frame["source_line"] = binutils.pc_to_source_line(self.elf_name, addrs[i])
-            else:
-                frame["source_line"] = None
+            frame["source_line"] = binutils.pc_to_source_line(self.elf_name, addrs[i])
 
             out.append(frame)
 
