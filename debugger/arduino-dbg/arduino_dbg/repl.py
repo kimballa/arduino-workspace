@@ -1,5 +1,6 @@
 # (c) Copyright 2021 Aaron Kimball
 
+import readline
 import signal
 import traceback
 
@@ -381,15 +382,39 @@ class Repl(object):
             file in the user's home dir by the Debugger object.
         """
 
+        def _print_kv_pair(k, v):
+            if k == k.upper() and isinstance(v, int):
+                print(f"{k} = 0x{v:x}") # CAPS keys are printed in hex.
+            elif k == k.upper() and isinstance(v, list):
+                lst = [ f'0x{elt:x}' for elt in v ]
+                tmpv = "[" + ', '.join(lst) + "]"
+                print(f'{k} = {tmpv}')
+            elif isinstance(v, dict):
+                s = f'{k} = {{'
+                items = []
+                for (k2, v2) in v.items():
+                    if isinstance(v2, str):
+                        v2 = "'" + v2 + "'"
+                    if isinstance(k2, str):
+                        k2 = "'" + k2 + "'"
+
+                    if k2 == str(k2).upper(): # CAPS keys _within_ a dict value print dict vals in hex.
+                        items.append(f"{k2}: 0x{v2:x}")
+                    else:
+                        items.append(f"{k2}: {v2}")
+                s += ", ".join(items)
+                s += '}'
+                print(s)
+            else:
+                print(f"{k} = {v}")
+
+
         if len(argv) == 0:
             ### No key argument -- display entire configuration ###
             print("Configurable debugger settings:")
             print("-------------------------------")
             for (k, v) in self._debugger.get_full_config():
-                if k == k.upper() and isinstance(v, int):
-                    print("%s = 0x%x" % (k, v)) # CAPS keys are printed in hex.
-                else:
-                    print("%s = %s" % (k, v))
+                _print_kv_pair(k, v)
 
             print("")
             print("Arduino platform configuration:")
@@ -399,10 +424,7 @@ class Repl(object):
                 print("No platform set; configure with 'set arduino.platform ...'.")
             else:
                 for (k, v) in platform:
-                    if k == k.upper() and isinstance(v, int):
-                        print("%s = 0x%x" % (k, v)) # CAPS keys are printed in hex.
-                    else:
-                        print("%s = %s" % (k, v))
+                    _print_kv_pair(k, v)
 
             print("")
             print("CPU architecture configuration:")
@@ -413,11 +435,7 @@ class Repl(object):
                     "'set arduino.arch ...' directly.")
             else:
                 for (k, v) in arch:
-                    if k == k.upper() and isinstance(v, int):
-                        print("%s = 0x%x" % (k, v)) # CAPS keys are printed in hex.
-                    else:
-                        print("%s = %s" % (k, v))
-
+                    _print_kv_pair(k, v)
 
         elif len(argv) == 1 and len(argv[0].split("=", 1)) == 1:
             ### Got something of the form `set x`; just print value of x. ###
@@ -552,6 +570,8 @@ class Repl(object):
         for addr in range(sp + frame_size, sp, -1):
             b = self._debugger.get_sram(addr, 1)
             print(f'{addr:04x}: {b:02x}')
+
+        print(f'{addr-1:04x} <-- $SP')
 
 
     def _print_time(self, argv):
@@ -796,6 +816,7 @@ class Repl(object):
 
             Returns the exit status for the program. (0 for success)
         """
+        readline.parse_and_bind('set editing-mode vi')
         quit = False
         while not quit:
             if self._debugger.process_state() == dbg.PROCESS_STATE_BREAK:

@@ -10,6 +10,28 @@ Debugger:
   (same in dicts)
 * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
+NewhavenLcd0440::_scrollScreen() sets up a more complex stack frame than other examples.
+It begins with a series of normal push operations:
+    1778:       6f 92           push    r6
+    177a:       7f 92           push    r7
+...
+
+And then proceeds to allocate a large scratch buffer:
+    1794:       cd b7           in      r28, 0x3d       ; 61 # Read SP into Y
+    1796:       de b7           in      r29, 0x3e       ; 62
+    1798:       a8 97           sbiw    r28, 0x28       ; 40 # Y = Y - 28h
+    179a:       0f b6           in      r0, 0x3f        ; 63 # temp: hang onto SREG
+    179c:       f8 94           cli                          # pause interrupts
+    179e:       de bf           out     0x3e, r29       ; 62 # SPH <- Yh
+    17a0:       0f be           out     0x3f, r0        ; 63 # Restore SREG/interrupt status
+    17a2:       cd bf           out     0x3d, r28       ; 61 # SPL <- Yl
+
+... To perform stack unwind, we need to:
+* Permit cli/sei in prologue
+* Recognize the pattern: `in rX, 0x3d/3e` <-- reading SP
+* Recognize `sbiw rX, imm` <-- imm extends frame size
+* Recognize `out 0x3d/3e` <-- confirm imm extends frame size.
+* Permit `out` in prologue, generally.
 
 On-device service capabilities:
 
