@@ -3,6 +3,7 @@
 import signal
 import traceback
 
+import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
 import arduino_dbg.protocol as protocol
 
@@ -47,6 +48,8 @@ class Repl(object):
         m["xf"] = self._flash
         m["\\f"] = self._flash
 
+        m['frame'] = self._frame
+
         m["gpio"] = self._gpio
 
         m["help"] = self.print_help
@@ -89,11 +92,6 @@ class Repl(object):
         frames = self._debugger.get_backtrace()
         for i in range(0, len(frames)):
             frame = frames[i]
-
-            if frame["addr"] == 0:
-                # Got a stack trace gap. Just print the gap tombstone.
-                print(f"{i}. {frame['demangled']}")
-                continue
 
             if frame["source_line"]:
                 src = f'  ({frame["source_line"]})'
@@ -469,15 +467,30 @@ class Repl(object):
 
     def _stack_display(self, argv):
         """ Read several values from the stack and display them """
-        print("Unimplemented")
-        (top, snapshot) = self._debugger.get_stack_snapshot()
+        offset = -1 # auto
+        length = 16
+        if len(argv) == 1:
+            length = int(argv[0])
+        elif len(argv) > 1:
+            length = int(argv[0])
+            offset = int(argv[1])
+
+        (sp, top, snapshot) = self._debugger.get_stack_snapshot(length, offset)
         length = len(snapshot)
 
         snapshot.reverse()
-        addr = top + length - 1
+        highaddr = top + length - 1
+        addr = highaddr
+        offset = top - sp - 1
+        ramend = self._debugger.get_arch_conf("RAMEND")
+        is_at_ramend = addr == ramend
+        print(f"$SP: {sp:#04x}  Top: {top:#04x}   skip: {offset}")
         for b in snapshot:
             print(f'{addr:04x}: {b:02x}')
             addr -= 1
+
+        if not is_at_ramend:
+            print(f'Next: stack 16 {length + offset}')
 
 
     def _stack_mem_read(self, argv):
@@ -504,6 +517,41 @@ class Repl(object):
             print(f"{v:04x}")
         elif size == 4:
             print(f"{v:08x}")
+
+
+    def _frame(self, argv):
+        """
+            Display stack contents of a stack frame.
+        """
+        if len(argv) == 0:
+            print("Usage: frame <n> -- display memory from n'th stack frame")
+            return
+        else:
+            frame_num = int(argv[0])
+
+        frames = self._debugger.get_backtrace(limit=(frame_num + 1))
+        if len(frames) <= frame_num:
+            print(f"Error: could only identify {len(frames)} stack frames")
+            return
+
+        frame = frames[frame_num]
+        sp = frame['sp']
+        frame_size = frame['frame_size']
+        if frame_size < 0:
+            frame_size = 16
+            print(f"Warning: could not identify size of stack frame. Defaulting to {frame_size}.")
+
+        print(f'Frame {frame_num} at PC {frame["addr"]:#04x} in method {frame["demangled"]}')
+
+        ret_addr_size = self._debugger.get_arch_conf("ret_addr_size")
+        ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size + 1)
+        ret_fn = self._debugger.function_sym_by_pc(ret_addr) or '???'
+        ret_fn = binutils.demangle(ret_fn)
+        print(f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
+
+        for addr in range(sp + frame_size, sp, -1):
+            b = self._debugger.get_sram(addr, 1)
+            print(f'{addr:04x}: {b:02x}')
 
 
     def _print_time(self, argv):
@@ -655,6 +703,7 @@ class Repl(object):
         print("break (^C) -- Interrupt program execution for debugging")
         print("continue (c, \\c) -- Continue main program execution")
         print("flash (xf, \\f) -- Read a flash address on the Arduino")
+        print("frame -- Show memory contents of a stack frame")
         print("gpio -- Read or write a GPIO pin")
         print("help -- Show this help text")
         print("mem (x, \\m) -- Read a memory address on the Arduino")
@@ -664,7 +713,7 @@ class Repl(object):
         print("regs -- Dump contents of registers")
         print("reset -- Reset the Arduino device")
         print("set -- Set or retrieve a config variable of the debugger")
-        print("stack -- Display the bottom values of the stack")
+        print("stack -- Display memory from a range of addresses on the stack")
         print("stackaddr (xs) -- Read an address relative to the SP register")
         print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
         print("setv (!) -- Update the value of a global variable")
@@ -731,7 +780,10 @@ class Repl(object):
                 fn(tokens[1:])
             except Exception as e:
                 print(f"Error running '{cmd}': {e}")
-                traceback.print_tb(e.__traceback__)
+                if self._debugger.get_conf("dbg.verbose"):
+                    traceback.print_tb(e.__traceback__)
+                else:
+                    print("For stack trace info, `set dbg.verbose True`")
         else:
             print("Unknown command '%s'; try 'help'." % cmd)
 

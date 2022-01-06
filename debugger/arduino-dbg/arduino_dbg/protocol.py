@@ -17,7 +17,6 @@ DBG_OP_PORT_IN   = 'p' # read gpio pin
 DBG_OP_PORT_OUT  = 'P' # write gpio pin
 DBG_OP_RESET     = 'R' # Reset CPU.
 DBG_OP_REGISTERS = 'r' # Dump registers
-DBG_OP_CALLSTACK = 's' # Return call stack info
 DBG_OP_TIME      = 't' # Return cpu timekeeping info.
 DBG_OP_TIME_MILLIS = 'tm' # Return millisecs since boot.
 DBG_OP_TIME_MICROS = 'tu' # Return microseconds since boot.

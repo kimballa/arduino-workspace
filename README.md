@@ -74,8 +74,5 @@ Using the debugger
 * If not already installed, install `binutils` through your OS package manager.
 * Build the Arduino library with `cd debugger/dbglib && make install`
 * Follow instructions in `dbg.h` to include in your application.
-* To use stack tracing, set `DBGFLAGS = -g -finstrument-functions` in your `Makefile` or
-  `~/.arduino_mk.conf` file and recompile all your libraries & sources. This will expand your
-  compiled binary image by about 20%.
 * Run `debugger/arduino-dbg/bin/arduino-dbg` to launch the debug console.
 

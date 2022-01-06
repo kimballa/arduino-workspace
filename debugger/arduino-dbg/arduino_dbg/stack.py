@@ -6,9 +6,32 @@
 _debugger_methods = [
   "__vector_17",     # timer interrupt
   "__dbg_service",   # The debugger interactive service loop
-  ".*__dbg_break.*", # The overloaded __dbg_break() methods
 ]
 
+def get_stack_autoskip_count(debugger):
+    """
+        Return the number of bytes in the stack to skip when dumping the stack
+        to the user console. This is the number of bytes required to skip all
+        _debugger_methods[] entries on the top of the call stack.
+    """
+    regs = debugger.get_registers()
+    sp = regs["SP"]
+    pc = regs["PC"]
+
+    ret_addr_size = debugger.get_arch_conf("ret_addr_size")
+
+    frames = debugger.get_backtrace(limit=len(_debugger_methods))
+    for frame in frames:
+        try:
+            _debugger_methods.index(frame['name'])
+        except ValueError:
+            # This frame is not part of the debugger service, it's a real frame.
+            return frame['sp'] - sp # Skip count == diff between this frame's SP and real SP
+
+    # All the debugger methods are on the stack. Last frame holds the key: its offset
+    # from the current stack pointer /plus/ the frame size & retaddr
+    last_frame = frames[len(_debugger_methods) - 1]
+    return (last_frame['sp'] - sp) + last_frame['frame_size'] + ret_addr_size
 
 
 def stack_frame_size_for_method(debugger, pc, method_name):
@@ -41,7 +64,7 @@ def stack_frame_size_for_method(debugger, pc, method_name):
     fn_body = debugger.image_for_symbol(method_name)
     fn_sym = debugger.lookup_sym(method_name)
     if fn_sym is None:
-        print(f"No function symbol for method: {method_name}")
+        print(f"Error: No function symbol for method: {method_name}; method frame size = ???")
         return None
 
     fn_start_pc = fn_sym['addr']
@@ -49,9 +72,8 @@ def stack_frame_size_for_method(debugger, pc, method_name):
 
     default_fetch_width = max(default_fetch_width, push_op_width, pop_op_width)
 
-    print(f"Getting frame size for method {method_name} (@PC {pc:04x})")
-    print(f"start addr {fn_start_pc:04x}, size {fn_size} bytes")
-    #print(f"Function body:\n{fn_body}")
+    debugger.verboseprint(f"Getting frame size for method {method_name} (@PC {pc:04x})")
+    debugger.verboseprint(f"start addr {fn_start_pc:04x}, size {fn_size} bytes")
 
     depth = 0
     virt_pc = fn_start_pc
@@ -67,7 +89,7 @@ def stack_frame_size_for_method(debugger, pc, method_name):
     # operation, we need to be able to rely on an explicit frame pointer.
     while virt_pc < (fn_start_pc + fn_size) and virt_pc < pc:
         width = default_fetch_width
-        op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width], 
+        op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width],
             "little", signed=False)
         #print(f'vpc {virt_pc:04x} (w={width}) -- op {op:02x} {op:016b}')
 
@@ -85,7 +107,7 @@ def stack_frame_size_for_method(debugger, pc, method_name):
 
                 if prologue_op_widths[i] != default_fetch_width:
                     width = prologue_op_widths[i]
-                    this_op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width], 
+                    this_op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width],
                         "little", signed=False)
 
                 if (this_op & prologue_op_masks[i]) == prologue_opcodes[i]:
@@ -99,7 +121,7 @@ def stack_frame_size_for_method(debugger, pc, method_name):
 
         virt_pc += width
 
-    print(f"Got final depth {depth}")
+    debugger.verboseprint(f"Established frame_size={depth}")
     return depth
 
 

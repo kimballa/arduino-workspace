@@ -26,6 +26,14 @@ PROCESS_STATE_RUNNING = 1
 PROCESS_STATE_BREAK   = 2
 
 
+def _silent(*args):
+    """
+        dummy method to turn verboseprint() calls to nothing
+    """
+    pass
+
+
+
 def _load_conf_module(module_name, resource_name):
     """
         Open a resource (file) within a module with a '.conf' extension and treat it like python
@@ -81,6 +89,7 @@ class Debugger(object):
         self._addr_to_symbol = {}
         self._symbols = {}
         self._demangled_to_symbol = {}
+        self.verboseprint = _silent # verboseprint() method is either _silent() or print()
 
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
@@ -148,6 +157,7 @@ class Debugger(object):
         self._config = new_conf
         self._platform = {} # Arduino platform-specific config (filled from conf file)
         self._arch = {} # CPU architecture-specific config (filled from conf file)
+        self._config_verbose_print()
 
         self._load_platform() # cascade platform def from config, arch def from platform.
 
@@ -250,8 +260,16 @@ class Debugger(object):
             self._load_platform()
         if key == "arduino.arch":
             self._load_arch()
+        if key == "dbg.verbose":
+            self._config_verbose_print()
 
         self._persist_config() # Write changes to conf file.
+
+    def _config_verbose_print(self):
+        if self._config['dbg.verbose']:
+            self.verboseprint = print
+        else:
+            self.verboseprint = _silent
 
     def get_conf(self, key):
         if key not in _dbg_conf_keys:
@@ -317,9 +335,9 @@ class Debugger(object):
                 section["image"] = elf_sect.data()[0: section["size"]] # Copy out the section image data.
                 self._sections[elf_sect.name] = section
 
-                print("****************************")
-                print(f'Section {elf_sect.name} has header {elf_sect.header}')
-                print(f'offset: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
+                self.verboseprint("****************************")
+                self.verboseprint(f'Section {elf_sect.name} has header {elf_sect.header}')
+                self.verboseprint(f'off: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
                 #print("--data follows--")
                 #print(f'{section["image"]}')
 
@@ -372,7 +390,7 @@ class Debugger(object):
         if img_section is None:
             return None
 
-        print(f"Image bytes for {start_addr:x} --> {length} in section {img_section['name']}")
+        #self.verboseprint(f"Image bytes for {start_addr:x} --> {length} in section {img_section['name']}")
         data = img_section["image"]
         start_within_section = start_addr - img_section["addr"]
         img_slice = data[start_within_section : start_within_section + length]
@@ -383,7 +401,7 @@ class Debugger(object):
             Return the image bytes associated with a symbol (the initialized value of a variable
             in .data, or the machine code within .text for a method)
         """
-        print(f"Getting image for symbol {symname}")
+        #self.verboseprint(f"Getting image for symbol {symname}")
         symdata = self.lookup_sym(symname)
         if symdata is None:
             return None
@@ -710,24 +728,33 @@ class Debugger(object):
         result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], self.RESULT_ONELINE)
         return int(result, base=16)
 
-    def get_stack_snapshot(self, size=16):
+    def get_stack_snapshot(self, size=16, skip=-1):
         """
-            Retrieve the `size` bytes above SP (but not past RAMEND).
+            Retrieve the `size` bytes above SP+k (but not past RAMEND),
+            where `k` is the number of bytes to skip.
 
-            @return ($SP + 1, snapshot_array). snapshot_array[0] holds the byte at $SP + 1;
+            If `skip` >= 0, k = skip.
+            If `skip` == -1, then "auto-skip" the debugger-specific frames.
+
+            @return ($SP, $SP + k + 1, snapshot_array). snapshot_array[0] holds the byte at $SP + 1;
             subsequent entries hold mem at addresses through $SP + size. i.e., the "top of the
             stack" is in array[0] and the bottom of the stack (highest physical addr) at array[n].
         """
+
+        if skip < 0:
+            # calculate autoskip amount
+            skip = stack.get_stack_autoskip_count(self)
+
         regs = self.get_registers()
         sp = regs["SP"]
         ramend = self._arch["RAMEND"]
-        max_len = ramend - sp + 1
+        max_len = ramend - sp + skip + 1
         size = min(size, max_len)
         snapshot = []
-        for i in range(sp + 1, sp + 1 + size):
+        for i in range(sp + skip + 1, sp + skip + 1 + size):
             v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, 1, i], self.RESULT_ONELINE), base=16)
             snapshot.append(v)
-        return (sp + 1, snapshot)
+        return (sp, sp + skip + 1, snapshot)
 
 
     def get_memstats(self):
@@ -753,12 +780,14 @@ class Debugger(object):
         mem_map.update(list(zip(mem_report_fmt, lines)))
         return mem_map
 
-    def get_backtrace(self):
+    def get_backtrace(self, limit=None):
         """
-            Retrieve a list of memory addresses representing the call stack.
+            Retrieve a list of memory addresses representing the top `limit` function calls
+            on the call stack. (If limit=None, list all.)
 
             Return a list of dicts that describe each frame of the stack.
         """
+        self.verboseprint(f'Scanning backtrace (limit={limit})')
         ramend = self._arch["RAMEND"]
         ret_addr_size = self._arch["ret_addr_size"] # nr of bytes on stack for a return address.
 
@@ -767,46 +796,60 @@ class Debugger(object):
         pc = regs["PC"]
         sp = regs["SP"]
 
-        addrs = []
-        funcs = []
+        frames = []
 
         # Walk back through the stack to establish the method calls that got us
         # to where we are.
-        while sp < ramend and pc != 0:
-            addrs.append(pc)
+        while sp < ramend and pc != 0 and (limit is None or len(frames) < limit):
+            frame = {}
+            frames.append(frame)
+            frame['addr'] = pc
+            frame['sp'] = sp
+            frame['name'] = '???'
+            frame['demangled'] = '???'
+            frame['frame_size'] = -1
+            frame['source_line'] = None
 
             func = self.function_sym_by_pc(pc)
-            funcs.append(func)
+            if func is None:
+                print(f"Warning: could not resolve $PC={pc:#04x} to method symbol")
+                break # We've hit the limit of traceable methods
+
             frame_size = stack.stack_frame_size_for_method(self, pc, func)
 
-            #print(f"function {func} has frame {frame_size}; sp: {sp:04x}, pc: {pc:04x}")
+            frame['name'] = func
+            frame['demangled'] = binutils.demangle(func)
+            frame['frame_size'] = frame_size
+            frame['source_line'] = binutils.pc_to_source_line(self.elf_name, pc)
+
+            self.verboseprint(f"function {func} has frame {frame_size}; sp: {sp:04x}, pc: {pc:04x}")
 
             sp += frame_size # move past the stack frame
 
             # next 'ret_addr_size' bytes are the return address consumed by RET opcode.
             # pop the bytes off 1-by-1 and consume them as the ret_addr (PC in next fn)
-            ret_addr = 0
-            for i in range(0, ret_addr_size):
-                sp += 1
-                addr_byte = self.get_sram(sp, 1)
-                ret_addr = (ret_addr << 8) | (addr_byte & 0xFF) # little endian 
+            pc = self.get_return_addr_from_stack(sp + 1)
+            sp += ret_addr_size
+            self.verboseprint(f"returning to pc {pc:04x}, sp {sp:04x}")
 
-            pc = ret_addr << 1 # AVR: PC extracted from stack must LSH by 1 to be a real addr.
-            #print(f"returning to pc {pc:04x}, sp {sp:04x}")
+        return frames
 
-        demangled = [binutils.demangle(func) for func in funcs]
-
-        out = []
-        for i in range(0, len(addrs)):
-            frame = {}
-            frame["addr"] = addrs[i]
-            frame["name"] = funcs[i]
-            frame["demangled"] = demangled[i]
-            frame["source_line"] = binutils.pc_to_source_line(self.elf_name, addrs[i])
-
-            out.append(frame)
-
-        return out
+    def get_return_addr_from_stack(self, stack_addr):
+        """
+            Given a stack_addr pointing to the lowest memory address of a
+            return address pushed onto the stack, return the associated return address.
+        """
+        ret_addr_size = self._arch["ret_addr_size"] # nr of bytes on stack for a return address.
+        ret_addr = 0
+        for i in range(0, ret_addr_size):
+            # Because AVR is a little-endian machine, it pushes the low-byte of the return
+            # address, then the high byte -- but since the stack grows downward, this means
+            # the high byte will actually be at the lower memory address (essentially making
+            # return addrs on the stack a single 'big endian' exception to the memory order).
+            v = self.get_sram(stack_addr + i, 1)
+            ret_addr = (ret_addr << 8) | (v & 0xFF)
+        ret_addr = ret_addr << 1 # AVR: LSH all PC values read from memory by 1.
+        return ret_addr
 
 
     def get_gpio_value(self, pin):
