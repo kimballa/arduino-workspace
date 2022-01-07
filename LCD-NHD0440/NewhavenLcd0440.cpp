@@ -1,6 +1,7 @@
 // (c) Copyright 2021 Aaron Kimball
 
 #include "LCD-NHD0440.h"
+#include <dbg.h>
 
 // Return row portion of _pos.
 static inline uint8_t _getRow(uint8_t pos) {
