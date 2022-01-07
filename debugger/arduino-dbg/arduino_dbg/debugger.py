@@ -66,6 +66,15 @@ def _load_conf_module(module_name, resource_name):
         exec(conf_text, conf, conf)
         del conf["__builtins__"] # Pull python internals from gloabls map we're using as config.
         del conf["include"] # Pull out the include() function we provided.
+
+        # Remove any "__private" items.
+        to_delete = []
+        for (k, v) in conf.items():
+            if isinstance(k, str) and k.startswith("__"):
+                to_delete.append(k)
+        for key in to_delete:
+            del conf[key]
+
     except:
         # Error parsing/executing conf; return empty result.
         print("Error loading config profile: %s" % conf_resource_name)

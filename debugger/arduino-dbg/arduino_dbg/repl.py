@@ -1,8 +1,11 @@
 # (c) Copyright 2021 Aaron Kimball
 
+import functools
+import inspect
 import readline
 import signal
 import traceback
+import types
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
@@ -18,10 +21,10 @@ def _softint(intstr, base=10):
         return None
 
 
-"""
-    The interactive command-line the user interacts with directly.
-"""
 class Repl(object):
+    """
+    The interactive command-line the user interacts with directly.
+    """
 
     def __init__(self, debugger):
         self._debugger = debugger
@@ -31,6 +34,8 @@ class Repl(object):
 
         self._last_sym_search = []   # results of most-recent symbol substr search.
         self._last_sym_used = None   # last symbol referenced by the user.
+
+        self._break_count = 0 # How many times has the user mashed ^C?
 
     def _setup_cmd_map(self):
         m = {}
@@ -87,6 +92,10 @@ class Repl(object):
         m["?"] = self._symbol_search
         m["syms"] = self._list_symbols
 
+        m["quit"] = self._quit
+        m["exit"] = self._quit
+        m["\\q"] = self._quit
+
         self._cmd_map = m
 
     def _backtrace(self, argv):
@@ -105,14 +114,28 @@ class Repl(object):
 
 
     def _break(self, argv=None):
+        """
+        Interrupt the running program and enable debugging at the current $PC.
+        """
         self._debugger.send_break()
 
 
     def _continue(self, argv=None):
+        """
+        Continue running the program after an interrupt or breakpoint.
+        """
         self._debugger.send_continue()
 
 
     def _flash(self, argv):
+        """
+        Access data in the flash memory segment.
+
+            Syntax: flash [<size>] <addr (hex)>
+
+        size must be 1, 2, or 4. Address must be in base 16 (hex).
+        """
+
         if len(argv) == 0:
             print("Syntax: flash [<size>] <addr (hex)>")
             return
@@ -139,7 +162,11 @@ class Repl(object):
 
 
     def _gpio(self, argv):
-        """ set or retrieve a gpio pin value """
+        """
+        Set or retrieve a gpio pin value.
+
+            Syntax: gpio <pinId> [<value>]
+        """
 
         if len(argv) == 0:
             print("Syntax: gpio <pinId> [<value>]")
@@ -186,7 +213,7 @@ class Repl(object):
 
     def _memstats(self, argv):
         """
-            Print metrics about how much memory is in use.
+        Print metrics about how much memory is in use.
         """
         mem_map = self._debugger.get_memstats()
         ram_end = mem_map["RAMEND"]
@@ -210,7 +237,10 @@ class Repl(object):
 
     def _mem(self, argv):
         """
-            Retrieve data from RAM, by address.
+        Retrieve data from RAM, by address.
+
+        Syntax: mem [<size>] <addr (hex)>
+        size must be 1, 2, or 4.
         """
         if len(argv) == 0:
             print("Syntax: mem [<size>] <addr (hex)>")
@@ -237,6 +267,14 @@ class Repl(object):
 
 
     def _poke(self, argv):
+        """
+        Overwrite memory in RAM with the specified value.
+
+            Syntax: poke <addr (hex)> <value> [size=1] [base=10]
+
+        This will write to any address in the Arduino's SRAM and can easily corrupt your program.
+        To set the value of a global variable with a known symbol, see the `setv` command.
+        """
         base = 10
         if len(argv) < 2:
             print("Syntax: poke <addr (hex)> <value> [size=1] [base=10]")
@@ -293,7 +331,9 @@ class Repl(object):
 
     def _print(self, argv):
         """
-            Retrieve data from flash or RAM, by symbol.
+        Retrieve data from flash or RAM, by symbol.
+
+        Syntax: print <symbol_name>
         """
         if len(argv) == 0:
             print("Syntax: print <symbol_name>")
@@ -336,7 +376,7 @@ class Repl(object):
 
     def _regs(self, argv):
         """
-            Print register values for user
+        Print current values of registers.
         """
         MAX_WIDTH = 65
 
@@ -363,50 +403,101 @@ class Repl(object):
 
 
     def _reset(self, argv=None):
+        """
+        Reset the device.
+
+        Execution resumes at the program entry point. This will disconnect the debugger.
+        """
         self._debugger.reset_sketch()
 
 
     def _set_conf(self, argv):
         """
-            Set or print configuration variables.
+        Set or print configuration variables.
 
-            If called with no argv, this dumps the entire config to stdout.
-            If called with just a setting name, it prints the setting value.
-            If called with "keyname val", "keyname = val", or "keyname=val" then it updates
-            the configuration with that value.
+            Syntax: set [keyname [[=] value]]
 
-            Successful updates to the config are performed silently.
-            Attempting to set a config key that does not exist will print a message.
+        * If called with no arguments, this prints the entire config to stdout.
+        * If called with just a setting name ("set foo"), print the setting value.
+        * If called with "set keyname val", "set keyname = val", or "set keyname=val" then it updates
+          the configuration with that value. If numeric, 'val' is assumed to be in base 10.
 
-            Successful updates to the config cause the config to be persisted to a conf
-            file in the user's home dir by the Debugger object.
+        Successful updates to the config are performed silently.
+        Attempting to set a config key that does not exist will print an error message.
+
+        Successful updates to the config cause the config to be persisted to a conf
+        file in the user's home dir.
         """
 
-        def _print_kv_pair(k, v):
-            if k == k.upper() and isinstance(v, int):
-                print(f"{k} = 0x{v:x}") # CAPS keys are printed in hex.
-            elif k == k.upper() and isinstance(v, list):
-                lst = [ f'0x{elt:x}' for elt in v ]
-                tmpv = "[" + ', '.join(lst) + "]"
-                print(f'{k} = {tmpv}')
+        def _fmt_value(v, in_hex=False, quote_strs=False, level=0):
+            """
+                Format one value for printing. If in_hex is True, and the value is
+                an integer, it will be formatted in base 16.
+
+                Composite values inherit in_hex status through recursive calls.
+                * _fmt_value(some_list, in_hex) will format the values of some_list according to
+                  in_hex status.
+                * _fmt_value(some_dict, in_hex) will format (k, v) pairs of the dict according to
+                  `in_hex or str(k) == str(k).upper()`
+
+                Strings are not-quoted by default; quote_strs is set to True for recursive calls
+                for composite value formatting.
+            """
+            if callable(v):
+                return "<function>"
+            elif isinstance(v, int):
+                if in_hex:
+                    return f"0x{v:x}"
+                else:
+                    return f"{v}"
+            elif isinstance(v, str):
+                if quote_strs:
+                    return f"'{v}'"
+                else:
+                    return v
+            elif isinstance(v, list):
+                items = [ _fmt_value(v2, in_hex, True, level+1) for v2 in v ]
+
+                # Should we put these on a comma-delimited single line? Or wrap item-by-item onto
+                # one line each? Depends on the max length of a single item.
+                max_len = functools.reduce(max, [len(it) for it in items])
+                if max_len < 50:
+                    join_str = ", "
+                else:
+                    join_str = ",\n"
+                    for i in range(0, level + 1):
+                        join_str += "  "
+
+                s = '[' + join_str.join(items) + ']'
+                return s
             elif isinstance(v, dict):
-                s = f'{k} = {{'
+                s = '{'
                 items = []
                 for (k2, v2) in v.items():
-                    if isinstance(v2, str):
-                        v2 = "'" + v2 + "'"
-                    if isinstance(k2, str):
-                        k2 = "'" + k2 + "'"
+                    in_hex2 = in_hex or (isinstance(k2, str) and k2 == k2.upper())
+                    items.append(f"{_fmt_value(k2, in_hex2, True, level+1)}: " +
+                        f"{_fmt_value(v2, in_hex2, True, level+1)}")
 
-                    if k2 == str(k2).upper(): # CAPS keys _within_ a dict value print dict vals in hex.
-                        items.append(f"{k2}: 0x{v2:x}")
-                    else:
-                        items.append(f"{k2}: {v2}")
-                s += ", ".join(items)
+                # Should we put these on a comma-delimited single line? Or wrap item-by-item onto
+                # one line each? Depends on the max length of a single item.
+                max_len = functools.reduce(max, [len(it) for it in items])
+                if max_len < 50:
+                    join_str = ", "
+                else:
+                    join_str = ",\n"
+                    for i in range(0, level + 1):
+                        join_str += "  "
+
+                s += join_str.join(items)
                 s += '}'
-                print(s)
+                return s
             else:
-                print(f"{k} = {v}")
+                return f"{v}"
+
+
+        def _print_kv_pair(k, v):
+            in_hex = isinstance(k, str) and k == k.upper() # CAPS keys are printed in hex.
+            print(f"{k} = {_fmt_value(v, in_hex)}")
 
 
         if len(argv) == 0:
@@ -430,7 +521,7 @@ class Repl(object):
             print("CPU architecture configuration:")
             print("-------------------------------")
             arch = self._debugger.get_full_arch_config()
-            if len(platform) == 0:
+            if len(arch) == 0:
                 print("No architecture set; configure 'set arduino.platform ...' or " +
                     "'set arduino.arch ...' directly.")
             else:
@@ -484,7 +575,15 @@ class Repl(object):
 
 
     def _stack_display(self, argv):
-        """ Read several values from the stack and display them """
+        """
+        Read several values from the stack and display them.
+
+            Syntax: stack [<length>] [<offset>]
+
+        * length is in bytes; default is 16.
+        * data printing starts at ($SP + offset).
+        * If offset is omitted or -1, then "auto-skip" stack frames added by the debugger.
+        """
         offset = -1 # auto
         length = 16
         if len(argv) == 1:
@@ -512,7 +611,11 @@ class Repl(object):
 
 
     def _stack_mem_read(self, argv):
-        """ stackaddr <offset> - read a memory address relative to SP """
+        """
+        Read a memory address relative to SP
+
+            Syntax: stackaddr [size] <offset (hex)>
+        """
         if len(argv) == 0:
             print("Syntax: stackaddr [<size>] <offset (hex)>")
             return
@@ -539,10 +642,15 @@ class Repl(object):
 
     def _frame(self, argv):
         """
-            Display stack contents of a stack frame.
+        Display stack contents of a stack frame.
+
+            Syntax: frame <n>
+
+        This function displays memory from the n'th stack frame. See the 'backtrace' command
+        to get a list of available stack frames.
         """
         if len(argv) == 0:
-            print("Usage: frame <n> -- display memory from n'th stack frame")
+            print("Syntax: frame <n> -- display memory from n'th stack frame")
             return
         else:
             frame_num = int(argv[0])
@@ -576,8 +684,14 @@ class Repl(object):
 
 
     def _print_time(self, argv):
+        """
+        Prints the time since start (or rollover) as reported by the device.
+
+            Syntax: time {millis|micros}
+        """
+
         if len(argv) == 0:
-            print("Syntax: time [millis|micros]")
+            print("Syntax: time {millis|micros}")
             return
 
         if argv[0] == "millis":
@@ -585,22 +699,35 @@ class Repl(object):
         elif argv[0] == "micros":
             return self._print_time_micros(argv)
         else:
-            print("Syntax: time [millis|micros]")
+            print("Syntax: time {millis|micros}")
             return
 
 
 
     def _print_time_millis(self, argv):
+        """
+        Print time since device startup in milliseconds.
+        """
         print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
 
 
     def _print_time_micros(self, argv):
+        """
+        Print time since device startup (or rollover) in microseconds.
+        """
         print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
 
 
     def _set_var(self, argv):
         """
-            Update data in RAM, by symbol.
+        Update data in RAM, by symbol.
+
+            Syntax: setv <symbol_name> [=] <value> [base=10]"
+
+        e.g. if you have `uint_8t my_global = 40;` in your sketch, you can change this with:
+          setv my_global = 99
+        ... and set it back with:
+          setv my_global = 40
         """
         base = 10
         hwm = 0 # high-water mark for tokens consumed
@@ -672,6 +799,32 @@ class Repl(object):
 
 
     def _symbol_search(self, argv):
+        """
+        Search the symbol database for symbols that contain a given substring.
+
+            Syntax: sym <symbol_substr>
+
+        This is especially useful for hunting for a mangled C++ symbol.
+        e.g., try: sym print
+
+        This will return a list of symbols matching /.*<substr>.*/. This list contains
+        both plain (mangled) and demangled names, which are synonyms for the same memory
+        address.
+
+        The result of this search is cached; you can use #n anyplace you can use a symbol
+        as an argument to refer to the n'th list item.
+
+        e.g.:
+          sym foo
+          setv #0 42
+        (Assuming the first returned entry is a variable named something like '_foo', sets its value
+        to 42.)
+
+        You can also use '$' as a shorthand for #0. e.g.:
+          sym foo
+          print $
+        ... will print the value in memory of the first result for the /.*foo.*/ search.
+        """
         if len(argv) == 0:
             print("Syntax: sym <substring>")
             return
@@ -691,6 +844,9 @@ class Repl(object):
 
 
     def _list_symbols(self, argv):
+        """
+        syms - List all symbols.
+        """
         all_syms = self._debugger.syms_by_substr("")
         if len(all_syms) == 0:
             print("No symbol information available")
@@ -701,6 +857,14 @@ class Repl(object):
 
 
     def _addr_for_sym(self, argv):
+        """
+        Resolve a symbol to a memory address.
+
+            Syntax: addr <symbol_name>
+
+        See also: the 'sym' command - search for a precise symbol name via substring.
+        After a search with 'sym', you can use #0 (or '$'), #1, #2... to refer to results.
+        """
         if len(argv) == 0:
             print("Syntax: addr <symbol_name>")
             return
@@ -708,6 +872,7 @@ class Repl(object):
         sym = self._debugger.lookup_sym(argv[0])
         if sym is None:
             print(f"No symbol found: {argv[0]}")
+            print(f"(Try 'sym {argv[0]}')")
             return
 
         print(f'{sym["demangled"]}: {sym["addr"]:08x} ({sym["size"]})')
@@ -716,6 +881,26 @@ class Repl(object):
 
 
     def print_help(self, argv):
+        """
+        Print usage information.
+
+        Syntax: help [cmd]
+
+        If given a specific command name, will print the usage info for that command.
+        Otherwise, this help message lists all available commands.
+        """
+
+        if len(argv) > 0:
+            try:
+                cmd = argv[0]
+                cmd_method = self._cmd_map[cmd]
+                print(inspect.cleandoc(cmd_method.__doc__))
+            except:
+                print(f"Error: No command {argv[0]} found.")
+                print("Try 'help' to list all available commands.")
+                print("Use 'quit' to exit the debugger.")
+
+            return
 
         print("Commands")
         print("--------")
@@ -746,7 +931,19 @@ class Repl(object):
         print("number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
         print("The most recently-used such number--or '#0' if '?' gave a unique result--can")
         print("then be referenced as '$'. e.g.: `print $`  // look up the same value again")
+        print("")
+        print("For more information, type: help <command>")
 
+
+    def _quit(self, argv):
+        """
+        Exit the debugger.
+        """
+
+        # This method does not actually quit -- that is behavior hardcoded into the REPL.
+        # However, having this method in the _cmd_map enables its docstring to be used for
+        # `help quit`.
+        pass
 
     def loop_input_body(self):
         """
@@ -760,11 +957,20 @@ class Repl(object):
             # Received '^C'; call the break function
             print('') # Terminate line after visible '^C' in input.
             self._break()
+            self._break_count += 1
+            if self._break_count >= 3:
+                # User's mashed ^C a lot... try to help them out?
+                print("Use 'quit' to exit the debugger.")
+                print("Try 'help' to list all available commands.")
+                self._break_count = 0
+
             return False
         except EOFError:
             # Received '^D'; time to quit
             print('')
             return True
+
+        self._break_count = 0 # User typed a real non-^C command.
 
         raw_tokens = cmdline.split(" ")
         tokens = []
