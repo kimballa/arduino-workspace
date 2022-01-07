@@ -98,7 +98,34 @@ class Repl(object):
 
         self._cmd_map = m
 
+    def _synonyms(self, cmd):
+        """
+        Return a list of all synonymous commands that run the same method as 'cmd'.
+        """
+
+        cmd_func = self._cmd_map[cmd]
+        lst = []
+        for (name, func) in self._cmd_map.items():
+            if func == cmd_func:
+                lst.append(name)
+
+        return lst
+
+
+
     def _backtrace(self, argv):
+        """
+        Enumerate the method calls on the stack, along with the return point in the source.
+
+            Syntax: backtrace
+
+        This function lists all current stack frames by starting with $PC and $SP and walking
+        up the stack to identify frame boundaries and method return points. The top-most call
+        on the stack will be #0, followed by #1, #2, etc; 'main()' will be the bottom-most
+        method named.
+
+        See also the 'frame' command, which shows the stack memory for a specific stack frame.
+        """
         frames = self._debugger.get_backtrace()
         for i in range(0, len(frames)):
             frame = frames[i]
@@ -333,7 +360,10 @@ class Repl(object):
         """
         Retrieve data from flash or RAM, by symbol.
 
-        Syntax: print <symbol_name>
+            Syntax: print <symbol_name>
+
+        After applying a 'print' command, the shorthand '$' will refer to the last symbol used.
+        See also the 'setv' command to change the value of a symbol in RAM.
         """
         if len(argv) == 0:
             print("Syntax: print <symbol_name>")
@@ -728,6 +758,9 @@ class Repl(object):
           setv my_global = 99
         ... and set it back with:
           setv my_global = 40
+
+        After applying a 'setv' command, the shorthand '$' will refer to the last symbol used.
+        See also: 'print <symbol_name>' to read the value of a variable in RAM.
         """
         base = 10
         hwm = 0 # high-water mark for tokens consumed
@@ -807,12 +840,12 @@ class Repl(object):
         This is especially useful for hunting for a mangled C++ symbol.
         e.g., try: sym print
 
-        This will return a list of symbols matching /.*<substr>.*/. This list contains
+        This command returns a list of symbols matching /.*<substr>.*/. This list contains
         both plain (mangled) and demangled names, which are synonyms for the same memory
         address.
 
         The result of this search is cached; you can use #n anyplace you can use a symbol
-        as an argument to refer to the n'th list item.
+        as an argument to refer to the n'th list item from the last 'sym' search.
 
         e.g.:
           sym foo
@@ -820,10 +853,17 @@ class Repl(object):
         (Assuming the first returned entry is a variable named something like '_foo', sets its value
         to 42.)
 
-        You can also use '$' as a shorthand for #0. e.g.:
-          sym foo
-          print $
-        ... will print the value in memory of the first result for the /.*foo.*/ search.
+        If this search returns a unique symbol name, you can refer to that symbol using
+        the shorthand '$'. e.g.:
+          (agdb) sym foo
+          my_foo
+          (agdb) print $
+          0012ab34
+        ... will print the value in memory of the unique result for the /.*foo.*/ search.
+
+        Thereafter, '$' will refer to the most recently-used symbol in print, setv, etc.
+
+        If one of the returned symbols is an exact match for the search, it is flagged with '(**)'.
         """
         if len(argv) == 0:
             print("Syntax: sym <substring>")
@@ -835,12 +875,19 @@ class Repl(object):
             print("(No matching symbols)")
         elif len(self._last_sym_search) == 1:
             # Found a unique hit.
-            print(self._last_sym_search[i])
+            print(self._last_sym_search[0])
             self._last_sym_used = self._last_sym_search[0] # last-used symbol is the unique match.
         else:
             # Multiple results
             for i in range(0, len(self._last_sym_search)):
-                print(f"#{i}. {self._last_sym_search[i]}")
+                this_sym = self._last_sym_search[i]
+                if this_sym == argv[0]:
+                    # Exact match
+                    asterisk = "(**)  "
+                else:
+                    asterisk = ""
+
+                print(f"#{i}. {asterisk}{this_sym}")
 
 
     def _list_symbols(self, argv):
@@ -894,6 +941,11 @@ class Repl(object):
             try:
                 cmd = argv[0]
                 cmd_method = self._cmd_map[cmd]
+                synonyms = self._synonyms(cmd)
+                if len(synonyms) > 1:
+                    print(f"  '{cmd}' ({', '.join(synonyms)})\n")
+                else:
+                    print(f"  '{cmd}'\n")
                 print(inspect.cleandoc(cmd_method.__doc__))
             except:
                 print(f"Error: No command {argv[0]} found.")
