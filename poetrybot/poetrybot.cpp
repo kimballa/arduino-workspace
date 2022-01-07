@@ -59,6 +59,7 @@ SETUP() {
 
   digitalWrite(R, 0);
   digitalWrite(G, 0);  
+  BREAK();
   TRACE("trace message");
   DBGPRINT("meep");
 

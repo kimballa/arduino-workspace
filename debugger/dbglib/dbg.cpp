@@ -285,7 +285,7 @@ bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -303,7 +303,7 @@ bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *f
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -321,7 +321,7 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *f
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -339,7 +339,7 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const __Flash
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(assertStr);
 
   return false;
@@ -351,7 +351,7 @@ void __dbg_trace(const char *tracemsg, const char *funcOrFile, const uint16_t li
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(tracemsg);
 }
 
@@ -360,7 +360,7 @@ void __dbg_trace(const char *tracemsg, const __FlashStringHelper *funcOrFile, co
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(tracemsg);
 }
 
@@ -369,7 +369,7 @@ void __dbg_trace(const __FlashStringHelper *tracemsg, const char *funcOrFile, co
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(tracemsg);
 }
 
@@ -380,7 +380,7 @@ void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashStringHelper 
   DBG_SERIAL.print(funcOrFile);
   DBG_SERIAL.print('(');
   DBG_SERIAL.print(lineno, DEC);
-  DBG_SERIAL.print(_separator);
+  DBG_SERIAL.print(FPSTR(_separator));
   DBG_SERIAL.println(tracemsg);
 }
 
