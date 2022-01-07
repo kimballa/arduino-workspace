@@ -47,9 +47,9 @@ class Repl(object):
 
         m["flash"] = self._flash
         m["xf"] = self._flash
-        m["\\f"] = self._flash
 
         m['frame'] = self._frame
+        m["\\f"] = self._frame
 
         m["gpio"] = self._gpio
 
@@ -567,6 +567,7 @@ class Repl(object):
         ret_fn = binutils.demangle(ret_fn)
         print(f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
+        addr = sp + frame_size # Ensure `addr` initialized in case frame_size == 0.
         for addr in range(sp + frame_size, sp, -1):
             b = self._debugger.get_sram(addr, 1)
             print(f'{addr:04x}: {b:02x}')
@@ -722,8 +723,8 @@ class Repl(object):
         print("backtrace (\\t) -- Show the function call stack")
         print("break (^C) -- Interrupt program execution for debugging")
         print("continue (c, \\c) -- Continue main program execution")
-        print("flash (xf, \\f) -- Read a flash address on the Arduino")
-        print("frame -- Show memory contents of a stack frame")
+        print("flash (xf) -- Read a flash address on the Arduino")
+        print("frame (\\f) -- Show memory contents of a stack frame")
         print("gpio -- Read or write a GPIO pin")
         print("help -- Show this help text")
         print("mem (x, \\m) -- Read a memory address on the Arduino")
