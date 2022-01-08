@@ -4,6 +4,10 @@
 
 _INT_ENCODING = 5
 
+PUBLIC = 1
+PROTECTED = 2
+PRIVATE = 3
+
 class PrgmType(object):
     """
     A datatype within the debugged program.
@@ -13,9 +17,6 @@ class PrgmType(object):
         self.name = name
         self.size = size
         self._parent_type = parent_type
-
-        if self._parent_type and self.size != self._parent_type.size:
-            raise Exception(f"Size of type {name} disagrees with parent type {parent_type}")
 
 
     def parent_type(self):
@@ -60,12 +61,24 @@ class PointerType(PrgmType):
     A pointer to an item of type T.
     """
     def __init__(self, base_type):
-        name = f'{base_type}*'
+        name = f'{base_type.name}*'
         PrgmType.__init__(self, name, _encodings[_INT_ENCODING], base_type)
         self.name = name
 
     def __repr__(self):
-        return f'{self.parent_type()}*'
+        return f'{self.name}'
+
+class ReferenceType(PrgmType):
+    """
+    A reference to an item of type T.
+    """
+    def __init__(self, base_type):
+        name = f'{base_type.name}&'
+        PrgmType.__init__(self, name, _encodings[_INT_ENCODING], base_type)
+        self.name = name
+
+    def __repr__(self):
+        return f'{self.name}'
 
 class EnumType(PrgmType):
     """
@@ -185,10 +198,11 @@ class ClassType(PrgmType):
     """
     A class or struct.
     """
-    def __init__(self, name, size, base_type):
+    def __init__(self, class_name, size, base_type):
         # TODO(aaron): how does 'base_type' interact with multiple inheritance? diamond inheritance?
-        PrgmType.__init__(self, name, size, base_type)
+        PrgmType.__init__(self, 'class ' + class_name, size, base_type)
 
+        self.class_name = class_name
         self.methods = []
         self.fields = []
 
@@ -257,7 +271,9 @@ def _populateEncodings(int_size):
         if n is not None:
             _encodings[n] = typ
 
-    _add(0, PrimitiveType('void', 0))
+    global _VOID
+    _VOID = PrimitiveType('void', 0)
+    _add(0, _VOID)
     _add(1, PrimitiveType('<ptr>', int_size))
     _add(2, PrimitiveType('bool', 1))
     # 3 is 'complex float'
@@ -284,21 +300,40 @@ def _populateEncodings(int_size):
 
 def parseTypesFromDIE(die, context={}):
 
+    def _make_fresh_context(context):
+        """
+            Return a new 'context' object to recursively process a DIE where we did a non-local seek
+            to open it.
+        """
+        ctxt2 = {}
+        ctxt2['compile_unit'] = context['compile_unit']
+        ctxt2['cu_offset'] = context['cu_offset']
+        return ctxt2
+
     def _lookup_type(param='type'):
-        # Look up the 'DW_AT_type' attribute. 
-        # This value is offset relative to the compile unit, but it refers
+        """
+            Look up the 'DW_AT_type' attribute and resolve it to a PrgmType.
+        """
+        # This attr value is offset relative to the compile unit, but it refers
         # to elements of our address-oriented lookup table which is global across
         # all addresses/offsets within the .dwarf_info. 
         addr = die.attributes['DW_AT_' + param].value + context['cu_offset']
-        if addr > die.offset:
-            # This is a forward reference. We need to process this in advance.
-            # TODO - clear out any class/method/enum/etc already in context?
-            parseTypesFromDIE(context['compile_unit'].get_DIE_from_refaddr(addr), context)
+        if addr == die.offset:
+            # Struct/class can refer to their own addr as containing_type. Do nothing.
+            return None
+        elif not _loc_types.get(addr):
+            # We haven't processed this address yet; it's e.g. a forward reference.
+            # We need to process that entry before returning a type to the caller of this method.
+            sub_die = context['compile_unit'].get_DIE_from_refaddr(addr)
+            parseTypesFromDIE(sub_die, _make_fresh_context(context))
 
         return typeByAddr(addr)
 
 
     def dieattr(name, default_value=None):
+        """
+            Look up an attribute within the current DIE; if not found, use default_value.
+        """
         try:
             val = die.attributes['DW_AT_' + name].value
             if isinstance(val, bytes):
@@ -310,8 +345,22 @@ def parseTypesFromDIE(die, context={}):
 
     if not die.tag:
         return # null DIE to terminate nested set.
+    elif _loc_types.get(die.offset):
+        return # Our seek-driven parsing has already parsed this entry, don't double-process.
 
-    print(die)
+    total_off = die.offset + context['cu_offset']
+    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {context['cu_offset']:x})")
+    #print(die)
+
+
+    if dieattr('name') and _named_types.get(dieattr('name')):
+        # We're redefining a type name that already exists.
+        # Just copy the existing definition into this address.
+        # Does this create issues if we have `typedef a x;` in one CU and `typedef a y` in another?
+        addType(getType(dieattr('name')), None, die.offset)
+        return
+
+
     if die.tag == 'DW_TAG_base_type':
         # name, byte_size, encoding
         # This could be a true base/primitive type, or a typedef of a primitive type.
@@ -328,7 +377,7 @@ def parseTypesFromDIE(die, context={}):
         if name == prim.name and size == prim.size:
             # benign redundant definition.
             # register the common type object at this addr too.
-            _loc_types[die.offset] = prim
+            addType(prim, None, die.offset)
         elif size == prim.size:
             addType(AliasType(name, prim), name, die.offset)
         else:
@@ -350,6 +399,16 @@ def parseTypesFromDIE(die, context={}):
         # (Can be a function on its own, or a member method of a class)
         # name, [accessibility=1], [virtuality=0]
         # object_pointer <-- points to implicit 'this' formal arg.
+        #
+        # In addition to using subprogram to define a method type/signature, we use subprogram and
+        # inlined_subroutine to resolve a $PC to the right compilation unit to understand the type
+        # definitions relevant to the current stack frame/method.
+        #
+        # * A subprogram can have a low_pc -- high_pc range
+        # * It can also have a `specification` that points to another subprogram.
+        # * An inlined_subroutine can have a low_pc--high_pc range.
+        #   It has an abstract_origin that points to a subprogram canonically defining it within a
+        #   CU. You may need to recursively follow 'specification' from there to get the real CU.
         name = dieattr('name')
         virtual = dieattr('virtuality', 0)
         accessibility = dieattr('accessibility', 1)
@@ -365,9 +424,19 @@ def parseTypesFromDIE(die, context={}):
         for child in die.iter_children():
             parseTypesFromDIE(child, ctxt)
     elif die.tag == 'DW_TAG_subroutine_type':
-        # Seems used only for 'pointers to methods', but doesn't actually include any info?
-        # TODO(aaron): Figure out how to decode and use)
-        pass
+        # Seems used only for 'pointers to methods', but doesn't actually include any info.
+        # This is used as a target for a TAG_pointer_type to a vtable entry. 
+        enclosing_class = context.get("class") or None
+        return_type = _lookup_type() or _VOID
+        method = MethodType(None, return_type, [], enclosing_class, 0, 1)
+        if enclosing_class:
+            enclosing_class.addMethod(method)
+        addType(method, None, die.offset) 
+
+        ctxt = context.copy()
+        ctxt['method'] = method
+        for child in die.iter_children():
+            parseTypesFromDIE(child, ctxt)
     elif die.tag == 'DW_TAG_formal_parameter':
         # type
         # artificial=1 if added by compiler (e.g., implicit 'this')
@@ -418,8 +487,16 @@ def parseTypesFromDIE(die, context={}):
     elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type': # class or struct
         # name, byte_size, containing_type
         # TODO: can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
+        print(die)
         name = dieattr('name')
         size = dieattr('byte_size')
+
+        if name and _named_types.get(name) is not None:
+            # This is a redefinition of a type that already exists. Just install it here.
+            # TODO: Do we need to recurse and handle the redundant 'member', vtbl_ptr, etc.s?
+            addType(getType(name), None, die.offset)
+            return
+
         parent_type_offset = dieattr("containing_type", None)
         if parent_type_offset is None:
             parent_type = None
@@ -446,7 +523,8 @@ def parseTypesFromDIE(die, context={}):
         context['class'].addField(field)
         addType(field, None, die.offset)
     else:
-        print(f"Scanning DIE: {die.tag}")
+        if die.has_children:
+            print(f"Scanning DIE: {die.tag}")
         for child in die.iter_children():
             parseTypesFromDIE(child, context)
 
