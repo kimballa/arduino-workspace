@@ -9,6 +9,7 @@ import time
 import arduino_dbg.binutils as binutils
 import arduino_dbg.protocol as protocol
 import arduino_dbg.stack as stack
+import arduino_dbg.types as types
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
 _DBG_CONF_FMT_VERSION = 1
@@ -98,6 +99,9 @@ class Debugger(object):
         self._addr_to_symbol = {}
         self._symbols = {}
         self._demangled_to_symbol = {}
+        self._dwarf_info = None
+        self.elf = None
+        self._elf_file_handle = None
         self.verboseprint = _silent # verboseprint() method is either _silent() or print()
 
         # General user-accessible config.
@@ -322,6 +326,15 @@ class Debugger(object):
 
     ###### ELF-file and symbol functions
 
+    def close(self):
+        """
+            Clean up the debugger and release file resources.
+        """
+        if self._elf_file_handle:
+            # Close the ELF file we opened at the beginning.
+            self._elf_file_handle.close()
+        self._elf_file_handle = None
+
     def _read_elf(self):
         """
             Read the target ELF file to load debugging information.
@@ -330,40 +343,47 @@ class Debugger(object):
             print("No ELF file provided; cannot load symbols")
             return
 
-        with open(self.elf_name, 'rb') as f:
-            elf = ELFFile(f)
-            print(f"Loading image and symbols from {self.elf_name}")
+        self._elf_file_handle = open(self.elf_name, 'rb')
+        self.elf = ELFFile(self._elf_file_handle)
+        print(f"Loading image and symbols from {self.elf_name}")
 
-            for elf_sect in elf.iter_sections():
-                section = {}
-                section["name"] = elf_sect.name
-                section["size"] = elf_sect.header['sh_size']
-                section["offset"] = elf_sect.header['sh_offset']
-                section["addr"] = elf_sect.header['sh_addr']
-                section["elf"] = elf_sect
-                section["image"] = elf_sect.data()[0: section["size"]] # Copy out the section image data.
-                self._sections[elf_sect.name] = section
+        for elf_sect in self.elf.iter_sections():
+            section = {}
+            section["name"] = elf_sect.name
+            section["size"] = elf_sect.header['sh_size']
+            section["offset"] = elf_sect.header['sh_offset']
+            section["addr"] = elf_sect.header['sh_addr']
+            section["elf"] = elf_sect
+            section["image"] = elf_sect.data()[0: section["size"]] # Copy out the section image data.
+            self._sections[elf_sect.name] = section
 
-                self.verboseprint("****************************")
-                self.verboseprint(f'Section {elf_sect.name} has header {elf_sect.header}')
-                self.verboseprint(f'off: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
-                #print("--data follows--")
-                #print(f'{section["image"]}')
+            self.verboseprint("****************************")
+            self.verboseprint(f'Section {elf_sect.name} has header {elf_sect.header}')
+            self.verboseprint(f'off: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
+            #print("--data follows--")
+            #print(f'{section["image"]}')
 
-            syms = elf.get_section_by_name(".symtab")
-            if syms is not None:
-                for sym in syms.iter_symbols():
-                    sym_type = sym.entry['st_info']['type']
-                    if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
-                        # This has a location worth memorizing
-                        self._addr_to_symbol[sym.entry['st_value']] = sym.name
+        syms = self.elf.get_section_by_name(".symtab")
+        if syms is not None:
+            for sym in syms.iter_symbols():
+                sym_type = sym.entry['st_info']['type']
+                if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
+                    # This has a location worth memorizing
+                    self._addr_to_symbol[sym.entry['st_value']] = sym.name
 
-                        self._symbols[sym.name] = sym
+                    self._symbols[sym.name] = sym
 
-
-                #print("*** Symbols (.symtab)")
-                #for sym in syms.iter_symbols():
-                #    print("%s: %s" % (sym.name, sym.entry))
+        if self.elf.has_dwarf_info():
+            self.verboseprint("Loading debug info from program binary") 
+            self._dwarf_info = self.elf.get_dwarf_info()
+            if not self._dwarf_info.has_debug_info:
+                # It was just an exception handler unwind table; no good.
+                self._dwarf_info = None
+                self.verboseprint("Warning: empty debug info in program binary.")
+            if self._dwarf_info:
+                types.parseTypeInfo(self._dwarf_info, self.get_arch_conf("int_size"))
+        else:
+            self.verboseprint("Warning: no debug info in program binary.")
 
         # Sort the symbols by address and memorize demangled names too.
         self._addr_to_symbol = dict(sorted(self._addr_to_symbol.items()))

@@ -5,11 +5,11 @@ import inspect
 import readline
 import signal
 import traceback
-import types
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
 import arduino_dbg.protocol as protocol
+import arduino_dbg.types as types
 
 def _softint(intstr, base=10):
     """
@@ -81,16 +81,21 @@ class Repl(object):
         m["stackaddr"] = self._stack_mem_read
         m["xs"] = self._stack_mem_read
 
-        m["time"] = self._print_time
-        m["tm"] = self._print_time_millis
-        m["tu"] = self._print_time_micros
-
         m["setv"] = self._set_var
         m["!"] = self._set_var
 
         m["sym"] = self._symbol_search
         m["?"] = self._symbol_search
         m["syms"] = self._list_symbols
+
+        m["time"] = self._print_time
+        m["tm"] = self._print_time_millis
+        m["tu"] = self._print_time_micros
+
+        m["type"] = self._sym_datatype
+        m["types"] = self._list_types
+
+        m["var"] = self._variable_info
 
         m["quit"] = self._quit
         m["exit"] = self._quit
@@ -902,6 +907,13 @@ class Repl(object):
         for i in range(0, len(all_syms)):
             print(f"#{i}. {all_syms[i]}")
 
+    def _list_types(self, argv):
+        """
+        types - List all types.
+        """
+        
+        for (name, typ) in types.types():
+            print(typ)
 
     def _addr_for_sym(self, argv):
         """
@@ -925,6 +937,32 @@ class Repl(object):
         print(f'{sym["demangled"]}: {sym["addr"]:08x} ({sym["size"]})')
         self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
 
+    def _sym_datatype(self, argv):
+        """
+        Show datatype for symbol.
+
+            Syntax: type <symbol_name>
+        """
+        print("Unimplemented")
+    
+
+    def _variable_info(self, argv):
+        """
+        Show info about a variable: addr, type, value.
+
+            Syntax: var <symbol_name>
+
+        This is equivalent to running the 'addr', 'type', and 'print' commands with the same
+        symbol name as the argument to each.
+        """
+        if len(argv) == 0:
+            print("Syntax: var <symbol_name>")
+            return
+
+        self._addr_for_sym(argv)
+        self._sym_datatype(argv)
+        self._print(argv)
+        #TODO(aaron): Consider reworking to show a cleaner format than three separate lines.
 
 
     def print_help(self, argv):
@@ -973,10 +1011,13 @@ class Repl(object):
         print("set -- Set or retrieve a config variable of the debugger")
         print("stack -- Display memory from a range of addresses on the stack")
         print("stackaddr (xs) -- Read an address relative to the SP register")
-        print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
         print("setv (!) -- Update the value of a global variable")
         print("sym (?) -- Look up symbols containing a substring")
         print("syms -- List all symbols")
+        print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
+        print("type -- Show datatype for symbol")
+        print("types -- List all defined datatypes")
+        print("var -- Show info about a variable: addr, type, value")
         print("quit (\q) -- Quit the debugger console")
         print("")
         print("After doing a symbol search with sym or '?', you can reference results by")

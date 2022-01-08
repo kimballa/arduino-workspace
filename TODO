@@ -10,7 +10,12 @@ On-device service capabilities:
 
 Client:
 
-  * Remove / [clone .constprop.*]$/ from demangled names.
+  * Ability to show local variables within stack frame.
+    * 'regs' can show what register state *should be* within a non-top stack frame.
+    * ... ability to read `.debug_frames` section and use to unwind registers.
+    * need notion of "current frame" that can be adjusted rather than just as immediate arg
+      to `frame` / `\f`
+  * Ability to show type information for symbol.
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
 

@@ -17,7 +17,12 @@ def _parseArgs():
 def main(argv):
     args = _parseArgs()
     debugger = Debugger(args.file, args.port)
-    repl = Repl(debugger)
+    ret = 1
+    try:
+        repl = Repl(debugger)
+        ret = repl.loop()
+    finally:
+        debugger.close()
 
-    sys.exit(repl.loop())
+    sys.exit(ret)
 
