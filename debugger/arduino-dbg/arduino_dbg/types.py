@@ -2,11 +2,102 @@
 #
 # Parse program data type info from DIEs in .debug_info.
 
+from sortedcontainers import SortedList
+
 _INT_ENCODING = 5
 
 PUBLIC = 1
 PROTECTED = 2
 PRIVATE = 3
+
+class PCRange(object):
+    """
+    An interval of $PC values associated with a method implementation.
+    """
+    def __init__(self, pc_lo, pc_hi, method_name):
+        self.pc_lo = pc_lo
+        self.pc_hi = pc_hi
+        self.method_name = method_name
+
+    def includes_pc(self, pc):
+        return self.pc_lo <= pc and self.pc_hi >= pc
+
+    def __repr__(self):
+        s = f'[{self.pc_lo:x}..{self.pc_hi:x}]'
+        if self._method_name:
+            s += f': {self.method_name}'
+        return s
+
+    def __cmp__(self, other):
+        if self == other:
+            return 0
+        elif not isinstance(other, PCRange):
+            return 1 # Always greater than incomparable things.
+        elif self.pc_lo < other.pc_lo:
+            return -1
+        elif self.pc_hi < other.pc_hi:
+            return -1
+        else:
+            return 1
+
+
+class CompilationUnitNamespace(object):
+    """
+        Compilation Unit-specific namespacing for types, methods, $PC ranges.
+    """
+
+    def __init__(self, die_offset, cu):
+        self._named_types = {} # name -> type
+        self._addr_types = {}  # DIE offset -> type
+        self._pc_ranges = SortedList()
+
+        self._die_offset = die_offset
+        self._cu = cu
+
+    def getCU(self):
+        return self._cu
+
+    def define_pc_range(self, pc_lo, pc_hi, method_name):
+        self._pc_ranges.add(PCRange(pc_lo, pc_hi, method_name))
+
+    def get_ranges_for_pc(self, pc):
+        """
+        Return all PCRanges in this CU that include $PC.
+        Returned in sorted order.
+        """
+        out = SortedList()
+        for pcr in self._pc_ranges:
+            if pcr.includes_pc(pc):
+                out.add(pcr)
+            elif pcr.pc_lo > pc:
+                # We've walked past anything relevant.
+                break
+        return out
+
+    def add_type(self, typ, name, addr):
+        if name and not self._named_types.get(name):
+            self._named_types[name] = typ
+
+        if addr:
+            try:
+                self._addr_types[addr]
+                # Error: if we found an entry, we're trying to multiply-define it.
+                raise Exception(f"Already defined type at addr {addr:x}")
+            except KeyError:
+                # Typical case: haven't yet bound this addr to a typedef. Do so here.
+                self._addr_types[addr] = typ
+
+    def type_by_name(self, name):
+        return self._named_types.get(name) or None
+
+    def type_by_addr(self, addr):
+        return self._addr_types.get(addr) or None
+
+    def has_addr_type(self, addr):
+        return self.type_by_addr(addr) is not None
+
+    def __repr__(self):
+        return f'Compilation unit (@offset {self._die_offset:x})'
 
 class PrgmType(object):
     """
@@ -26,10 +117,7 @@ class PrgmType(object):
         return self._parent_type
 
     def __repr__(self):
-        if self._parent_type:
-            return f'typedef {self.name}: {self._parent_type}'
-        else:
-            return f'{self.name}'
+        return f'{self.name}'
 
 class PrimitiveType(PrgmType):
     """
@@ -49,12 +137,12 @@ class ConstType(PrgmType):
     A const form of another type
     """
     def __init__(self, base_type):
-        name = f'const {base_type}'
+        name = f'const {base_type.name}'
         PrgmType.__init__(self, name, base_type.size, base_type)
         self.name = name
 
     def __repr__(self):
-        return f'const {self.parent_type()}'
+        return self.name
 
 class PointerType(PrgmType):
     """
@@ -85,8 +173,9 @@ class EnumType(PrgmType):
     An enumeration of constant->value mappings.
     """
 
-    def __init__(self, name, base_type, mappings={}):
-        PrgmType.__init__(self, name, base_type.size, base_type)
+    def __init__(self, enum_name, base_type, mappings={}):
+        PrgmType.__init__(self, 'enum ' + enum_name, base_type.size, base_type)
+        self.enum_name = enum_name
         self.enums = {}
         for (token, val) in mappings.items():
             self.enums[token] = val
@@ -110,7 +199,7 @@ class EnumType(PrgmType):
         return None
 
     def __repr__(self):
-        s = f'enum {self.name} [size={self.size}] {{\n  '
+        s = f'enum {self.enum_name} [size={self.size}] {{\n  '
         mappings = []
         for (token, val) in self.enums.items():
             mappings.append(f"{token} = {val}")
@@ -137,8 +226,11 @@ class AliasType(PrgmType):
     """
     A typedef or other alias.
     """
-    def __init__(self, name, base_type):
-        PrgmType.__init__(self, name, base_type.size, base_type)
+    def __init__(self, alias, base_type):
+        PrgmType.__init__(self, alias, base_type.size, base_type)
+
+    def __repr__(self):
+        return f'typedef {self.parent_type().name} {self.name}'
 
 class MethodType(PrgmType):
     def __init__(self, method_name, return_type, formal_args, member_of=None, virtual=0, accessibility=1):
@@ -155,6 +247,8 @@ class MethodType(PrgmType):
         self.accessibility = accessibility
 
     def addFormal(self, arg):
+        if arg is None:
+            arg = _VOID
         self.formal_args.append(arg)
 
     def __repr__(self):
@@ -169,7 +263,7 @@ class MethodType(PrgmType):
         if self.virtual:
             s += 'virtual '
         s += f'{self.return_type} {self.method_name}('
-        s += ', '.join(map(lambda arg: f'{arg}', self.formal_args))
+        s += ', '.join(map(lambda arg: f'{arg.name}', self.formal_args))
         s += ')'
         if self.virtual == 2:
             # pure virtual.
@@ -192,7 +286,7 @@ class FieldType(PrgmType):
             s += 'protected '
         elif self.accessibility == PRIVATE:
             s += 'private '
-        return f'{s}{self.parent_type()} {self.name} [size={self.parent_type().size}, offset={self.offset:#x}]'
+        return f'{s}{self.parent_type().name} {self.field_name} [size={self.parent_type().size}, offset={self.offset:#x}]'
 
 class ClassType(PrgmType):
     """
@@ -215,59 +309,40 @@ class ClassType(PrgmType):
 
 
     def __repr__(self):
-        s = f'class {self.name}'
+        s = f'{self.name}'
         if self.parent_type():
             s += f' <subtype of {self.parent_type().name}>'
-        s += '{\n'
+        s += ' {\n'
+        if len(self.methods) + len(self.fields) > 0:
+            s += '  '
         s += ';\n  '.join(map(lambda m: f'{m}', self.methods + self.fields))
+        if len(self.methods) + len(self.fields) > 0:
+            s += '\n'
         s += '}'
         return s
 
-_named_types = {} # mapping from name -> type
-_loc_types = {} # mapping from location in .debug_info -> type
-_encodings = {}
-def getType(typename):
-    """
-    Return the appropriate type object for the specified typename.
-    """
-    return _named_types[typename]
 
-def typeByAddr(typeaddr):
-    return _loc_types[typeaddr]
-
-def addType(typ, name, addr):
-    if typ is None:
-        return
-
-    if name:
-        try:
-            _named_types[name]
-            raise Exception(f"Warning: attempt to redefine type '{typ.name}'")
-        except KeyError:
-            # No type with that name -- add it.
-            _named_types[typ.name] = typ
-
-    if addr:
-        try:
-            _loc_types[addr]
-            raise Exception(f"Warning: attempt to redefine type for addr {addr:x}")
-        except KeyError:
-            # No type for that addr; add.
-            _loc_types[addr] = typ
-
+_encodings = {} # Global encodings table (encodingId -> PrgmTypE)
+_cu_namespaces = [] # Set of CompilationUnitNamespace objects.
 
 def types():
     """
-    Return an iterable over the set of types.
+    Iterator over all typedefs.
     """
-    return _named_types.items()
+    for cuns in _cu_namespaces:
+        for (name, typ) in cuns._named_types.items():
+            yield (name, typ)
+
+# TODO(aaron): Define 'types()' to iterate over all typedefs
+# TODO(aaron): Define getTypeByName(name, pc) to get the type w/ a given name in the right pc range.
+# TODO(aaron): Define getMethodsForPC(pc) to get the stack of inlined methods leading into PC.
+
 
 def _populateEncodings(int_size):
     """
     Set up initial primitive types that also map to the 'encoding' attr of some DIE types.
     """
     def _add(n, typ):
-        addType(typ, typ.name, None)
         if n is not None:
             _encodings[n] = typ
 
@@ -285,50 +360,45 @@ def _populateEncodings(int_size):
     _add(0x10, PrimitiveType('<UTF8_string>', 1))
     _add(0x12, PrimitiveType('<ASCII_string>', 1))
 
-    _add(None, PrimitiveType('long', int_size * 2, signed=True))
-    _add(None, PrimitiveType('unsigned long', int_size * 2, signed=False))
 
-    if int_size > 2:
-        short_size = int_size / 2
-    else:
-        short_size = int_size
+def parseTypesFromDIE(die, cuns, context={}):
+    """
+        Parse a DIE within a specific CompilationUnitNamespace
 
-    _add(None, PrimitiveType('short', int_size / 2, signed=True))
-    _add(None, PrimitiveType('unsigned short', int_size / 2, signed=False))
-
-
-
-def parseTypesFromDIE(die, context={}):
-
-    def _make_fresh_context(context):
-        """
-            Return a new 'context' object to recursively process a DIE where we did a non-local seek
-            to open it.
-        """
-        ctxt2 = {}
-        ctxt2['compile_unit'] = context['compile_unit']
-        ctxt2['cu_offset'] = context['cu_offset']
-        return ctxt2
+        @param die the DIE to process.
+        @param cuns the current CompilationUnitNamespace
+        @param context additional context for nested DIE processing.
+    """
+    cu = cuns.getCU()
+    cu_offset = cu.cu_offset
 
     def _lookup_type(param='type'):
         """
-            Look up the 'DW_AT_type' attribute and resolve it to a PrgmType.
+            Look up the 'DW_AT_type' attribute and resolve it to a PrgmType within the current
+            CU Namespace..
         """
         # This attr value is offset relative to the compile unit, but it refers
         # to elements of our address-oriented lookup table which is global across
-        # all addresses/offsets within the .dwarf_info. 
-        addr = die.attributes['DW_AT_' + param].value + context['cu_offset']
+        # all addresses/offsets within the .dwarf_info.
+        try:
+            addr = die.attributes['DW_AT_' + param].value + cu_offset
+        except KeyError:
+            return None # No 'type' field for this DIE.
+
+
         if addr == die.offset:
             # Struct/class can refer to their own addr as containing_type. Do nothing.
             return None
-        elif not _loc_types.get(addr):
+        elif not cuns.has_addr_type(addr):
             # We haven't processed this address yet; it's e.g. a forward reference.
             # We need to process that entry before returning a type to the caller of this method.
-            sub_die = context['compile_unit'].get_DIE_from_refaddr(addr)
-            parseTypesFromDIE(sub_die, _make_fresh_context(context))
+            sub_die = cu.get_DIE_from_refaddr(addr)
+            parseTypesFromDIE(sub_die, cuns, {})
 
-        return typeByAddr(addr)
+        return cuns.type_by_addr(addr)
 
+    def _add_type(typ, name, addr):
+        cuns.add_type(typ, name, addr)
 
     def dieattr(name, default_value=None):
         """
@@ -345,19 +415,17 @@ def parseTypesFromDIE(die, context={}):
 
     if not die.tag:
         return # null DIE to terminate nested set.
-    elif _loc_types.get(die.offset):
+    elif cuns.has_addr_type(die.offset):
         return # Our seek-driven parsing has already parsed this entry, don't double-process.
 
-    total_off = die.offset + context['cu_offset']
-    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {context['cu_offset']:x})")
+    total_off = die.offset + cu_offset
+    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
     #print(die)
 
-
-    if dieattr('name') and _named_types.get(dieattr('name')):
+    if dieattr('name') and cuns.type_by_name(dieattr('name')):
         # We're redefining a type name that already exists.
         # Just copy the existing definition into this address.
-        # Does this create issues if we have `typedef a x;` in one CU and `typedef a y` in another?
-        addType(getType(dieattr('name')), None, die.offset)
+        _add_type(cuns.type_by_name(dieattr('name')), None, die.offset)
         return
 
 
@@ -377,24 +445,24 @@ def parseTypesFromDIE(die, context={}):
         if name == prim.name and size == prim.size:
             # benign redundant definition.
             # register the common type object at this addr too.
-            addType(prim, None, die.offset)
+            _add_type(prim, None, die.offset)
         elif size == prim.size:
-            addType(AliasType(name, prim), name, die.offset)
+            _add_type(AliasType(name, prim), name, die.offset)
         else:
-            addType(PrimitiveType(name, size), name, die.offset)
+            _add_type(PrimitiveType(name, size), name, die.offset)
 
     elif die.tag == 'DW_TAG_const_type':
-        base = _lookup_type()
+        base = _lookup_type() or _VOID
         const = ConstType(base)
-        addType(const, const.name, die.offset)
+        _add_type(const, const.name, die.offset)
     elif die.tag == 'DW_TAG_volatile_type':
-        # we don't separately distinguish 'volatile' types; just mirror the base type @ this offset.
+        # define 'volatile foo' as an alias to type foo.
         base = _lookup_type()
-        addType(base, None, die.offset)
+        _add_type(base, 'volatile ' + base.name, die.offset)
     elif die.tag == 'DW_TAG_pointer_type':
-        base = _lookup_type()
+        base = _lookup_type() or _VOID
         ptr = PointerType(base)
-        addType(ptr, ptr.name, die.offset)
+        _add_type(ptr, ptr.name, die.offset)
     elif die.tag == 'DW_TAG_subprogram':
         # (Can be a function on its own, or a member method of a class)
         # name, [accessibility=1], [virtuality=0]
@@ -417,28 +485,28 @@ def parseTypesFromDIE(die, context={}):
         method = MethodType(name, _VOID, [], enclosing_class, virtual, accessibility)
         if enclosing_class:
             enclosing_class.addMethod(method)
-        addType(method, None, die.offset)
+        _add_type(method, None, die.offset)
 
         ctxt = context.copy()
         ctxt['method'] = method
         for child in die.iter_children():
-            parseTypesFromDIE(child, ctxt)
+            parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_subroutine_type':
         # Seems used only for 'pointers to methods', but doesn't actually include any info.
-        # This is used as a target for a TAG_pointer_type to a vtable entry. 
+        # This is used as a target for a TAG_pointer_type to a vtable entry.
         enclosing_class = context.get("class") or None
         return_type = _lookup_type() or _VOID
         method = MethodType(None, return_type, [], enclosing_class, 0, 1)
         if enclosing_class:
             enclosing_class.addMethod(method)
-        addType(method, None, die.offset) 
+        _add_type(method, None, die.offset)
 
         ctxt = context.copy()
         ctxt['method'] = method
         for child in die.iter_children():
-            parseTypesFromDIE(child, ctxt)
+            parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_formal_parameter':
-        # type
+        # type signature for a formal arg to a method.
         # artificial=1 if added by compiler (e.g., implicit 'this')
         # TODO(aaron): Should we actually add artificials to the type? Needed for stack dissection,
         # but needs to be suppressed for pretty-printing. (TODO - Add later)
@@ -448,21 +516,21 @@ def parseTypesFromDIE(die, context={}):
             return # skip for now. It's an implicit 'this' pointer.
 
         context['method'].addFormal(base)
-        addType(base, None, die.offset)
+        _add_type(base, None, die.offset)
     elif die.tag == 'DW_TAG_typedef':
         # name, type
         base = _lookup_type()
         name = dieattr('name')
-        addType(AliasType(name, base), name, die.offset)
+        _add_type(AliasType(name, base), name, die.offset)
     elif die.tag == 'DW_TAG_array_type':
         # type
         base = _lookup_type()
-        t = ArrayType(base)
-        addType(t, t.name, die.offset) # TODO: if this causes redundancy problems, remove t.name.
+        arr = ArrayType(base)
+        _add_type(arr, arr.name, die.offset) # TODO: if this causes redundancy problems, remove arr.name.
         ctxt = context.copy()
-        ctxt['array'] = t
+        ctxt['array'] = arr
         for child in die.iter_children():
-            parseTypesFromDIE(child, ctxt)
+            parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_subrange_type': # Size of array
         # [lower_bound=0], upper_bound
         lower = dieattr("lower_bound", 0)
@@ -474,11 +542,11 @@ def parseTypesFromDIE(die, context={}):
         name = dieattr('name')
         base = _lookup_type()
         enum = EnumType(name, base)
-        addType(enum, enum.name, die.offset)
+        _add_type(enum, enum.name, die.offset)
         ctxt = context.copy()
         ctxt['enum'] = enum
         for child in die.iter_children():
-            parseTypesFromDIE(child, ctxt)
+            parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_enumerator': # Member of enumeration
         # name, const_value
         name = dieattr('name')
@@ -491,10 +559,10 @@ def parseTypesFromDIE(die, context={}):
         name = dieattr('name')
         size = dieattr('byte_size')
 
-        if name and _named_types.get(name) is not None:
+        if name and cuns.type_by_name(name) is not None:
             # This is a redefinition of a type that already exists. Just install it here.
             # TODO: Do we need to recurse and handle the redundant 'member', vtbl_ptr, etc.s?
-            addType(getType(name), None, die.offset)
+            _add_type(getType(name), None, die.offset)
             return
 
         parent_type_offset = dieattr("containing_type", None)
@@ -503,11 +571,11 @@ def parseTypesFromDIE(die, context={}):
         else:
             parent_type = _lookup_type("containing_type")
         class_type = ClassType(name, size, parent_type)
-        addType(class_type, name, die.offset)
+        _add_type(class_type, name, die.offset)
         ctxt = context.copy()
         ctxt['class'] = class_type
         for child in die.iter_children():
-            parseTypesFromDIE(child, ctxt)
+            parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_member':
         # name, type, data_member_location
         # accessibility (1=public, 2=protected, 3=private)
@@ -521,12 +589,12 @@ def parseTypesFromDIE(die, context={}):
         accessibility = dieattr('accessibility', 1)
         field = FieldType(name, context.get("class"), base, offset, accessibility)
         context['class'].addField(field)
-        addType(field, None, die.offset)
+        _add_type(field, None, die.offset)
     else:
         if die.has_children:
             print(f"Scanning DIE: {die.tag}")
         for child in die.iter_children():
-            parseTypesFromDIE(child, context)
+            parseTypesFromDIE(child, cuns, context)
 
 
 
@@ -536,9 +604,9 @@ def parseTypeInfo(dwarf_info, int_size):
     context = {}
     context['int_size'] = int_size
     for compile_unit in dwarf_info.iter_CUs():
-        context['compile_unit'] = compile_unit
-        context['cu_offset'] = compile_unit.cu_offset
-        parseTypesFromDIE(compile_unit.get_top_DIE(), context)
+        cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit)
+        _cu_namespaces.append(cuns)
+        parseTypesFromDIE(compile_unit.get_top_DIE(), cuns, context)
 
 
 # TODO(aaron): UnionType?
