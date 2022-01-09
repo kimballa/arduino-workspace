@@ -4,6 +4,7 @@
 # Generates information about datatypes in the program as well as location-to-method(subprogram)
 # mappings.
 
+import elftools.dwarf.dwarf_expr as dwarf_expr
 from sortedcontainers import SortedList
 
 _INT_ENCODING = 5
@@ -790,8 +791,14 @@ def parseTypesFromDIE(die, cuns, context={}):
         name = dieattr('name')
         base = _lookup_type()
         data_member_location = dieattr('data_member_location')
-        offset = 0 # TODO(aaron): Parse data_member
-        print(f"data member location: [{data_member_location}]")
+        if (len(data_member_location) == 2 and
+                data_member_location[0] == dwarf_expr.DW_OP_name2opcode['DW_OP_plus_uconst']):
+            # class member offsets are technically stack machine exprs that require full
+            # evaluation but g++ seems to encode them all as DW_OP_plus_uconst [offset].
+            offset = data_member_location[1]
+        else:
+            print(f"Warning: Could not calculate offset for {context.get('class').name}::{name}")
+            offset = 0 # TODO(aaron): Parse data_member_location eval code
         accessibility = dieattr('accessibility', 1)
         field = FieldType(name, context.get("class"), base, offset, accessibility)
         context['class'].addField(field)
