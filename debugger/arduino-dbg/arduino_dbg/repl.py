@@ -60,6 +60,9 @@ class Repl(object):
 
         m["help"] = self.print_help
 
+        m["info"] = self._sym_info
+        m["\\i"] = self._sym_info
+
         m["mem"] = self._mem
         m["x"] = self._mem
         m["\\m"] = self._mem
@@ -94,8 +97,6 @@ class Repl(object):
 
         m["type"] = self._sym_datatype
         m["types"] = self._list_types
-
-        m["var"] = self._variable_info
 
         m["quit"] = self._quit
         m["exit"] = self._quit
@@ -135,13 +136,13 @@ class Repl(object):
         for i in range(0, len(frames)):
             frame = frames[i]
 
-            if frame["source_line"]:
-                src = f'  ({frame["source_line"]})'
+            if frame.source_line:
+                src = f'  ({frame.source_line})'
             else:
                 src = ''
-            print(f"{i}. {frame['addr']:04x}: {frame['demangled']}{src}")
-            if len(frame['demangled_inline_chain']) > 1:
-                print(f"    Inlined method calls: {' in '.join(frame['demangled_inline_chain'])}")
+            print(f"{i}. {frame.addr:04x}: {frame.demangled}{src}")
+            if len(frame.demangled_inline_chain) > 1:
+                print(f"    Inlined method calls: {' in '.join(frame.demangled_inline_chain)}")
 
 
         # TODO(aaron): Should the 'frames' get cached like a 'sym' lookup (enabling
@@ -699,13 +700,13 @@ class Repl(object):
             return
 
         frame = frames[frame_num]
-        sp = frame['sp']
-        frame_size = frame['frame_size']
+        sp = frame.sp
+        frame_size = frame.frame_size
         if frame_size < 0:
             frame_size = 16
             print(f"Warning: could not identify size of stack frame. Defaulting to {frame_size}.")
 
-        print(f'Frame {frame_num} at PC {frame["addr"]:#04x} in method {frame["demangled"]}')
+        print(f'Frame {frame_num} at PC {frame.addr:#04x} in method {frame.demangled}')
 
         ret_addr_size = self._debugger.get_arch_conf("ret_addr_size")
         ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size + 1)
@@ -964,23 +965,28 @@ class Repl(object):
             # kind == types.VARIABLE
             print(f'{sym}: {typ.name}')
 
-    def _variable_info(self, argv):
+        return kind
+
+    def _sym_info(self, argv):
         """
-        Show info about a variable: addr, type, value.
+        Show info about a symbol: type, addr, value.
 
-            Syntax: var <symbol_name>
+            Syntax: info <symbol_name>
 
-        This is equivalent to running the 'addr', 'type', and 'print' commands with the same
+        This is equivalent to running the 'type', 'addr', and 'print' commands with the same
         symbol name as the argument to each.
         """
         if len(argv) == 0:
-            print("Syntax: var <symbol_name>")
+            print("Syntax: info <symbol_name>")
             return
 
-        self._addr_for_sym(argv)
-        self._sym_datatype(argv)
-        self._print(argv)
-        #TODO(aaron): Consider reworking to show a cleaner format than three separate lines.
+        kind = self._sym_datatype(argv)
+        if kind != types.TYPE:
+            # For methods and variables, show the address
+            self._addr_for_sym(argv)
+        if kind == types.VARIABLE:
+            # For variables, show the memory value at that address
+            self._print(argv)
 
 
     def print_help(self, argv):
@@ -1020,6 +1026,7 @@ class Repl(object):
         print("frame (\\f) -- Show memory contents of a stack frame")
         print("gpio -- Read or write a GPIO pin")
         print("help -- Show this help text")
+        print("info (\\i) -- Show info about a symbol: type, addr, value")
         print("mem (x, \\m) -- Read a memory address on the Arduino")
         print("memstats -- Display info about memory map and RAM usage")
         print("poke -- Write to a variable or memory address on the Arduino")
@@ -1035,7 +1042,6 @@ class Repl(object):
         print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
         print("type -- Show datatype for symbol")
         print("types -- List all defined datatypes")
-        print("var -- Show info about a variable: addr, type, value")
         print("quit (\q) -- Quit the debugger console")
         print("")
         print("After doing a symbol search with sym or '?', you can reference results by")

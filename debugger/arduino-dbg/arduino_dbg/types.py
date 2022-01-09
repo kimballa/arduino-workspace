@@ -1,6 +1,8 @@
 # (c) Copyright 2022 Aaron Kimball
 #
-# Parse program data type info from DIEs in .debug_info.
+# Parse DIEs in .debug_info.
+# Generates information about datatypes in the program as well as location-to-method(subprogram)
+# mappings.
 
 from sortedcontainers import SortedList
 
@@ -68,7 +70,6 @@ class CompilationUnitNamespace(object):
         return self._cu
 
     def define_pc_range(self, pc_lo, pc_hi, scope, method_name):
-        print(f'{(pc_lo,pc_hi,method_name)}')
         self._pc_ranges.add(PCRange(pc_lo, pc_hi, self, scope, method_name))
 
     def get_ranges_for_pc(self, pc):
@@ -77,6 +78,9 @@ class CompilationUnitNamespace(object):
         Returned in sorted order.
         """
         out = SortedList()
+        # TODO(aaron): Consider using self._pc_ranges.bisect_left() on a PCRange(pc,pc)
+        # to pinpoint in O(log(N)) time instead of O(n)
+        # http://www.grantjenks.com/docs/sortedcontainers/sortedlist.html#sortedcontainers.SortedList.bisect_right
         for pcr in self._pc_ranges:
             if pcr.includes_pc(pc):
                 out.add(pcr)
@@ -572,7 +576,7 @@ def parseTypesFromDIE(die, cuns, context={}):
         return # Our seek-driven parsing has already parsed this entry, don't double-process.
 
     total_off = die.offset + cu_offset
-    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
+    #print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
     #print(die)
 
     if dieattr('name') and cuns.type_by_name(dieattr('name')):
@@ -680,17 +684,14 @@ def parseTypesFromDIE(die, cuns, context={}):
         definition = _resolve_abstract_origin()
         if dieattr('low_pc') and dieattr('high_pc'):
             cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), definition, definition.name)
-        elif dieattr('entry_pc') and dieattr('ranges'):
+        elif dieattr('ranges'):
             # Some inlined methods have a DW_AT_entry_pc and a 'DW_AT_ranges' field.
-            # entry_pc can be used instead of low_pc.
-            # decode 'ranges' to get the high_pc point.
+            # Use multiple PCRanges to record this.
             range_lists = context['range_lists']
             if range_lists:
                 rangelist = range_lists.get_range_list_at_offset(dieattr('ranges'))
-                # Take the max PC from the last entry in the list of ranges.
-                cuns.define_pc_range(dieattr('entry_pc'),
-                    rangelist[-1].end_offset,
-                    definition, definition.name)
+                for r in rangelist:
+                    cuns.define_pc_range(r.begin_offset, r.end_offset, definition, definition.name)
 
 
         ctxt = context.copy()
@@ -761,7 +762,6 @@ def parseTypesFromDIE(die, cuns, context={}):
     elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type': # class or struct
         # name, byte_size, containing_type
         # TODO: can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
-        print(die)
         name = dieattr('name')
         size = dieattr('byte_size')
 
@@ -806,8 +806,7 @@ def parseTypesFromDIE(die, cuns, context={}):
             # It's global in scope within the CU Namespace.
             cuns.addVariable(name, base)
     else:
-        if die.has_children:
-            print(f"Scanning DIE: {die.tag}")
+        # TODO(aaron): Consider parsing DW_TAG_GNU_call_site
         for child in die.iter_children():
             parseTypesFromDIE(child, cuns, context)
 

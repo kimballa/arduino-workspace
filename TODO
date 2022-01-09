@@ -15,7 +15,6 @@ Client:
     * ... ability to read `.debug_frames` section and use to unwind registers.
     * need notion of "current frame" that can be adjusted rather than just as immediate arg
       to `frame` / `\f`
-  * Ability to show type information for symbol.
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
 

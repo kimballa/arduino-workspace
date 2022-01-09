@@ -1,12 +1,68 @@
 # (C) Copyright 2021 Aaron Kimball
 #
-# Stack analysis routines.
+# Stack analysis classes and routines.
 
+import arduino_dbg.binutils as binutils
+import arduino_dbg.types as types
 
 _debugger_methods = [
   "__vector_17",     # timer interrupt
   "__dbg_service",   # The debugger interactive service loop
 ]
+
+class CallFrame(object):
+    """
+    Represents a frame on the call stack; generated in the debugger.get_backtrace()
+    method.
+    """
+
+    def __init__(self, debugger, addr, sp):
+        self._debugger = debugger
+
+        self.addr = addr # $PC
+        self.sp = sp
+        self.name = '???'
+        self.demangled = '???'
+        self.frame_size = -1
+        self.source_line = None
+        self.inline_chain = []
+        self.demangled_inline_chain = []
+
+        func_name = debugger.function_sym_by_pc(addr)
+        if func_name is None:
+            print(f"Warning: could not resolve $PC={addr:#04x} to method symbol")
+            return
+        else:
+            self.name = func_name
+
+        # With a resolved method name available, complete the stack frame record.
+
+        # Look up info about method inlining; the decoded name for $PC may logically
+        # be within more methods.
+        self.inline_chain = types.getMethodsForPC(addr)
+
+        self.frame_size = self._calculate_stack_frame_size()
+        self._calculate_source_line(debugger.elf_name)
+        self._demangle()
+
+    def _demangle(self):
+        """
+        Demangle method names.
+        """
+        self.demangled = binutils.demangle(self.name)
+        self.demangled_inline_chain = [ binutils.demangle(m) for m in self.inline_chain ]
+
+
+    def _calculate_source_line(self, elf_name):
+        """
+        Calculate the source code file and line number from frame $PC.
+        """
+        self.source_line = binutils.pc_to_source_line(elf_name, self.addr)
+
+    def _calculate_stack_frame_size(self):
+        self.frame_size = stack_frame_size_for_method(self._debugger, self.addr, self.name)
+        return self.frame_size
+
 
 def get_stack_autoskip_count(debugger):
     """

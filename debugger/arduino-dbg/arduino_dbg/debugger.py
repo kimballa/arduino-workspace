@@ -111,6 +111,7 @@ class Debugger(object):
         self._read_elf()
 
         self._process_state = PROCESS_STATE_UNKNOWN
+        self._cached_frames = None
 
     ###### Configuration file / config key management functions.
 
@@ -665,6 +666,7 @@ class Debugger(object):
 
 
     def send_continue(self):
+        self.clear_frame_cache() # Backtrace is invalidated by continued execution.
         continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, self.RESULT_ONELINE)
         if continue_ok == "Continuing":
             self._process_state = PROCESS_STATE_RUNNING
@@ -816,6 +818,10 @@ class Debugger(object):
 
             Return a list of dicts that describe each frame of the stack.
         """
+        if self._cached_frames:
+            # We already have a backtrace.
+            return self._cached_frames[0:limit]
+
         self.verboseprint(f'Scanning backtrace (limit={limit})')
         ramend = self._arch["RAMEND"]
         ret_addr_size = self._arch["ret_addr_size"] # nr of bytes on stack for a return address.
@@ -828,42 +834,19 @@ class Debugger(object):
         frames = []
 
         # Walk back through the stack to establish the method calls that got us
-        # to where we are.
-        while sp < ramend and pc != 0 and (limit is None or len(frames) < limit):
-            # TODO(aaron): Refactor StackFrame into its own class.
-            frame = {}
+        # to where we are. If we didn't have a cached backtrace, get the entire thing (ignore
+        # limit). 
+        while sp < ramend and pc != 0:
+            frame = stack.CallFrame(self, pc, sp)
             frames.append(frame)
-            frame['addr'] = pc
-            frame['sp'] = sp
-            frame['name'] = '???'
-            frame['demangled'] = '???'
-            frame['frame_size'] = -1
-            frame['source_line'] = None
-            frame['inline_chain'] = []
-            frame['demangled_inline_chain'] = []
 
-            func = self.function_sym_by_pc(pc)
-            if func is None:
-                print(f"Warning: could not resolve $PC={pc:#04x} to method symbol")
+            if frame.name is None:
                 break # We've hit the limit of traceable methods
 
-            # Look up info about method inlining; the decoded name for $PC may logically
-            # be within more methods.
-            inline_chain = types.getMethodsForPC(pc)
-            print(f"Back with PC {pc:x} and inline chain {inline_chain}")
-            frame['inline_chain'] = inline_chain
-            frame['demangled_inline_chain'] = [ binutils.demangle(m) for m in inline_chain ]
+            self.verboseprint(f"function {frame.name} has frame {frame.frame_size}; " +
+                f"sp: {sp:04x}, pc: {pc:04x}")
 
-            frame_size = stack.stack_frame_size_for_method(self, pc, func)
-
-            frame['name'] = func
-            frame['demangled'] = binutils.demangle(func)
-            frame['frame_size'] = frame_size
-            frame['source_line'] = binutils.pc_to_source_line(self.elf_name, pc)
-
-            self.verboseprint(f"function {func} has frame {frame_size}; sp: {sp:04x}, pc: {pc:04x}")
-
-            sp += frame_size # move past the stack frame
+            sp += frame.frame_size # move past the stack frame
 
             # next 'ret_addr_size' bytes are the return address consumed by RET opcode.
             # pop the bytes off 1-by-1 and consume them as the ret_addr (PC in next fn)
@@ -871,7 +854,12 @@ class Debugger(object):
             sp += ret_addr_size
             self.verboseprint(f"returning to pc {pc:04x}, sp {sp:04x}")
 
-        return frames
+        self._cached_frames = frames # Cache this backtrace for further lookups.
+        return frames[0:limit]
+
+    def clear_frame_cache(self):
+        """ Clear cached backtrace information. """
+        self._cached_frames = None
 
     def get_return_addr_from_stack(self, stack_addr):
         """
