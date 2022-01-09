@@ -140,6 +140,9 @@ class Repl(object):
             else:
                 src = ''
             print(f"{i}. {frame['addr']:04x}: {frame['demangled']}{src}")
+            if len(frame['demangled_inline_chain']) > 1:
+                print(f"    Inlined method calls: {' in '.join(frame['demangled_inline_chain'])}")
+
 
         # TODO(aaron): Should the 'frames' get cached like a 'sym' lookup (enabling
         # reference to methods on the call stack via #1, #2, $, etc...)
@@ -911,7 +914,7 @@ class Repl(object):
         """
         types - List all types.
         """
-        
+
         for (name, typ) in types.types():
             print(typ)
 

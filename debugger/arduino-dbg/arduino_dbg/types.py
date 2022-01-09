@@ -18,7 +18,7 @@ class PCRange(object):
         self.pc_lo = pc_lo
         self.pc_hi = pc_hi
         self.cuns = cuns # associated CompilationUnitNamespace
-        self.method_name = method_name
+        self.method_name = method_name # Method represented by this PCRange, if any.
         self.variable_scope = variable_scope # a MethodType or LexicalScope that holds Variables.
 
     def includes_pc(self, pc):
@@ -452,8 +452,35 @@ def getTypeByName(name, pc):
 
     return (None, None)
 
+def getMethodsForPC(pc):
+    """
+    Return a list identifying method(s) that contain the specified $PC.
+    If the PC is in a "normal" method, this will be a singleton list.
+    However, if the method (as identified on the stack frame) body contains other inlined methods
+    (which may happen recursively), this provides a list from narrowest to widest of the
+    method(s) where the PC currently is.
 
-# TODO(aaron): Define getMethodsForPC(pc) to get the stack of inlined methods leading into PC.
+    e.g. if we have:
+    inline void inner2() { ...; /* $PC */; ... }
+    inline void inner1() { ...; inner2(); ... }
+    void outermost() {
+        inner1();
+    }
+
+    then getMethodsForPC($PC) will return ['inner2', 'inner1', 'outermost']
+    """
+    pc_ranges = SortedList()
+    for cuns in _cu_namespaces:
+        pc_ranges.update(cuns.get_ranges_for_pc(pc))
+
+    out = []
+    for pcr in pc_ranges:
+        if pcr.method_name:
+            out.append(pcr.method_name)
+
+    print(f"inline chains: {pc:x} -> {out}")
+    out.reverse()
+    return out
 
 
 def _populateEncodings(int_size):
@@ -652,10 +679,19 @@ def parseTypesFromDIE(die, cuns, context={}):
         # Defines a PC range associated with a subroutine inlined within another one.
         definition = _resolve_abstract_origin()
         if dieattr('low_pc') and dieattr('high_pc'):
-            # TODO(aaron): Some inlined methods have a DW_AT_entry_pc and a 'DW_AT_ranges'
-            # field. entry_pc can be used instead of low_pc but how do we decode 'ranges'
-            # to get the high_pc point?
             cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), definition, definition.name)
+        elif dieattr('entry_pc') and dieattr('ranges'):
+            # Some inlined methods have a DW_AT_entry_pc and a 'DW_AT_ranges' field.
+            # entry_pc can be used instead of low_pc.
+            # decode 'ranges' to get the high_pc point.
+            range_lists = context['range_lists']
+            if range_lists:
+                rangelist = range_lists.get_range_list_at_offset(dieattr('ranges'))
+                # Take the max PC from the last entry in the list of ranges.
+                cuns.define_pc_range(dieattr('entry_pc'),
+                    rangelist[-1].end_offset,
+                    definition, definition.name)
+
 
         ctxt = context.copy()
         ctxt['method'] = definition
@@ -782,6 +818,7 @@ def parseTypeInfo(dwarf_info, int_size):
 
     context = {}
     context['int_size'] = int_size
+    context['range_lists'] = dwarf_info.range_lists()
     for compile_unit in dwarf_info.iter_CUs():
         cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit)
         _cu_namespaces.append(cuns)

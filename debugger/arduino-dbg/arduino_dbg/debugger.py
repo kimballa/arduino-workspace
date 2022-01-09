@@ -374,7 +374,7 @@ class Debugger(object):
                     self._symbols[sym.name] = sym
 
         if self.elf.has_dwarf_info():
-            self.verboseprint("Loading debug info from program binary") 
+            self.verboseprint("Loading debug info from program binary")
             self._dwarf_info = self.elf.get_dwarf_info()
             if not self._dwarf_info.has_debug_info:
                 # It was just an exception handler unwind table; no good.
@@ -830,6 +830,7 @@ class Debugger(object):
         # Walk back through the stack to establish the method calls that got us
         # to where we are.
         while sp < ramend and pc != 0 and (limit is None or len(frames) < limit):
+            # TODO(aaron): Refactor StackFrame into its own class.
             frame = {}
             frames.append(frame)
             frame['addr'] = pc
@@ -838,11 +839,20 @@ class Debugger(object):
             frame['demangled'] = '???'
             frame['frame_size'] = -1
             frame['source_line'] = None
+            frame['inline_chain'] = []
+            frame['demangled_inline_chain'] = []
 
             func = self.function_sym_by_pc(pc)
             if func is None:
                 print(f"Warning: could not resolve $PC={pc:#04x} to method symbol")
                 break # We've hit the limit of traceable methods
+
+            # Look up info about method inlining; the decoded name for $PC may logically
+            # be within more methods.
+            inline_chain = types.getMethodsForPC(pc)
+            print(f"Back with PC {pc:x} and inline chain {inline_chain}")
+            frame['inline_chain'] = inline_chain
+            frame['demangled_inline_chain'] = [ binutils.demangle(m) for m in inline_chain ]
 
             frame_size = stack.stack_frame_size_for_method(self, pc, func)
 
