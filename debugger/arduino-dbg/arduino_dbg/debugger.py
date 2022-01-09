@@ -106,12 +106,16 @@ class Debugger(object):
 
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
+        start_time = time.time()
         self._init_config_from_file()
 
         self._read_elf()
 
         self._process_state = PROCESS_STATE_UNKNOWN
         self._cached_frames = None
+
+        end_time = time.time()
+        self.verboseprint(f'Loaded debugger information in {1000*(end_time - start_time):0.01f}ms.')
 
     ###### Configuration file / config key management functions.
 
