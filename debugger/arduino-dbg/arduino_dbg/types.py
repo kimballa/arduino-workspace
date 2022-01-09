@@ -14,31 +14,39 @@ class PCRange(object):
     """
     An interval of $PC values associated with a method implementation.
     """
-    def __init__(self, pc_lo, pc_hi, method_name):
+    def __init__(self, pc_lo, pc_hi, cuns, variable_scope=None, method_name=None):
         self.pc_lo = pc_lo
         self.pc_hi = pc_hi
+        self.cuns = cuns # associated CompilationUnitNamespace
         self.method_name = method_name
+        self.variable_scope = variable_scope # a MethodType or LexicalScope that holds Variables.
 
     def includes_pc(self, pc):
         return self.pc_lo <= pc and self.pc_hi >= pc
 
     def __repr__(self):
         s = f'[{self.pc_lo:x}..{self.pc_hi:x}]'
-        if self._method_name:
+        if self.method_name:
             s += f': {self.method_name}'
         return s
 
-    def __cmp__(self, other):
-        if self == other:
-            return 0
-        elif not isinstance(other, PCRange):
-            return 1 # Always greater than incomparable things.
-        elif self.pc_lo < other.pc_lo:
-            return -1
-        elif self.pc_hi < other.pc_hi:
-            return -1
-        else:
-            return 1
+    def __lt__(self, other):
+        return self.pc_lo < other.pc_lo or (self.pc_lo == other.pc_lo and self.pc_hi < other.pc_hi)
+
+    def __eq__(self, other):
+        return self.pc_lo == other.pc_lo and self.pc_hi == other.pc_hi
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __gt__(self, other):
+        return other.__lt__(self)
+
+    def __lte__(self, other):
+        return self < other or self == other
+
+    def __gte__(self, other):
+        return self > other or self == other
 
 
 class CompilationUnitNamespace(object):
@@ -53,12 +61,15 @@ class CompilationUnitNamespace(object):
 
         self._die_offset = die_offset
         self._cu = cu
+        self._variables = {}
+        self._methods = {}
 
     def getCU(self):
         return self._cu
 
-    def define_pc_range(self, pc_lo, pc_hi, method_name):
-        self._pc_ranges.add(PCRange(pc_lo, pc_hi, method_name))
+    def define_pc_range(self, pc_lo, pc_hi, scope, method_name):
+        print(f'{(pc_lo,pc_hi,method_name)}')
+        self._pc_ranges.add(PCRange(pc_lo, pc_hi, self, scope, method_name))
 
     def get_ranges_for_pc(self, pc):
         """
@@ -96,8 +107,21 @@ class CompilationUnitNamespace(object):
     def has_addr_type(self, addr):
         return self.type_by_addr(addr) is not None
 
+    def addVariable(self, varname, vartype):
+        self._variables[varname] = vartype
+
+    def getVariable(self, varname):
+        return self._variables.get(varname)
+
+    def addMethod(self, methodName, methodType):
+        self._methods[methodName] = methodType
+
+    def getMethod(self, methodName):
+        return self._methods.get(methodName)
+
     def __repr__(self):
         return f'Compilation unit (@offset {self._die_offset:x})'
+
 
 class PrgmType(object):
     """
@@ -232,6 +256,42 @@ class AliasType(PrgmType):
     def __repr__(self):
         return f'typedef {self.parent_type().name} {self.name}'
 
+
+class LexicalScope(object):
+    """
+        A lexical scope (bound to a PCRange) - container for Variable definitions in a method.
+    """
+
+    def __init__(self, origin=None, containingScope=None):
+        """
+            * origin is the resolved abstract_origin object for this scope.
+            * containingScope is a LexicalScope or Method that encloses this one, if any.
+        """
+        self._origin = origin
+        self._containingScope = containingScope
+        self._variables = {}
+
+    def addVariable(self, varname, vartype):
+        self._variables[varname] = vartype
+
+    def getVariable(self, varname):
+        return self._variables.get(varname)
+
+    def getOrigin(self):
+        return self._origin or self
+
+    def getContainingScope(self):
+        return self._containingScope
+
+    def addFormal(self, arg):
+        # Pass formal argument on to containing Method.
+        if self._containingScope:
+            self._containingScope.addFormal(arg)
+
+    def __repr__(self):
+        return 'LexicalScope'
+
+
 class MethodType(PrgmType):
     def __init__(self, method_name, return_type, formal_args, member_of=None, virtual=0, accessibility=1):
         name = f'{return_type} '
@@ -245,11 +305,25 @@ class MethodType(PrgmType):
         self.member_of = member_of
         self.virtual = virtual
         self.accessibility = accessibility
+        self._variables = {}
+        self._origin = None
 
     def addFormal(self, arg):
         if arg is None:
             arg = _VOID
         self.formal_args.append(arg)
+
+    def addVariable(self, varname, vartype):
+        self._variables[varname] = vartype
+
+    def getVariable(self, varname):
+        return self._variables.get(varname)
+
+    def setOrigin(self, origin):
+        self._origin = origin
+
+    def getOrigin(self):
+        return self._origin or self
 
     def __repr__(self):
         s = ''
@@ -304,9 +378,20 @@ class ClassType(PrgmType):
     def addMethod(self, method_type):
         self.methods.append(method_type)
 
+    def getMethod(self, methodName):
+        for m in self.methods:
+            if m.method_name == methodName:
+                return m
+        return None
+
     def addField(self, field_type):
         self.fields.append(field_type)
 
+    def getField(self, fieldName):
+        for f in self.fields:
+            if f.field_name == fieldName:
+                return f
+        return None
 
     def __repr__(self):
         s = f'{self.name}'
@@ -333,8 +418,41 @@ def types():
         for (name, typ) in cuns._named_types.items():
             yield (name, typ)
 
-# TODO(aaron): Define 'types()' to iterate over all typedefs
-# TODO(aaron): Define getTypeByName(name, pc) to get the type w/ a given name in the right pc range.
+TYPE = 1
+METHOD = 2
+VARIABLE = 3
+
+def getTypeByName(name, pc):
+    """
+    Return the type for a given name in the compilation unit associated with $PC.
+    """
+    pc_ranges = SortedList()
+    for cuns in _cu_namespaces:
+        pc_ranges.update(cuns.get_ranges_for_pc(pc))
+
+    if len(pc_ranges) == 0:
+        return None # We fell off the edge into outer space?
+
+    # This is the CompilationUnitNamespace that encloses:
+    cuns = pc_ranges[-1].cuns
+
+    # Use the various lookup tables available to us:
+    # we are either looking up a literal type, a signature for a method name, or a type for a var.
+    typ = cuns.type_by_name(name)
+    if typ:
+        return (TYPE, typ)
+
+    typ = cuns.getMethod(name)
+    if typ:
+        return (METHOD, typ)
+
+    typ = cuns.getVariable(name)
+    if typ:
+        return (VARIABLE, typ)
+
+    return (None, None)
+
+
 # TODO(aaron): Define getMethodsForPC(pc) to get the stack of inlined methods leading into PC.
 
 
@@ -396,6 +514,14 @@ def parseTypesFromDIE(die, cuns, context={}):
             parseTypesFromDIE(sub_die, cuns, {})
 
         return cuns.type_by_addr(addr)
+
+    def _resolve_abstract_origin():
+        """
+        Trace the abstract_origin property of this DIE back up to the root of the abstract_origin
+        trail.
+        """
+        typ = _lookup_type('abstract_origin')
+        return typ.getOrigin()
 
     def _add_type(typ, name, addr):
         cuns.add_type(typ, name, addr)
@@ -485,7 +611,18 @@ def parseTypesFromDIE(die, cuns, context={}):
         method = MethodType(name, _VOID, [], enclosing_class, virtual, accessibility)
         if enclosing_class:
             enclosing_class.addMethod(method)
+        else:
+            # it's a standalone method in the CU
+            cuns.addMethod(name, method)
         _add_type(method, None, die.offset)
+
+        if dieattr('low_pc'):
+            # has a PC range associated with it.
+            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, name)
+        if dieattr('abstract_origin'):
+            method.setOrigin(_resolve_abstract_origin())
+
+        # TODO(aaron): Make use of DW_AT_frame_base ?
 
         ctxt = context.copy()
         ctxt['method'] = method
@@ -497,12 +634,45 @@ def parseTypesFromDIE(die, cuns, context={}):
         enclosing_class = context.get("class") or None
         return_type = _lookup_type() or _VOID
         method = MethodType(None, return_type, [], enclosing_class, 0, 1)
+        if dieattr('abstract_origin'):
+            method.setOrigin(_resolve_abstract_origin())
         if enclosing_class:
             enclosing_class.addMethod(method)
         _add_type(method, None, die.offset)
 
+        if dieattr('low_pc'):
+            # has a PC range associated with it.
+            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, name)
+
         ctxt = context.copy()
         ctxt['method'] = method
+        for child in die.iter_children():
+            parseTypesFromDIE(child, cuns, ctxt)
+    elif die.tag == 'DW_TAG_inlined_subroutine':
+        # Defines a PC range associated with a subroutine inlined within another one.
+        definition = _resolve_abstract_origin()
+        if dieattr('low_pc') and dieattr('high_pc'):
+            # TODO(aaron): Some inlined methods have a DW_AT_entry_pc and a 'DW_AT_ranges'
+            # field. entry_pc can be used instead of low_pc but how do we decode 'ranges'
+            # to get the high_pc point?
+            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), definition, definition.name)
+
+        ctxt = context.copy()
+        ctxt['method'] = definition
+        for child in die.iter_children():
+            parseTypesFromDIE(child, cuns, ctxt)
+    elif die.tag == 'DW_TAG_lexical_block':
+        # Lexical block defines a PCRange that can contain variables.
+        origin = None
+        if dieattr('abstract_origin'):
+            origin = _resolve_abstract_origin()
+        lexical_scope = LexicalScope(origin, context['method'])
+        _add_type(lexical_scope, None, die.offset)
+        if dieattr('low_pc') and dieattr('high_pc'):
+            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), lexical_scope, None)
+
+        ctxt = context.copy()
+        ctxt['method'] = lexical_scope
         for child in die.iter_children():
             parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_formal_parameter':
@@ -590,6 +760,15 @@ def parseTypesFromDIE(die, cuns, context={}):
         field = FieldType(name, context.get("class"), base, offset, accessibility)
         context['class'].addField(field)
         _add_type(field, None, die.offset)
+    elif die.tag == 'DW_TAG_variable':
+        name = dieattr('name')
+        base = _lookup_type()
+        if context.get('method'):
+            # method or lexical block wrapped around this.
+            context['method'].addVariable(name, base)
+        else:
+            # It's global in scope within the CU Namespace.
+            cuns.addVariable(name, base)
     else:
         if die.has_children:
             print(f"Scanning DIE: {die.tag}")

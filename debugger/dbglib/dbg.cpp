@@ -10,10 +10,6 @@
 // Debugger status bits.
 volatile uint8_t debug_status = 0;
 
-#ifdef DBG_ENABLED
-static volatile void* pcAtBreakpoint = NULL; // PC where break triggered.
-#endif
-
 // Forward declarations.
 extern "C" {
   static void __dbg_service() __attribute__((no_instrument_function));

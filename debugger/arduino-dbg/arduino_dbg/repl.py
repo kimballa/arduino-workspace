@@ -939,12 +939,27 @@ class Repl(object):
 
     def _sym_datatype(self, argv):
         """
-        Show datatype for symbol.
+        Show datatype for symbol or type name.
 
-            Syntax: type <symbol_name>
+            Syntax: type <name>
         """
-        print("Unimplemented")
-    
+        if len(argv) == 0:
+            print("Syntax: type <name>")
+            return
+
+        registers = self._debugger.get_registers()
+        pc = registers["PC"]
+        sym = argv[0]
+        (kind, typ) = types.getTypeByName(sym, pc)
+        if kind is None:
+            print(f'{sym}: <unknown type>')
+        elif kind == types.TYPE or kind == types.METHOD:
+            # Print the type description directly, or print the method signature (which includes
+            # the method name) directly
+            print(f'{typ}')
+        else:
+            # kind == types.VARIABLE
+            print(f'{sym}: {typ.name}')
 
     def _variable_info(self, argv):
         """
