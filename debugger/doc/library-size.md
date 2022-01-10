@@ -13,10 +13,12 @@ Current stats:
     10124 / 520 *v2.0* - removed need for instrumentation to capture stack traces.
 ```
 
-empty program:  3896 / 150
-with dbg-gpio:  5564 / 173 (+1668)
-dbg-memusage:   5618 / 179
-optimized:      5566 / 159 (real stack walking, no more instrumentation)
+```
+  empty program:  3896 / 150
+  with dbg-gpio:  5564 / 173 (+1668)
+  dbg-memusage:   5618 / 179
+  optimized:      5566 / 159 (real stack walking, no more instrumentation)
+```
 
 Minimum debugger o.h. is 1670 flash, 9 sram bytes.
 
