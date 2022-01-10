@@ -15,6 +15,8 @@ def demangle(name):
     """
         Use c++filt in binutils to demangle a C++ name into a human-readable one.
     """
+    if name is None:
+        return None
     args = ['c++filt', '-t', name]
     pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
         encoding=locale.getpreferredencoding())
@@ -32,6 +34,8 @@ def pc_to_source_line(elf_file, addr):
     """
         Given a program counter ($PC) value, establish what line of source it comes from.
     """
+    if addr is None:
+        return None
     args = ["addr2line", "-s", "-e", elf_file, ("%x" % addr)]
     pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
         encoding=locale.getpreferredencoding())

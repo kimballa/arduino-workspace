@@ -21,19 +21,21 @@ class CallFrame(object):
 
         self.addr = addr # $PC
         self.sp = sp
-        self.name = '???'
+        self.name = None
         self.demangled = '???'
         self.frame_size = -1
         self.source_line = None
         self.inline_chain = []
         self.demangled_inline_chain = []
+        self.sym = None
 
-        func_name = debugger.function_sym_by_pc(addr)
-        if func_name is None:
+        func_sym = debugger.function_sym_by_pc(addr)
+        if func_sym is None:
             print(f"Warning: could not resolve $PC={addr:#04x} to method symbol")
             return
         else:
-            self.name = func_name
+            self.name = func_sym.name
+            self.sym = func_sym
 
         # With a resolved method name available, complete the stack frame record.
 
@@ -49,7 +51,11 @@ class CallFrame(object):
         """
         Demangle method names.
         """
-        self.demangled = binutils.demangle(self.name)
+        if self.sym:
+            self.demangled = self.sym.demangled
+        else:
+            self.demangled = binutils.demangle(self.name) or '???'
+
         self.demangled_inline_chain = [ binutils.demangle(m) for m in self.inline_chain ]
 
 
@@ -60,7 +66,8 @@ class CallFrame(object):
         self.source_line = binutils.pc_to_source_line(elf_name, self.addr)
 
     def _calculate_stack_frame_size(self):
-        self.frame_size = stack_frame_size_for_method(self._debugger, self.addr, self.name)
+        # TODO(aaron): Does self.sym have stack frame info attached we can use w/o going fishing?
+        self.frame_size = stack_frame_size_for_method(self._debugger, self.addr, self.sym)
         return self.frame_size
 
 
@@ -90,15 +97,19 @@ def get_stack_autoskip_count(debugger):
     return (last_frame['sp'] - sp) + last_frame['frame_size'] + ret_addr_size
 
 
-def stack_frame_size_for_method(debugger, pc, method_name):
+def stack_frame_size_for_method(debugger, pc, method_sym):
     """
-        Given a program counter (PC) somewhere within the body of `method_name`, determine
+        Given a program counter (PC) somewhere within the body of `method_sym`, determine
         the size of the current stack frame at that point and return it.
 
         i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
         filled by the method (x+1..x+4) and the (2 byte AVR) return address is at
         x+5..x+6.
     """
+
+    if method_sym is None:
+        print(f"Error: No function symbol for method: {method_name}; method frame size = ???")
+        return None
 
     # Pull opcode details from architecture configuration.
     # opcode records contain fields: name, OPCODE, MASK, width, decoder
@@ -114,16 +125,12 @@ def stack_frame_size_for_method(debugger, pc, method_name):
     else:
         sph_port = None
 
-    fn_body = debugger.image_for_symbol(method_name)
-    fn_sym = debugger.lookup_sym(method_name)
-    if fn_sym is None:
-        print(f"Error: No function symbol for method: {method_name}; method frame size = ???")
-        return None
+    fn_body = debugger.image_for_symbol(method_sym.name)
 
-    fn_start_pc = fn_sym['addr']
-    fn_size = fn_sym['size']
+    fn_start_pc = method_sym.addr
+    fn_size = method_sym.size
 
-    debugger.verboseprint(f"Getting frame size for method {method_name} (@PC {pc:04x})")
+    debugger.verboseprint(f"Getting frame size for method {method_sym.name} (@PC {pc:04x})")
     debugger.verboseprint(f"start addr {fn_start_pc:04x}, size {fn_size} bytes")
 
     # Walk through the instructions of the method until we reach the end of the prologue
@@ -273,7 +280,7 @@ def stack_frame_size_by_pc(debugger, pc):
         Given a program counter (PC), determine what method we're in and return the size
         of the stack frame
     """
-    method_name = debugger.function_sym_by_pc(pc)
-    return stack_frame_size_for_method(debugger, pc, method_name)
+    method = debugger.function_sym_by_pc(pc)
+    return stack_frame_size_for_method(debugger, pc, method)
 
 

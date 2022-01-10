@@ -4,11 +4,13 @@ from elftools.elf.elffile import ELFFile
 import importlib.resources as resources
 import os
 import serial
+from sortedcontainers import SortedDict
 import time
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.protocol as protocol
 import arduino_dbg.stack as stack
+from arduino_dbg.symbol import Symbol
 import arduino_dbg.types as types
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
@@ -96,9 +98,9 @@ class Debugger(object):
         self.reopen(port, baud, timeout)
         self.elf_name = os.path.realpath(elf_name)
         self._sections = {}
-        self._addr_to_symbol = {}
-        self._symbols = {}
-        self._demangled_to_symbol = {}
+        self._addr_to_symbol = SortedDict()
+        self._symbols = SortedDict()
+        self._demangled_to_symbol = SortedDict()
         self._dwarf_info = None
         self.elf = None
         self._elf_file_handle = None
@@ -374,9 +376,10 @@ class Debugger(object):
                 sym_type = sym.entry['st_info']['type']
                 if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
                     # This has a location worth memorizing
-                    self._addr_to_symbol[sym.entry['st_value']] = sym.name
-
-                    self._symbols[sym.name] = sym
+                    dbg_sym = Symbol(sym)
+                    self._addr_to_symbol[dbg_sym.addr] = dbg_sym
+                    self._symbols[dbg_sym.name] = dbg_sym
+                    self._demangled_to_symbol[dbg_sym.demangled] = dbg_sym
 
         if self.elf.has_dwarf_info():
             self.verboseprint("Loading debug info from program binary")
@@ -387,13 +390,16 @@ class Debugger(object):
                 self.verboseprint("Warning: empty debug info in program binary.")
             if self._dwarf_info:
                 types.parseTypeInfo(self._dwarf_info, self.get_arch_conf("int_size"))
+                # TODO(aaron): Link the parsed .debug_info / type information to our symbol table.
+                # TODO(aaron): Link .debug_frame unwind info to symbols.
+                for cfi_e in self._dwarf_info.CFI_entries():
+                    table = cfi_e.get_decoded().table
+                    for row in table:
+                        print(row)
+                    print("\n\n")
+
         else:
             self.verboseprint("Warning: no debug info in program binary.")
-
-        # Sort the symbols by address and memorize demangled names too.
-        self._addr_to_symbol = dict(sorted(self._addr_to_symbol.items()))
-        for (addr, name) in self._addr_to_symbol.items():
-            self._demangled_to_symbol[binutils.demangle(name)] = name
 
 
     def get_section(self, section_name):
@@ -440,7 +446,7 @@ class Debugger(object):
         if symdata is None:
             return None
 
-        return self.get_image_bytes(symdata["addr"], symdata["size"])
+        return self.get_image_bytes(symdata.addr, symdata.size)
 
 
 
@@ -482,42 +488,26 @@ class Debugger(object):
             Given a $PC pointing somewhere within a function body, return the name of
             the symbol for the function.
         """
-        for (addr, name) in self._addr_to_symbol.items():
+        for (addr, sym) in self._addr_to_symbol.items():
             if addr > pc:
-                continue # Definitely not this one.
+                # Definitely not this one. Moreover, since _addr_to_symbol is kept
+                # and iterated in sorted order, we don't have one to return
+                return None
 
-            sym = self._symbols[name]
-            if sym['st_info']['type'] != "STT_FUNC":
+            if sym.elf_sym['st_info']['type'] != "STT_FUNC":
                 continue # Not a function
 
-            if addr + sym['st_size'] > pc:
-                return name # Found it.
+            if addr + sym.elf_sym['st_size'] > pc:
+                return sym # Found it.
+
+        return None
 
     def lookup_sym(self, name):
         """
-            Given a symbol name (regular or demangled), return a struct
-            of information about the symbol.
+            Given a symbol name (regular or demangled), return an object
+            of type symbol.Symbol with its information.
         """
-
-        try:
-            # Is the input a demangled name?
-            true_name = self._demangled_to_symbol[name]
-        except KeyError:
-            # No it is not.
-            true_name = name
-
-        try:
-            sym = self._symbols[true_name]
-        except KeyError:
-            return None
-
-        out = {}
-        out['name'] = true_name
-        out['demangled'] = binutils.demangle(true_name)
-        out['size'] = sym.entry['st_size']
-        out['addr'] = sym.entry['st_value']
-
-        return out
+        return self._demangled_to_symbol.get(name) or self._symbols.get(name)
 
 
     ###### Low-level serial interface
@@ -826,7 +816,7 @@ class Debugger(object):
             # We already have a backtrace.
             return self._cached_frames[0:limit]
 
-        self.verboseprint(f'Scanning backtrace (limit={limit})')
+        self.verboseprint('Scanning backtrace')
         ramend = self._arch["RAMEND"]
         ret_addr_size = self._arch["ret_addr_size"] # nr of bytes on stack for a return address.
 
@@ -839,8 +829,10 @@ class Debugger(object):
 
         # Walk back through the stack to establish the method calls that got us
         # to where we are. If we didn't have a cached backtrace, get the entire thing (ignore
-        # limit). 
+        # limit).
         while sp < ramend and pc != 0:
+            # TODO(aaron): CallFrame should link to the Symbol entries we create rather than just
+            # the method name.
             frame = stack.CallFrame(self, pc, sp)
             frames.append(frame)
 

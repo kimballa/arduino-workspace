@@ -145,10 +145,6 @@ class Repl(object):
                 print(f"    Inlined method calls: {' in '.join(frame.demangled_inline_chain)}")
 
 
-        # TODO(aaron): Should the 'frames' get cached like a 'sym' lookup (enabling
-        # reference to methods on the call stack via #1, #2, $, etc...)
-
-
     def _break(self, argv=None):
         """
         Interrupt the running program and enable debugging at the current $PC.
@@ -385,10 +381,10 @@ class Repl(object):
 
         self._last_sym_used = argv[0] # Symbol argument saved as last symbol used.
 
-        addr = sym["addr"]
+        addr = sym.addr
         size = 1 # set default...
         try:
-            size = sym["size"] # override if available.
+            size = sym.size # override if available.
         except KeyError:
             pass
 
@@ -710,8 +706,11 @@ class Repl(object):
 
         ret_addr_size = self._debugger.get_arch_conf("ret_addr_size")
         ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size + 1)
-        ret_fn = self._debugger.function_sym_by_pc(ret_addr) or '???'
-        ret_fn = binutils.demangle(ret_fn)
+        ret_fn_sym = self._debugger.function_sym_by_pc(ret_addr)
+        if ret_fn_sym:
+            ret_fn = ret_fn_sym.demangled or ret_fn_sym.name
+        else:
+            ret_fn = '???'
         print(f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
         addr = sp + frame_size # Ensure `addr` initialized in case frame_size == 0.
@@ -819,10 +818,10 @@ class Repl(object):
             return
 
         # Resolve symbol to memory address
-        addr = sym["addr"]
+        addr = sym.addr
         size = 1 # set default...
         try:
-            size = sym["size"] # override if available.
+            size = sym.size # override if available.
         except KeyError:
             pass
 
@@ -938,7 +937,7 @@ class Repl(object):
             print(f"(Try 'sym {argv[0]}')")
             return
 
-        print(f'{sym["demangled"]}: {sym["addr"]:08x} ({sym["size"]})')
+        print(f'{sym.demangled}: {sym.addr:08x} ({sym.size})')
         self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
 
     def _sym_datatype(self, argv):
