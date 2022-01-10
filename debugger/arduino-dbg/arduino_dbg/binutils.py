@@ -11,13 +11,16 @@ import subprocess
 _constprop_regex = re.compile(r'\[clone \.constprop.*\]$')
 
 
-def demangle(name):
+def demangle(name, hide_params=False):
     """
         Use c++filt in binutils to demangle a C++ name into a human-readable one.
+        @
     """
     if name is None:
         return None
-    args = ['c++filt', '-t', name]
+    args = ['c++filt', name]
+    if hide_params:
+        args.append('-p') # Suppress method arguments in output.
     pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
         encoding=locale.getpreferredencoding())
     stdout, _ = pipe.communicate()

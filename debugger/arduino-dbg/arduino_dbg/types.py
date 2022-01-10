@@ -7,6 +7,8 @@
 import elftools.dwarf.dwarf_expr as dwarf_expr
 from sortedcontainers import SortedList
 
+import arduino_dbg.binutils as binutils
+
 _INT_ENCODING = 5
 
 PUBLIC = 1
@@ -636,6 +638,22 @@ def parseTypesFromDIE(die, cuns, context={}):
         #   It has an abstract_origin that points to a subprogram canonically defining it within a
         #   CU. You may need to recursively follow 'specification' from there to get the real CU.
         name = dieattr('name')
+
+        # 'name' itself is going to be a mangled name, which isn't super useful to the user.
+        # Get this in demangled form.
+        demangled = binutils.demangle(name, hide_params=True)
+        if demangled:
+            # 'demangled' may now be in the form '/[ClassName::]+methodName/'.
+            # Trim that down to just 'methodName'.
+            try:
+                last_namespace = demangled.rindex(':')
+                demangled = demangled[last_namespace + 1:]
+            except ValueError:
+                # No ':' in string; nothing to do.
+                pass
+
+            name = demangled # Use demangled format for name.
+
         virtual = dieattr('virtuality', 0)
         accessibility = dieattr('accessibility', 1)
 
