@@ -367,7 +367,8 @@ class FieldType(PrgmType):
             s += 'protected '
         elif self.accessibility == PRIVATE:
             s += 'private '
-        return f'{s}{self.parent_type().name} {self.field_name} [size={self.parent_type().size}, offset={self.offset:#x}]'
+        return f'{s}{self.parent_type().name} {self.field_name} ' + \
+            f'[size={self.parent_type().size}, offset={self.offset:#x}]'
 
 class ClassType(PrgmType):
     """

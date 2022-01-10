@@ -1,6 +1,8 @@
 # (c) Copyright 2021 Aaron Kimball
 
 from elftools.elf.elffile import ELFFile
+from elftools.dwarf.callframe import CIE
+
 import importlib.resources as resources
 import os
 import serial
@@ -364,9 +366,9 @@ class Debugger(object):
             section["image"] = elf_sect.data()[0: section["size"]] # Copy out the section image data.
             self._sections[elf_sect.name] = section
 
-            self.verboseprint("****************************")
-            self.verboseprint(f'Section {elf_sect.name} has header {elf_sect.header}')
-            self.verboseprint(f'off: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
+            #self.verboseprint("****************************")
+            #self.verboseprint(f'Section {elf_sect.name} has header {elf_sect.header}')
+            #self.verboseprint(f'off: {elf_sect.header["sh_offset"]}, size: {elf_sect.header["sh_size"]}')
             #print("--data follows--")
             #print(f'{section["image"]}')
 
@@ -391,15 +393,44 @@ class Debugger(object):
             if self._dwarf_info:
                 types.parseTypeInfo(self._dwarf_info, self.get_arch_conf("int_size"))
                 # TODO(aaron): Link the parsed .debug_info / type information to our symbol table.
-                # TODO(aaron): Link .debug_frame unwind info to symbols.
+
+                # Link .debug_frame unwind info to symbols:
                 for cfi_e in self._dwarf_info.CFI_entries():
+                    if isinstance(cfi_e, CIE):
+                        # This is the Common Information Entry (CIE). Save with the debugger.
+                        self._frame_cie = cfi_e
+                        continue
+
+                    # We've got an FDE for some method.
                     table = cfi_e.get_decoded().table
-                    for row in table:
-                        print(row)
-                    print("\n\n")
+                    if len(table):
+                        # Find the method with the relevant $PC
+                        frame_sym = self.function_sym_by_pc(table[0]['pc'])
+                        if frame_sym:
+                            frame_sym.frame_info = cfi_e
+                            #self.verboseprint(f"Bound CFI @ PC {table[0]['pc']:04x} to " +
+                            #    f"method {frame_sym.name}.")
+                        else:
+                            # We have a CFI that claims to start at this $PC, but no method
+                            # claims this address.
+                            print(f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}")
+
+                    #for row in cfi_e.get_decoded().table:
+                    #    row2 = row.copy()
+                    #    pc = row2['pc']
+                    #    del row2['pc']
+                    #    print(f'PC: {pc:04x} {row2}')
+                    #print("\n\n")
 
         else:
             self.verboseprint("Warning: no debug info in program binary.")
+
+
+    def get_frame_cie(self):
+        """
+            Return the CIE from .debug_frame. (Default/initial stack frame info for all methods.)
+        """
+        return self._frame_cie
 
 
     def get_section(self, section_name):
@@ -723,6 +754,10 @@ class Debugger(object):
             # with the separate segment containing .text in flash RAM.
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
+        if size is None or size < 1:
+            print(f"Warning: cannot set memory poke size = {size}; using 1")
+            size = 1
+
         self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], self.RESULT_SILENT)
 
     def get_sram(self, addr, size=1):
@@ -734,6 +769,10 @@ class Debugger(object):
             # On AVR, ELF file thinks .data starts at 800000h; it actually starts at 0h, aliased
             # with the separate segment containing .text in flash RAM.
             addr = addr & self._arch["DATA_ADDR_MASK"]
+
+        if size is None or size < 1:
+            print(f"Warning: cannot set memory fetch size = {size}; using 1")
+            size = 1
 
         result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], self.RESULT_ONELINE)
         return int(result, base=16)
@@ -831,8 +870,6 @@ class Debugger(object):
         # to where we are. If we didn't have a cached backtrace, get the entire thing (ignore
         # limit).
         while sp < ramend and pc != 0:
-            # TODO(aaron): CallFrame should link to the Symbol entries we create rather than just
-            # the method name.
             frame = stack.CallFrame(self, pc, sp)
             frames.append(frame)
 
@@ -856,6 +893,28 @@ class Debugger(object):
     def clear_frame_cache(self):
         """ Clear cached backtrace information. """
         self._cached_frames = None
+
+    def get_frame_regs(self, frame_num):
+        """
+        Return register snapshot as of the specified frame.
+        """
+
+        frames = self.get_backtrace(limit=frame_num+1)
+
+        # start with the current regs.
+        regs = self.get_registers()
+
+        # frame[i].unwind_registers() will reverse the register operations within that
+        # frame, giving the register state for frame i+1. So if frame_num=0, this loop
+        # doesn't run and the real registers are the current registers. Otherwise, we
+        # apply this reversal function on all frames prior to the target frame.
+        for i in range(0, frame_num):
+            regs = frames[i].unwind_registers(regs)
+
+        return regs
+
+
+
 
     def get_return_addr_from_stack(self, stack_addr):
         """

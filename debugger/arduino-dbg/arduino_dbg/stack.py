@@ -2,6 +2,8 @@
 #
 # Stack analysis classes and routines.
 
+import elftools.dwarf.callframe as callframe
+
 import arduino_dbg.binutils as binutils
 import arduino_dbg.types as types
 
@@ -69,6 +71,135 @@ class CallFrame(object):
         # TODO(aaron): Does self.sym have stack frame info attached we can use w/o going fishing?
         self.frame_size = stack_frame_size_for_method(self._debugger, self.addr, self.sym)
         return self.frame_size
+
+    def unwind_registers(self, regs_in):
+        """
+        Use the .debug_frame information in self.sym.frame_info to unwind the registers
+        from this frame, returning the register state seen in the calling function
+        immediately after this function/frame's return.
+
+        The input to this method is a 'regs' dict from register names to values, as seen
+        within this method at its active PC.
+
+        The return value is a 'regs' dict with the same format & keys, with register
+        values as seen by the calling method at that point.
+        """
+
+        # Get the architecture-specific register mapping from the configuration.
+        stack_unwind_registers = self._debugger.get_arch_conf('stack_unwind_registers')
+        num_general_regs = self._debugger.get_arch_conf('general_regs')
+        has_sph = self._debugger.get_arch_conf('has_sph')
+        push_word_len = self._debugger.get_arch_conf('push_word_len') # width of one PUSHed word.
+        ret_addr_size = self._debugger.get_arch_conf('ret_addr_size') # width of return site addr on stack
+
+        if not self.sym or not self.sym.frame_info:
+            print(f"Warning: Could not unwind stack frame for method {self.name}.")
+            return None
+
+        pc = regs_in['PC']
+        if pc is None:
+            raise KeyError("No $PC value in input regs for to FrameInfo.unwind_registers()")
+
+        # TODO(aaron): If the method is an ISR that saves SREG in prologue, we need to
+        # monkeypatch the FDE to account for it, since gcc doesn't account for it when
+        # generating .debug_frames.
+
+        decoded_info = self.sym.frame_info.get_decoded()
+        cfi_table = decoded_info.table
+        cfi_register_order = decoded_info.reg_order # Order in which registers appear in the table.
+
+        rule_row = None
+        for row in cfi_table:
+            if pc > row['pc'] and (rule_row is None or rule_row['pc'] < row['pc']):
+                # Most appropriate row we've yet iterated.
+                rule_row = row
+
+        if rule_row is None:
+            # We broke into this method before any register moves or stack operations
+            # were performed. (i.e., on the start $PC for the method itself.)
+            # Just use the rule from the CIE, which declares the return value position.
+            rule_row = self._debugger.get_frame_cie().get_decoded().table[-1]
+
+        # The dict in 'best_row' now contains the current unwind info for the frame.
+        row_pc = rule_row['pc']
+        self._debugger.verboseprint(f"In method {self.sym.demangled} at PC {pc:04x}, use rowPC {row_pc:04x}")
+
+        cfa_rule = rule_row['cfa']
+        cfa_reg = stack_unwind_registers[cfa_rule.reg] # cfa gives us an index into the unwind
+                                                       # reg names. Get the mapped-to reg name.
+        if cfa_reg is None:
+            print("Error: Unknown register mapping for r{cfa_reg} in CFA rule")
+            return None
+
+        cfa_base = regs_in[cfa_reg] # Read the mapped register to get the baseline for CFA
+
+        if cfa_rule.reg < num_general_regs and has_sph:
+            # cfa_reg points to e.g. r28, but $SP is 16 bits wide. Also use the next register.
+            cfa_base = (regs_in[stack_unwind_registers[cfa_rule.reg + 1]] << 8) | (cfa_base & 0xFF)
+
+        cfa_addr = cfa_base + cfa_rule.offset # We've established the call frame address.
+                                              # This is where SP would point if the entire
+                                              # frame went away via the epilogue + 'ret'.
+        self._debugger.verboseprint(f'Canonical frame addr (CFA) = {cfa_addr:04x}')
+
+        regs_out = regs_in.copy()
+
+        regs_to_process = cfi_register_order.copy()
+        regs_to_process.reverse() # LIFO.
+        for reg_num in regs_to_process:
+            reg_width = push_word_len
+
+            rule = rule_row[reg_num] # type is RegisterRule
+            reg_name = stack_unwind_registers[reg_num]
+
+            if reg_name == 'LR' or reg_name == 'PC':
+                reg_name = 'PC' # This return site will be assigned to PC after frame 'ret'.
+                reg_width = ret_addr_size
+
+            if rule.type == callframe.RegisterRule.UNDEFINED:
+                continue # Nothing to do.
+            elif rule.type == callframe.RegisterRule.SAME_VALUE:
+                continue # We did not change this register value.
+            elif rule.type == callframe.RegisterRule.OFFSET:
+                # We've got an offset from the CFA; load the value at that memory address into
+                # the assigned register.
+                data = self._debugger.get_sram(cfa_addr + rule.arg, reg_width)
+                if reg_name == 'PC':
+                    # AVR: For $PC, swap the order of the two bytes retrieved, LSH the result by 1.
+                    data = (((data & 0xFF) << 8) | ((data >> 8) & 0xFF)) << 1;
+                regs_out[reg_name] = data
+                self._debugger.verboseprint(
+                    f'{reg_name}    <- LD({(cfa_addr + rule.arg):x}) (CFA+{rule.arg:x}) ' + \
+                    f'[= {regs_out[reg_name]:x} ]')
+            elif rule.type == callframe.RegisterRule.VAL_OFFSET:
+                # Based on https://dwarfstd.org/ShowIssue.php?issue=030812.2 I believe this
+                # instruction says to say rule.reg += rule.arg (without referencing CFA)?
+                regs_out[reg_name] = regs_in[reg_name] + rule.arg
+                self._debugger.verboseprint(
+                    f'{reg_name}    <- {reg_name} + {rule.arg:x} [= {regs_out[reg_name]:x} ]')
+            elif rule.type == callframe.RegisterRule.REGISTER:
+                # Copy one register to another: rDst <- rSrc
+                reg_in_name = stack_unwind_registers[rule.arg]
+                regs_out[reg_name] = regs_in[reg_in_name]
+                self._debugger.verboseprint(
+                    f'{reg_name}    <- {reg_in_name} [= {regs_out[reg_name]:x} ]')
+            elif rule.type == callframe.RegisterRule.EXPRESSION:
+                print("Error: Cannot process EXPRESSION register rule")
+                return None
+            elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
+                print("Error: Cannot process VAL_EXPRESSION register rule")
+                return None
+            elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
+                print("Error: Cannot process architecture-specific register rule")
+                return None
+
+        regs_out['SP'] = cfa_addr # As established earlier.
+
+        # TODO(aaron): gcc doesn't regard 'SREG' as unwindable; there won't be instructions on
+        # how to restore the prior version of it, if it was saved within the method. So the
+        # regs_in.copy() will include the child frame's SREG as-is.
+
+        return regs_out
 
 
 def get_stack_autoskip_count(debugger):

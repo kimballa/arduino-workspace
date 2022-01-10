@@ -409,13 +409,11 @@ class Repl(object):
             print(f"{v:08x}")
 
 
-    def _regs(self, argv):
+    def __format_registers(self, registers):
         """
-        Print current values of registers.
+        Actually format and print register values to the screen, for _regs() or _frame().
         """
         MAX_WIDTH = 65
-
-        registers = self._debugger.get_registers()
 
         has_sph = self._debugger.get_arch_conf("instruction_set") == "avr" and \
             self._debugger.get_arch_conf("has_sph")
@@ -435,6 +433,12 @@ class Repl(object):
                 print("")
 
         print("")
+
+    def _regs(self, argv):
+        """
+        Print current values of registers.
+        """
+        self.__format_registers(self._debugger.get_registers())
 
 
     def _reset(self, argv=None):
@@ -713,12 +717,20 @@ class Repl(object):
             ret_fn = '???'
         print(f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
-        addr = sp + frame_size # Ensure `addr` initialized in case frame_size == 0.
         for addr in range(sp + frame_size, sp, -1):
             b = self._debugger.get_sram(addr, 1)
             print(f'{addr:04x}: {b:02x}')
 
+        if frame_size == 0:
+            addr = sp + frame_size + 1 # Ensure `addr` initialized in case frame_size == 0.
+
         print(f'{addr-1:04x} <-- $SP')
+
+        registers = self._debugger.get_frame_regs(frame_num)
+        if registers:
+            print('\nRegisters:\n')
+            self.__format_registers(registers)
+
 
 
     def _print_time(self, argv):
