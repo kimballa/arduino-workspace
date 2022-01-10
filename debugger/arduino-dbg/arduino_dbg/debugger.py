@@ -402,18 +402,16 @@ class Debugger(object):
                         continue
 
                     # We've got an FDE for some method.
-                    table = cfi_e.get_decoded().table
-                    if len(table):
-                        # Find the method with the relevant $PC
-                        frame_sym = self.function_sym_by_pc(table[0]['pc'])
-                        if frame_sym:
-                            frame_sym.frame_info = cfi_e
-                            #self.verboseprint(f"Bound CFI @ PC {table[0]['pc']:04x} to " +
-                            #    f"method {frame_sym.name}.")
-                        else:
-                            # We have a CFI that claims to start at this $PC, but no method
-                            # claims this address.
-                            print(f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}")
+                    # Find the method with the relevant $PC
+                    frame_sym = self.function_sym_by_pc(cfi_e.header['initial_location'])
+                    if frame_sym:
+                        frame_sym.frame_info = cfi_e
+                        #self.verboseprint(f"Bound CFI @ PC {table[0]['pc']:04x} to " +
+                        #    f"method {frame_sym.name}.")
+                    else:
+                        # We have a CFI that claims to start at this $PC, but no method
+                        # claims this address.
+                        print(f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}")
 
                     #for row in cfi_e.get_decoded().table:
                     #    row2 = row.copy()

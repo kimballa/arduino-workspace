@@ -14,6 +14,13 @@ Basic principle of how to read a row of register rules:
 * The CFA must be calculated at any point by looking at the CFARule and taking its offset relative to
 the named register.
 
+An issue with gcc-generated `.debug_frame` info is that it only generates CFA rules for the prologue.
+Therefore, if a breakpoint interrupt fires while a method is in its epilogue, we will not be able
+to detect (a) that the epilogue has begun or (b) how to recover the remaining register unwind state
+or the top of the stack frame. The last CFA rule issued at the end of the prologue has the
+implication of being valid through the `ret` or `reti` instruction, when this is not actually the
+case. Not entirely sure how to detect or handle this case.
+
 General example of stack unwinding:
 ------------------------------------
 
@@ -71,13 +78,6 @@ PC: 0cda {'cfa': CFARule(reg=28, offset=56, expr=None), 36: RegisterRule(OFFSET,
 
 Bug in ISR stack frame unwind info from gcc
 -------------------------------------------
-
-An issue with gcc-generated `.debug_frame` info is that it only generates CFA rules for the prologue.
-Therefore, if a breakpoint interrupt fires while a method is in its epilogue, we will not be able
-to detect (a) that the epilogue has begun or (b) how to recover the remaining register unwind state
-or the top of the stack frame. The last CFA rule issued at the end of the prologue has the
-implication of being valid through the `ret` or `reti` instruction, when this is not actually the
-case.
 
 There is a bug in GCC with stack unwind info in ISRs that we will need to work around; since the
 debugger's ^C breakpoint is triggered by an ISR, it will be an immediate blocker to proper
