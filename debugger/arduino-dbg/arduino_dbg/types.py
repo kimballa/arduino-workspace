@@ -486,7 +486,7 @@ def getMethodsForPC(pc):
         if pcr.method_name:
             out.append(pcr.method_name)
 
-    print(f"inline chains: {pc:x} -> {out}")
+    #print(f"inline chains: {pc:x} -> {out}")
     out.reverse()
     return out
 

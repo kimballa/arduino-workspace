@@ -21,6 +21,9 @@ class Symbol(object):
         self.elf_sym = elf_sym
         self.type_info = None
         self.frame_info = None
+        self.isr_frame_ok = False # For AVR, where SREG saves in ISR aren't handled right:
+                                  # Set to true lazily after validating this is
+                                  # not an ISR, or its frame_info has been patched.
 
     def setTypeInfo(self, type_info):
         self.type_info = type_info

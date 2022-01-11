@@ -100,9 +100,10 @@ class CallFrame(object):
         if pc is None:
             raise KeyError("No $PC value in input regs for to FrameInfo.unwind_registers()")
 
-        # TODO(aaron): If the method is an ISR that saves SREG in prologue, we need to
+        # If the method is an ISR that saves SREG in prologue, we need to
         # monkeypatch the FDE to account for it, since gcc doesn't account for it when
         # generating .debug_frames.
+        _patch_isr_debug_frames(self._debugger, self.sym, self.sym.frame_info, pc)
 
         decoded_info = self.sym.frame_info.get_decoded()
         cfi_table = decoded_info.table
@@ -200,6 +201,114 @@ class CallFrame(object):
         # regs_in.copy() will include the child frame's SREG as-is.
 
         return regs_out
+
+def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
+    if sym.isr_frame_ok:
+        return # Already handled / not an issue for this method.
+
+    sreg_save_sequence = debugger.get_arch_conf("GCC_ISR_SREG_SAVE_OPS")
+    if not sreg_save_sequence:
+        return # Not an issue for this architecture.
+
+    fn_body = debugger.image_for_symbol(sym.name)
+    default_fetch_width = debugger.get_arch_conf("default_op_width") # standard instruction decode size
+
+    fn_start_pc = sym.addr
+    fn_size = sym.size
+    fn_end_pc = fn_start_pc + fn_size
+
+    frame_table = frame_info.get_decoded().table
+    last_prologue_pc = frame_table[-1]['pc']
+
+    # Scan the prologue only, not the entire method.
+    last_scan_pc = min(last_prologue_pc, fn_end_pc)
+
+    patch_pc = None
+    for virt_pc in range(fn_start_pc, last_scan_pc, default_fetch_width):
+        sliding_window = fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + len(sreg_save_sequence)]
+        if sliding_window == sreg_save_sequence:
+            # We found the SREG save sequence.
+            patch_pc = virt_pc + len(sreg_save_sequence)
+            break
+
+    if patch_pc is None:
+        # No SREG save in prologue of this method.
+        sym.isr_frame_ok = True
+        return
+
+    # For all rows where row['pc'] >= patch_pc:
+    # - Adjust CFARule to have offset += 1
+    # - Any new OFFSET RegisterRule gets an offset -= 1
+    # - Any REGISTER RegisterRule is no-op.
+    # - Any other kind of RegRule we don't know how to adjust, and should fail.
+    #
+    # This is shallow-copied, so we shouldn't need to modify too many RegisterRules.
+    # But we want to adjust each CFARule exactly once. Keep a list of 'seen' objects
+    # and don't modify more than once
+    # TODO(aaron): what if it sets up a frame ptr in Y and shifts the CFARule?
+    debugger.verboseprint(
+        f"Adjusting frame table for PC >= {patch_pc:04x} in method {sym.name} due to $SREG save bug.")
+
+    seen_rules = {} # Keep track of rules already visited
+
+    for row in frame_table:
+        row_pc = row['pc']
+        if row_pc >= patch_pc:
+            # $SP offsets created at / after this point are affected by SREG push
+            # and need a further offset.
+            for (reg, rule) in row.items():
+                if reg == 'pc':
+                    continue # Not a real rule.
+                if seen_rules.get(rule) is not None:
+                    continue # Rule already seen/adjusted.
+
+                if isinstance(rule, callframe.CFARule):
+                    if rule.offset is not None:
+                        # Add 1 to CFA offset because the register is below the CFA, and we
+                        # calculate the CFA relative to the register in question.
+                        rule.offset += 1
+                    elif rule.expr is not None:
+                        print(f"Warning: CFA Rule at PC {row_pc:04x} has DWARF expr; unsupported")
+                elif isinstance(rule, callframe.RegisterRule):
+                    if rule.type == callframe.RegisterRule.UNDEFINED:
+                        pass # No modification needed.
+                    elif rule.type == callframe.RegisterRule.SAME_VALUE:
+                        pass # No modification needed.
+                    elif rule.type == callframe.RegisterRule.OFFSET:
+                        # Adjust the offset by subtracting 1 for SREG's position on the stack.
+                        # We subtract here (vs add) because the data is below the CFA, and
+                        # we calculate this register's position relative to the CFA.
+                        rule.arg -= 1
+                    elif rule.type == callframe.RegisterRule.VAL_OFFSET:
+                        # Don't have an example of one of these, so I don't know if we need to
+                        # adjust, or in which direction.
+                        print(f"Warning: Got a VAL_OFFSET for reg {reg}; does it need an offset?!??")
+                    elif rule.type == callframe.RegisterRule.REGISTER:
+                        pass # No modification needed.
+                    elif rule.type == callframe.RegisterRule.EXPRESSION:
+                        print(f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type EXPR')
+                    elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
+                        print(f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type VAL_EXPR')
+                    elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
+                        print(f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type ARCH')
+                    else:
+                        print(f'Warning: Do not know how to process reg rule type={rule.type}')
+                else:
+                    # No idea how to process this...
+                    print(f"Warning: Got rule for register {reg} of instance {rule.__class__}")
+
+                seen_rules[rule] = True # Mark rule as seen so we don't double-process.
+        else:
+            # $SP offsets not yet affected by SREG push at this point in the prologue.
+            # Add all members of this row to the seen rule list so we preserve them as-is.
+            for (reg, rule) in row.items():
+                if reg == 'pc':
+                    continue # Not a real rule.
+                seen_rules[rule] = True
+
+    # Now that the frame_table has been corrected, don't perform this procedure on this
+    # method again.
+    sym.isr_frame_ok = True
 
 
 def get_stack_autoskip_count(debugger):
