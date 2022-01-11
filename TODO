@@ -10,9 +10,9 @@ On-device service capabilities:
 
 Client:
 
-  * Bug: stack frame unwind cannot parse ISRs due to gcc's bug in recording reg saves
-    and calculating CFA re SREG. (see below)
   * Ability to show local variables within stack frame.
+    `locals` command searches nested scopes for VARIABLE entries in .debug_info
+    Print name, type. For those with a location tag, show the actual value?
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
   * Link type information for methods & variables to Symbols in Debugger initialization

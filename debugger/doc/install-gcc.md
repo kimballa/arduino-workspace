@@ -59,6 +59,8 @@ make install
 ### AVR-LIBC
 cd avr-libc-2.0.0
 ./configure --prefix=$PREFIX --build=`./config.guess` --host=avr
+  --prefix=/home/aaron/share/scratch/gcc11avr \
+  --exec-prefix=/home/aaron/share/scratch/gcc11avr/avr
 make -j 4
 make install
 
