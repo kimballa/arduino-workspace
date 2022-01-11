@@ -49,6 +49,17 @@ class CallFrame(object):
         self._calculate_source_line(debugger.elf_name)
         self._demangle()
 
+    def __repr__(self):
+        out = f"{self.addr:04x}: {self.demangled}"
+
+        if self.source_line:
+            out += f'  ({self.source_line})'
+
+        if len(self.demangled_inline_chain) > 1:
+            out += f"\n    Inlined method calls: {' in '.join(self.demangled_inline_chain)}"
+
+        return out
+
     def _demangle(self):
         """
         Demangle method names.

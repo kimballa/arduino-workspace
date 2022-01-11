@@ -301,11 +301,17 @@ class LexicalScope(object):
 
 class MethodType(PrgmType):
     def __init__(self, method_name, return_type, formal_args, member_of=None, virtual=0, accessibility=1):
-        name = f'{return_type} '
-        if member_of:
-            name += f'{member_of.name}::'
-        name += f'{method_name}()'
+
+        if method_name is None:
+            name = None
+        else:
+            name = f'{return_type} '
+            if member_of:
+                name += f'{member_of.name}::'
+            name += f'{method_name}()'
+
         PrgmType.__init__(self, name, 0, None)
+
         self.method_name = method_name
         self.return_type = return_type
         self.formal_args = formal_args.copy()

@@ -406,8 +406,7 @@ class Debugger(object):
                     frame_sym = self.function_sym_by_pc(cfi_e.header['initial_location'])
                     if frame_sym:
                         frame_sym.frame_info = cfi_e
-                        #self.verboseprint(f"Bound CFI @ PC {table[0]['pc']:04x} to " +
-                        #    f"method {frame_sym.name}.")
+                        #self.verboseprint(f"Bound CFI to method {frame_sym.name}.")
                     else:
                         # We have a CFI that claims to start at this $PC, but no method
                         # claims this address.

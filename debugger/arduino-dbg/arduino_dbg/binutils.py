@@ -30,6 +30,7 @@ def demangle(name, hide_params=False):
     # Remove any '[clone .constprop.NN]' suffix.
     demangled = _constprop_regex.sub('', demangled)
 
+    #print(f"Demangled: {name} -> {demangled}")
     return demangled
 
 

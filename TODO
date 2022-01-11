@@ -20,7 +20,6 @@ Client:
   * types.py should handle union type? bit fields?
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
-
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 * Breakpoint unit support
 * Watchpoint unit support

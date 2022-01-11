@@ -108,7 +108,7 @@ I believe the bug is in `gcc/config/avr/avr.c` at lines 1946--47:
 ```
 
 I think the 2nd argument may need to be `true` to set `frame_related_p=true` (which
-marks the instruction as `RTX_FRAME_RELATED_P(insn)=1`.
+marks the instruction as `RTX_FRAME_RELATED_P(insn)=1`).
 
 ISR bug demo
 ---------------
@@ -154,4 +154,7 @@ PC: 00da {'cfa': CFARule(reg=32, offset=5, expr=None), 36: RegisterRule(OFFSET, 
 subsequent RegisterRule offset for r24 makes it look snug against r0, ignoring the
 intervening push; CFARule offset should = 6 and r24's rule should have OFFSET=-5.
 ```
+
+
+This is now tracked as gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=103975
 

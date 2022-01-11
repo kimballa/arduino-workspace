@@ -63,6 +63,8 @@ class Repl(object):
         m["info"] = self._sym_info
         m["\\i"] = self._sym_info
 
+        #m["locals"] = self._show_locals
+
         m["mem"] = self._mem
         m["x"] = self._mem
         m["\\m"] = self._mem
@@ -134,15 +136,7 @@ class Repl(object):
         """
         frames = self._debugger.get_backtrace()
         for i in range(0, len(frames)):
-            frame = frames[i]
-
-            if frame.source_line:
-                src = f'  ({frame.source_line})'
-            else:
-                src = ''
-            print(f"{i}. {frame.addr:04x}: {frame.demangled}{src}")
-            if len(frame.demangled_inline_chain) > 1:
-                print(f"    Inlined method calls: {' in '.join(frame.demangled_inline_chain)}")
+            print(f"{i}. {frames[i]}")
 
 
     def _break(self, argv=None):
