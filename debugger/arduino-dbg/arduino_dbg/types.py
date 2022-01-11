@@ -284,6 +284,9 @@ class LexicalScope(object):
     def getVariable(self, varname):
         return self._variables.get(varname)
 
+    def getVariables(self):
+        return self._variables.items()
+
     def getOrigin(self):
         return self._origin or self
 
@@ -331,6 +334,9 @@ class MethodType(PrgmType):
 
     def getVariable(self, varname):
         return self._variables.get(varname)
+
+    def getVariables(self):
+        return self._variables.items()
 
     def setOrigin(self, origin):
         self._origin = origin
@@ -496,6 +502,23 @@ def getMethodsForPC(pc):
     out.reverse()
     return out
 
+def getScopesForPC(pc):
+    """
+    Return a list of methods, inlined methods, and lexical scopes that enclose the specified PC.
+    This output list is in no particular order.
+    """
+    pc_ranges = SortedList()
+    for cuns in _cu_namespaces:
+        pc_ranges.update(cuns.get_ranges_for_pc(pc))
+
+    out = {}
+    for pcr in pc_ranges:
+        if pcr.variable_scope:
+            # Save variable scopes as dict keys to get the unique set, 
+            # as a lexical scope's variable_scope may just point to the enclosing method.
+            out[pcr.variable_scope] = True
+
+    return list(out.keys())
 
 def _populateEncodings(int_size):
     """

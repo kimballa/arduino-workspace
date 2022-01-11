@@ -897,6 +897,9 @@ class Debugger(object):
         """
 
         frames = self.get_backtrace(limit=frame_num+1)
+        if len(frames) <= frame_num:
+            # Cannot find a frame that deep in the backtrace.
+            return None
 
         # start with the current regs.
         regs = self.get_registers()
@@ -910,7 +913,19 @@ class Debugger(object):
 
         return regs
 
+    def get_frame_vars(self, frame_num):
+        """
+            Return information about variables in scope at the $PC within a stack frame.
 
+            Returns a list of types.MethodType and types.LexicalScope objects that enclose
+            the $PC at the requested stack frame, or None if there is no such frame.
+        """
+        frame_regs = self.get_frame_regs(frame_num)
+        if frame_regs is None:
+            return None # No such frame.
+
+        pc = frame_regs["PC"]
+        return types.getScopesForPC(pc)
 
 
     def get_return_addr_from_stack(self, stack_addr):

@@ -63,7 +63,7 @@ class Repl(object):
         m["info"] = self._sym_info
         m["\\i"] = self._sym_info
 
-        #m["locals"] = self._show_locals
+        m["locals"] = self._show_locals
 
         m["mem"] = self._mem
         m["x"] = self._mem
@@ -118,6 +118,51 @@ class Repl(object):
                 lst.append(name)
 
         return lst
+
+
+
+    def _show_locals(self, argv):
+        """
+        Show info about local variables in a stack frame.
+
+            Syntax: locals <frame>
+
+        Given a frame number (from a `backtrace` command), show info about local variables
+        within the method scope at the current $PC.
+        """
+        if len(argv) == 0:
+            print("Syntax: locals <frame>")
+            return
+
+        frameId = int(argv[0])
+        frameScopes = self._debugger.get_frame_vars(frameId)
+        if frameScopes is None:
+            print(f'No such stack frame {frameId}')
+            return
+
+        for scope in frameScopes:
+            if isinstance(scope, types.MethodType):
+                print(f'Method: {scope.method_name}')
+                formals = scope.formal_args
+                if len(formals):
+                    print("Formal arguments:")
+                    for formal in formals:
+                        # TODO(aaron): This just prints a type; not a formal param name. useful?
+                        #print(f'  {formal}')
+                        pass
+
+            var_list = scope.getVariables()
+            if len(var_list):
+                print("Locals:")
+                for local_name, local_type in var_list:
+                    if local_name is None:
+                        continue
+                    print(f'  {local_name}: {local_type.name}')
+
+
+
+
+
 
 
 
@@ -1032,6 +1077,7 @@ class Repl(object):
         print("gpio -- Read or write a GPIO pin")
         print("help -- Show this help text")
         print("info (\\i) -- Show info about a symbol: type, addr, value")
+        print("locals -- Show info about local variables in a stack frame")
         print("mem (x, \\m) -- Read a memory address on the Arduino")
         print("memstats -- Display info about memory map and RAM usage")
         print("poke -- Write to a variable or memory address on the Arduino")
