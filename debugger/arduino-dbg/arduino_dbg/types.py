@@ -843,6 +843,7 @@ def parseTypesFromDIE(die, cuns, context={}):
                 data_member_location[0] == dwarf_expr.DW_OP_name2opcode['DW_OP_plus_uconst']):
             # class member offsets are technically stack machine exprs that require full
             # evaluation but g++ seems to encode them all as DW_OP_plus_uconst [offset].
+            # TODO(aaron): Replace with stack eval machine-based processing.
             offset = data_member_location[1]
         else:
             print(f"Warning: Could not calculate offset for {context.get('class').name}::{name}")
