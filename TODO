@@ -22,25 +22,12 @@ Client:
       - Need to eval DW_AT_location expressions to read variable contents
       - DW_AT_const_value may happen if it's been optimized down to a const.
     Print name, type. For those with a location tag, show the actual value?
-    * Distinguish between Declaration and Definition for variables and methods;
-      track both in linked but distinct ways.
-      - method declaration-only entries may have DW_AT_declaration=True.
-      - static/global vars will have a decl entry, then an impl entry with DW_AT_specification
-        pointing back to the original decl.
-      - things visible outside a CU will have DW_AT_external=True, in case you're looking
-        to build a global symtab in addition to CU-specific ones.
-      ... figure out how many DW_AT_abstract_origins we see and in exactly what context.
-        how do those relate to presence of fields like low_pc and high_pc; internal nested
-        blocks with variable def'ns, etc.
-
-     ... what kind of nesting hierarchy do we wee with subprogram, inlined_subroutine, and
-     lexical_block? because __dbg_service wasn't showing a lot of locals in the debugger, but it
-     does actually seem like it's all here.
-    * DW_TAG_subroutine_type is indeed used only in a ptr-to-function context.
-    * How do we get the names of formal parameters (not just type) and their values?
-      (wait -- formal params *do* have names. we're just not reading them / processing them
-      correctly?)
+    * get the names of formal parameters (not just type) and their values?
+      (wait -- [some?!] formal params *do* have names. we're just not reading them / processing them
+      correctly?) ... need to actually read dieattr('name').
       ... at least within inlined_subroutine, they can have DW_AT_location.
+    * Have a better FormalArg class to hold this whole data.
+    * Handle 'ranges' on CU, not just low_pc/high_pc.
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
   * Link type information for methods & variables to Symbols in Debugger initialization

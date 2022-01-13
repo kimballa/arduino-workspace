@@ -2,19 +2,20 @@
 #
 # Parse DIEs in .debug_info.
 # Generates information about datatypes in the program as well as location-to-method(subprogram)
-# mappings.
+# and location-to-variable mappings.
 
+import elftools.dwarf.constants as dwarf_constants
 import elftools.dwarf.dwarf_expr as dwarf_expr
 from sortedcontainers import SortedList
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.eval_location as eval_location
 
-_INT_ENCODING = 5
+_INT_ENCODING = dwarf_constants.DW_ATE_signed
 
-PUBLIC = 1
-PROTECTED = 2
-PRIVATE = 3
+PUBLIC = dwarf_constants.DW_ACCESS_public
+PROTECTED = dwarf_constants.DW_ACCESS_protected
+PRIVATE = dwarf_constants.DW_ACCESS_private
 
 class PCRange(object):
     """
@@ -25,7 +26,7 @@ class PCRange(object):
         self.pc_hi = pc_hi
         self.cuns = cuns # associated CompilationUnitNamespace
         self.method_name = method_name # Method represented by this PCRange, if any.
-        self.variable_scope = variable_scope # a MethodType or LexicalScope that holds Variables.
+        self.variable_scope = variable_scope # a MethodInfo or LexicalScope that holds Variables.
 
     def includes_pc(self, pc):
         return self.pc_lo <= pc and self.pc_hi >= pc
@@ -60,9 +61,9 @@ class CompilationUnitNamespace(object):
         Compilation Unit-specific namespacing for types, methods, $PC ranges.
     """
 
-    def __init__(self, die_offset, cu):
-        self._named_types = {} # name -> type
-        self._addr_types = {}  # DIE offset -> type
+    def __init__(self, die_offset, cu, debugger):
+        self._named_entries = {} # name -> entry
+        self._addr_entries = {}  # DIE offset -> entry
         self._pc_ranges = SortedList()
 
         self._die_offset = die_offset
@@ -70,7 +71,19 @@ class CompilationUnitNamespace(object):
         self._variables = {}
         self._methods = {}
 
+        top_die = cu.get_top_DIE()
+        try:
+            self._low_pc = top_die.attributes['DW_AT_low_pc'].value
+            self._high_pc = top_die.attributes['DW_AT_high_pc'].value
+        except KeyError:
+            # Compilation unit covers noncontiguous range or otherwise unknown extent.
+            # TODO(aaron): CU may have multiple intervals in DW_AT_ranges.
+            # handle this as a list, not fixed scalars.
+            self._low_pc = None
+            self._high_pc = None
+
         self.expr_parser = dwarf_expr.DWARFExprParser(cu.structs)
+        self._debugger = debugger
 
     def getCU(self):
         return self._cu
@@ -78,8 +91,30 @@ class CompilationUnitNamespace(object):
     def getExprParser(self):
         return self.expr_parser
 
+    def getDebugger(self):
+        return self._debugger
+
     def define_pc_range(self, pc_lo, pc_hi, scope, method_name):
         self._pc_ranges.add(PCRange(pc_lo, pc_hi, self, scope, method_name))
+
+    def get_cu_range(self):
+        """
+        Return the total range span of this compilation unit
+        """
+        return (self._low_pc, self._high_pc)
+
+    def is_cu_range_defined(self):
+        """
+        Return True if this CU has a defined PC range it covers.
+        """
+        return self._low_pc is not None
+
+    def cu_maybe_contains_pc(self, pc):
+        """
+        Return True if the PC is in-range for this CU, or this CU doesn't have a single
+        well-defined range.
+        """
+        return not self.is_cu_range_defined() or (pc >= self._low_pc and pc < self._high_pc)
 
     def get_ranges_for_pc(self, pc):
         """
@@ -87,6 +122,11 @@ class CompilationUnitNamespace(object):
         Returned in sorted order.
         """
         out = SortedList()
+
+        if not self.cu_maybe_contains_pc(pc):
+            # Out of bounds.
+            return out
+
         # TODO(aaron): Consider using self._pc_ranges.bisect_left() on a PCRange(pc,pc)
         # to pinpoint in O(log(N)) time instead of O(n)
         # http://www.grantjenks.com/docs/sortedcontainers/sortedlist.html#sortedcontainers.SortedList.bisect_right
@@ -98,36 +138,39 @@ class CompilationUnitNamespace(object):
                 break
         return out
 
-    def add_type(self, typ, name, addr):
-        if name and not self._named_types.get(name):
-            self._named_types[name] = typ
+    def add_entry(self, typ, name, addr):
+        if name and not self._named_entries.get(name):
+            self._named_entries[name] = typ
 
         if addr:
             try:
-                self._addr_types[addr]
+                self._addr_entries[addr]
                 # Error: if we found an entry, we're trying to multiply-define it.
-                raise Exception(f"Already defined type at addr {addr:x}")
+                raise Exception(f"Already defined entry at addr {addr:x}")
             except KeyError:
-                # Typical case: haven't yet bound this addr to a typedef. Do so here.
-                self._addr_types[addr] = typ
+                # Typical case: haven't yet bound this addr to an entry. Do so here.
+                self._addr_entries[addr] = typ
 
-    def type_by_name(self, name):
-        return self._named_types.get(name) or None
+    def entry_by_name(self, name):
+        return self._named_entries.get(name) or None
 
-    def type_by_addr(self, addr):
-        return self._addr_types.get(addr) or None
+    def entry_by_addr(self, addr):
+        return self._addr_entries.get(addr) or None
 
-    def has_addr_type(self, addr):
-        return self.type_by_addr(addr) is not None
+    def has_addr_entry(self, addr):
+        return self.entry_by_addr(addr) is not None
 
-    def addVariable(self, varname, vartype):
-        self._variables[varname] = vartype
+    def addVariable(self, var):
+        self._variables[var.name] = var.var_type
 
     def getVariable(self, varname):
         return self._variables.get(varname)
 
-    def addMethod(self, methodName, methodType):
-        self._methods[methodName] = methodType
+    def getVariables(self):
+        return self._variables.items()
+
+    def addMethod(self, methodInfo):
+        self._methods[methodInfo.method_name] = methodInfo
 
     def getMethod(self, methodName):
         return self._methods.get(methodName)
@@ -135,15 +178,53 @@ class CompilationUnitNamespace(object):
     def __repr__(self):
         return f'Compilation unit (@offset {self._die_offset:x})'
 
+class GlobalScope(object):
+    """
+        Container for the globally-accessible names (types, vars, methods, etc.)
+        Each of these elements formally sits within some CompilationUnit but is
+        also accessible here.
+    """
+
+    def __init__(self):
+        self._variables = {}
+        self._methods = {}
+
+    def addVariable(self, var):
+        self._variables[var.name] = var.var_type
+
+    def getVariable(self, varname):
+        return self._variables.get(varname)
+
+    def getVariables(self):
+        return self._variables.items()
+
+    def addMethod(self, methodInfo):
+        self._methods[methodInfo.method_name] = methodInfo
+
+    def getMethod(self, methodName):
+        return self._methods.get(methodName)
+
+    def getOrigin(self):
+        return self
+
+    def getContainingScope(self):
+        return None
+
+    def __repr__(self):
+        return 'GlobalScope'
+
+
 
 class PrgmType(object):
     """
-    A datatype within the debugged program.
+    Basic root object for a datatype or other DIE within the debugged program.
     """
 
     def __init__(self, name, size, parent_type=None):
         self.name = name
         self.size = size
+        if size == 'int':
+            raise Exception("wtf type")
         self._parent_type = parent_type
 
 
@@ -152,6 +233,12 @@ class PrgmType(object):
         Return the type underlying this one, if any, or None otherwise.
         """
         return self._parent_type
+
+    def is_type(self):
+        """
+        Return True if this is actually a true type definition; not a var/method decl
+        """
+        return True
 
     def __repr__(self):
         return f'{self.name}'
@@ -284,8 +371,8 @@ class LexicalScope(object):
         self._containingScope = containingScope
         self._variables = {}
 
-    def addVariable(self, varname, vartype):
-        self._variables[varname] = vartype
+    def addVariable(self, var):
+        self._variables[var.name] = var.var_type
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -308,13 +395,40 @@ class LexicalScope(object):
         return 'LexicalScope'
 
 
-class MethodType(PrgmType):
-    def __init__(self, method_name, return_type, formal_args, member_of=None, virtual=0, accessibility=1):
+class MethodPtrType(PrgmType):
+    """
+    Pointer-to-method type. Not an actual method decl/def'n.
+    """
+    def __init__(self, name, return_type=None, member_of=None):
+        PrgmType.__init__(self, name, 0, None)
+        self.return_type = return_type or _VOID
+        self.member_of = member_of
+        self.formal_args = []
+
+    def addFormal(self, arg):
+        if arg is None:
+            arg = _VOID
+        self.formal_args.append(arg)
+
+    def __repr__(self):
+        formals = ', '.join(map(lambda arg: f'{arg.name}', self.formal_args))
+        if self.member_of:
+            member = self.member_of.name + '::'
+        else:
+            member = ''
+        return f'{self.return_type.name}({member}*{self.name})({formals})'
+
+
+
+
+class MethodInfo(PrgmType):
+    def __init__(self, method_name, return_type, cuns, member_of=None, virtual=0,
+            accessibility=1, is_decl=False, is_def=False, origin=None):
 
         if method_name is None:
             name = None
         else:
-            name = f'{return_type} '
+            name = f'{return_type.name} '
             if member_of:
                 name += f'{member_of.name}::'
             name += f'{method_name}()'
@@ -323,20 +437,32 @@ class MethodType(PrgmType):
 
         self.method_name = method_name
         self.return_type = return_type
-        self.formal_args = formal_args.copy()
         self.member_of = member_of
         self.virtual = virtual
         self.accessibility = accessibility
+
+        self._cuns = cuns
+
+        # Methods may appear multiple times throughout the .debug_info.
+        # A forward-declared prototype signature will have is_decl=True.
+        # The method proper, with its body will have is_def=True.
+        # An inline-defined method in a class { ... } can be is_decl and is_def=True.
+        # An inline instance of a method will have both set to False.
+        # _origin should point back to the canonical declaration instance of the method.
+        self.is_decl = is_decl # Is this the _declaration_ of the method?
+        self.is_def = is_def   # Is this the _definition_ of the method?
+
         self._variables = {}
-        self._origin = None
+        self._origin = origin
+        self.formal_args = []
 
     def addFormal(self, arg):
         if arg is None:
             arg = _VOID
         self.formal_args.append(arg)
 
-    def addVariable(self, varname, vartype):
-        self._variables[varname] = vartype
+    def addVariable(self, var):
+        self._variables[var.name] = var.var_type
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -349,6 +475,9 @@ class MethodType(PrgmType):
 
     def getOrigin(self):
         return self._origin or self
+
+    def is_type(self):
+        return False
 
     def __repr__(self):
         s = ''
@@ -364,7 +493,7 @@ class MethodType(PrgmType):
         s += f'{self.return_type} {self.method_name}('
         s += ', '.join(map(lambda arg: f'{arg.name}', self.formal_args))
         s += ')'
-        if self.virtual == 2:
+        if self.virtual == dwarf_constants.DW_VIRTUALITY_pure_virtual:
             # pure virtual.
             s += ' = 0'
         return s
@@ -376,6 +505,9 @@ class FieldType(PrgmType):
         self.member_of = member_of
         self.offset = offset
         self.accessibility = accessibility
+
+    def is_type(self):
+        return False
 
     def __repr__(self):
         s = ''
@@ -432,51 +564,153 @@ class ClassType(PrgmType):
         s += '}'
         return s
 
+class VariableInfo(PrgmType):
+    """
+    Info record for a variable (not struct field) defined globally/statically in a file or
+    locally within a method.
+
+    A single variable may have multiple VariableInfo records associated with it to distinguish
+    forward declaration vs the resolved definition. Local variables within a method that is
+    inlined to multiple locations may also have multiple definitions.
+    """
+    def __init__(self, var_name, var_type, cuns, location=None, is_decl=False, is_def=False,
+            origin=None, scope=None):
+
+        PrgmType.__init__(self, var_name, var_type.size)
+        self.var_name = var_name
+        self.var_type = var_type
+        self._cuns = cuns           # CompilationUnitNS owner of this DIE (needed to eval locations)
+        self._location = location   # Expression (or pc range -> expr list) defining how to find
+                                    # the value in the prgm memory / regs
+
+        self.is_decl = is_decl      # See MethodInfo for definitions of these two flags.
+        self.is_def = is_def
+
+        self._origin = origin        # Resolved DW_AT_abstract_origin, if any, poiting decl->def
+
+    def __repr__(self):
+        return f'{self.var_type.name} {self.var_name}'
+
+    def setOrigin(self, origin):
+        self._origin = origin
+
+    def getOrigin(self):
+        # TODO(aaron): Should this be recursive?
+        return self._origin or self
+
+    def getType(self):
+        return self.var_type
+
+    def getAddress(self, regs):
+        """
+        Evaluate the location info to get the memory address of this variable.
+
+        @param regs the current register state for the frame.
+        @return the memory address of the variable, or None if no such info is available.
+        """
+        loc = self._location or self.getOrigin()._location
+        if loc is None:
+            return None
+
+        debugger = self._cuns.getDebugger()
+        expr_machine = eval_location.DWARFExprMachine(
+            cuns.getExprParser().parse_expr(loc),
+            regs, debugger)
+        return expr_machine.eval()
+
+    def getValue(self, regs):
+        """
+        Evaluate the location info to get the current value of this variable.
+
+        @param regs the current register state for the frame.
+        @return the value of the variable, or None if no such info is available.
+        """
+        loc = self._location or self.getOrigin()._location
+        if loc is None:
+            return None
+
+        debugger = self._cuns.getDebugger()
+        expr_machine = eval_location.DWARFExprMachine(
+            cuns.getExprParser().parse_expr(loc),
+            regs, debugger)
+        return expr_machine.access(self.size)
+
+    def is_type(self):
+        return False
+
+
 
 _encodings = {} # Global encodings table (encodingId -> PrgmTypE)
 _cu_namespaces = [] # Set of CompilationUnitNamespace objects.
+
+_global_syms = GlobalScope() # vars/methods tagged DW_AT_external visible from any CU.
 
 def types():
     """
     Iterator over all typedefs.
     """
     for cuns in _cu_namespaces:
-        for (name, typ) in cuns._named_types.items():
-            yield (name, typ)
+        for (name, typ) in cuns._named_entries.items():
+            if typ.is_type():
+                yield (name, typ)
 
-TYPE = 1
-METHOD = 2
-VARIABLE = 3
+KIND_TYPE = 1
+KIND_METHOD = 2
+KIND_VARIABLE = 3
 
-def getTypeByName(name, pc):
+def getNamedDebugInfoEntry(name, pc):
     """
-    Return the type for a given name in the compilation unit associated with $PC.
+    Return the debug info object for a given name in the compilation unit associated with $PC.
+    This can be a named type, a method, or a variable.
+    This method returns a pair of (KIND, entry).
     """
     pc_ranges = SortedList()
+    search_cuns = None
     for cuns in _cu_namespaces:
-        pc_ranges.update(cuns.get_ranges_for_pc(pc))
+        if cuns.cu_maybe_contains_pc(pc) and cuns.is_cu_range_defined():
+            # The above update is the exclusive namespace search we need.
+            # Don't keep searching.
+            search_cuns = cuns
+            break
+        elif cuns.cu_maybe_contains_pc(pc):
+            # Try to search method-by-method to see if this cuns covers it.
+            pc_ranges.update(cuns.get_ranges_for_pc(pc))
+            if len(pc_ranges) > 0:
+                # Yes, we found it.
+                search_cuns = cuns
+                break
 
-    if len(pc_ranges) == 0:
+    if search_cuns is None:
         return None # We fell off the edge into outer space?
 
-    # This is the CompilationUnitNamespace that encloses:
-    cuns = pc_ranges[-1].cuns
+    # search_cuns is the CompilationUnitNamespace that encloses the $PC.
 
     # Use the various lookup tables available to us:
     # we are either looking up a literal type, a signature for a method name, or a type for a var.
-    typ = cuns.type_by_name(name)
+    typ = search_cuns.getMethod(name)
     if typ:
-        return (TYPE, typ)
+        return (KIND_METHOD, typ)
 
-    typ = cuns.getMethod(name)
+    typ = search_cuns.getVariable(name)
     if typ:
-        return (METHOD, typ)
+        return (KIND_VARIABLE, typ)
 
-    typ = cuns.getVariable(name)
+    typ = search_cuns.entry_by_name(name)
     if typ:
-        return (VARIABLE, typ)
+        return (KIND_TYPE, typ)
+
+    # Also search globals if not found locally.
+    global_entry = _global_syms.get(name)
+    if global_entry:
+        if isinstance(global_entry, MethodInfo):
+            return (KIND_METHOD, global_entry)
+        elif isinstance(global_entry, VariableInfo):
+            return (KIND_VARIABLE, global_entry)
+        else:
+            return (KIND_TYPE, global_entry)
 
     return (None, None)
+
 
 def getMethodsForPC(pc):
     """
@@ -508,21 +742,41 @@ def getMethodsForPC(pc):
     out.reverse()
     return out
 
-def getScopesForPC(pc):
+def getScopesForPC(pc, include_global=False):
     """
     Return a list of methods, inlined methods, and lexical scopes that enclose the specified PC.
     This output list is in no particular order.
+
+    @param pc the current program counter value for the frame.
+    @param include_global if true includes a GlobalScope object showing what globals can be
+        accessed from the $PC.
     """
+    out = {}
     pc_ranges = SortedList()
+
     for cuns in _cu_namespaces:
         pc_ranges.update(cuns.get_ranges_for_pc(pc))
 
-    out = {}
+        if cuns.cu_maybe_contains_pc(pc) and cuns.is_cu_range_defined():
+            # The above update is the exclusive namespace search we need.
+
+            # If include_globals is true, then include the CUNS itself as a containing scope..
+            if include_global:
+                out[cuns] = True
+
+            # Don't keep searching.
+            break
+
+
     for pcr in pc_ranges:
         if pcr.variable_scope:
             # Save variable scopes as dict keys to get the unique set,
             # as a lexical scope's variable_scope may just point to the enclosing method.
             out[pcr.variable_scope] = True
+
+    if include_global:
+        # if include_globals, include the GlobalScope object too.
+        out[_global_syms] = True
 
     return list(out.keys())
 
@@ -588,13 +842,13 @@ def parseTypesFromDIE(die, cuns, context={}):
         if addr == die.offset:
             # Struct/class can refer to their own addr as containing_type. Do nothing.
             return None
-        elif not cuns.has_addr_type(addr):
+        elif not cuns.has_addr_entry(addr):
             # We haven't processed this address yet; it's e.g. a forward reference.
             # We need to process that entry before returning a type to the caller of this method.
             sub_die = cu.get_DIE_from_refaddr(addr)
             parseTypesFromDIE(sub_die, cuns, _fresh_context())
 
-        return cuns.type_by_addr(addr)
+        return cuns.entry_by_addr(addr)
 
     def _resolve_abstract_origin():
         """
@@ -604,8 +858,8 @@ def parseTypesFromDIE(die, cuns, context={}):
         typ = _lookup_type('abstract_origin')
         return typ.getOrigin()
 
-    def _add_type(typ, name, addr):
-        cuns.add_type(typ, name, addr)
+    def _add_entry(typ, name, addr):
+        cuns.add_entry(typ, name, addr)
 
     def dieattr(name, default_value=None):
         """
@@ -622,17 +876,17 @@ def parseTypesFromDIE(die, cuns, context={}):
 
     if not die.tag:
         return # null DIE to terminate nested set.
-    elif cuns.has_addr_type(die.offset):
+    elif cuns.has_addr_entry(die.offset):
         return # Our seek-driven parsing has already parsed this entry, don't double-process.
 
     total_off = die.offset + cu_offset
-    #print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
-    #print(die)
+    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
+    print(die)
 
-    if dieattr('name') and cuns.type_by_name(dieattr('name')):
+    if dieattr('name') and cuns.entry_by_name(dieattr('name')):
         # We're redefining a type name that already exists.
         # Just copy the existing definition into this address.
-        _add_type(cuns.type_by_name(dieattr('name')), None, die.offset)
+        _add_entry(cuns.entry_by_name(dieattr('name')), None, die.offset)
         return
 
 
@@ -652,24 +906,107 @@ def parseTypesFromDIE(die, cuns, context={}):
         if name == prim.name and size == prim.size:
             # benign redundant definition.
             # register the common type object at this addr too.
-            _add_type(prim, None, die.offset)
+            _add_entry(prim, None, die.offset)
         elif size == prim.size:
-            _add_type(AliasType(name, prim), name, die.offset)
+            _add_entry(AliasType(name, prim), name, die.offset)
         else:
-            _add_type(PrimitiveType(name, size), name, die.offset)
+            _add_entry(PrimitiveType(name, size), name, die.offset)
 
     elif die.tag == 'DW_TAG_const_type':
         base = _lookup_type() or _VOID
         const = ConstType(base)
-        _add_type(const, const.name, die.offset)
+        _add_entry(const, const.name, die.offset)
     elif die.tag == 'DW_TAG_volatile_type':
         # define 'volatile foo' as an alias to type foo.
         base = _lookup_type()
-        _add_type(base, 'volatile ' + base.name, die.offset)
+        _add_entry(base, 'volatile ' + base.name, die.offset)
     elif die.tag == 'DW_TAG_pointer_type':
         base = _lookup_type() or _VOID
         ptr = PointerType(base)
-        _add_type(ptr, ptr.name, die.offset)
+        _add_entry(ptr, ptr.name, die.offset)
+    elif die.tag == 'DW_TAG_typedef':
+        # name, type
+        base = _lookup_type()
+        name = dieattr('name')
+        _add_entry(AliasType(name, base), name, die.offset)
+    elif die.tag == 'DW_TAG_array_type':
+        # type
+        base = _lookup_type()
+        arr = ArrayType(base)
+        _add_entry(arr, arr.name, die.offset) # TODO: if this causes redundancy problems, remove arr.name.
+        ctxt = context.copy()
+        ctxt['array'] = arr
+        for child in die.iter_children():
+            parseTypesFromDIE(child, cuns, ctxt)
+    elif die.tag == 'DW_TAG_subrange_type': # Size of array
+        # [lower_bound=0], upper_bound
+        lower = dieattr("lower_bound", 0)
+        upper = dieattr("upper_bound")
+        length = upper - lower + 1
+        context['array'].setLength(length)
+    elif die.tag == 'DW_TAG_enumeration_type':
+        # name, type, byte_size
+        name = dieattr('name')
+        base = _lookup_type()
+        enum = EnumType(name, base)
+        _add_entry(enum, enum.name, die.offset)
+        ctxt = context.copy()
+        ctxt['enum'] = enum
+        for child in die.iter_children():
+            parseTypesFromDIE(child, cuns, ctxt)
+    elif die.tag == 'DW_TAG_enumerator': # Member of enumeration
+        # name, const_value
+        name = dieattr('name')
+        val = dieattr('const_value')
+        context['enum'].addEnum(name, val)
+    elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type': # class or struct
+        # name, byte_size, containing_type
+        # TODO: can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
+        name = dieattr('name')
+        size = dieattr('byte_size')
+
+        if name and cuns.entry_by_name(name) is not None:
+            # This is a redefinition of a type that already exists. Just install it here.
+            # TODO: Do we need to recurse and handle the redundant 'member', vtbl_ptr, etc.s?
+            _add_entry(getType(name), None, die.offset)
+            return
+
+        parent_type_offset = dieattr("containing_type", None)
+        if parent_type_offset is None:
+            parent_type = None
+        else:
+            parent_type = _lookup_type("containing_type")
+        class_type = ClassType(name, size, parent_type)
+        _add_entry(class_type, name, die.offset)
+        ctxt = context.copy()
+        ctxt['class'] = class_type
+        for child in die.iter_children():
+            parseTypesFromDIE(child, cuns, ctxt)
+    elif die.tag == 'DW_TAG_member':
+        # name, type, data_member_location
+        # accessibility (1=public, 2=protected, 3=private)
+        # data_member_location is a multibyte sequence:
+        # [23h, Xh] means 'at offset Xh' (DW_OP_plus_uconst)
+        name = dieattr('name')
+        base = _lookup_type()
+        data_member_location = dieattr('data_member_location')
+
+        # class member offsets are technically stack machine exprs that require full
+        # evaluation. g++ seems to encode them all as DW_OP_plus_uconst [offset], but
+        # we've got the ability to calculate more complicated patterns, so long as they
+        # don't require access to current memory or registers here (which they shouldn't,
+        # as part of a static type definition). The expr assumes the address of the
+        # object is already on the expr stack to provide a true member address; we push '0'
+        # here as a starting stack to get a member offset rather than a member address.
+        expr_machine = eval_location.DWARFExprMachine(
+            cuns.getExprParser().parse_expr(data_member_location),
+            {}, context['debugger'], [0])
+        offset = expr_machine.eval()
+
+        accessibility = dieattr('accessibility', 1)
+        field = FieldType(name, context.get("class"), base, offset, accessibility)
+        context['class'].addField(field)
+        _add_entry(field, None, die.offset)
     elif die.tag == 'DW_TAG_subprogram':
         # (Can be a function on its own, or a member method of a class)
         # name, [accessibility=1], [virtuality=0]
@@ -701,45 +1038,46 @@ def parseTypesFromDIE(die, cuns, context={}):
 
             name = demangled # Use demangled format for name.
 
-        virtual = dieattr('virtuality', 0)
-        accessibility = dieattr('accessibility', 1)
+        virtual = dieattr('virtuality', dwarf_constants.DW_VIRTUALITY_none)
+        accessibility = dieattr('accessibility', dwarf_constants.DW_ACCESS_public)
 
         enclosing_class = context.get("class") or None
-        method = MethodType(name, _VOID, [], enclosing_class, virtual, accessibility)
+
+        origin = None
+        if dieattr('abstract_origin'):
+            origin = _resolve_abstract_origin()
+
+        return_type = _lookup_type() or _VOID
+
+        if dieattr('low_pc') is None:
+            # abstract instance of the method. Just the method signature, or else the abstract
+            # instance of an inline method.
+            is_decl = True
+            is_def = False
+        else:
+            is_decl = origin is not None # If it has no abstract origin, it's also the declaration.
+            is_def = True # It has a PC range... concrete method definition.
+
+        method = MethodInfo(name, return_type, cuns, enclosing_class, virtual, accessibility,
+            is_decl, is_def, origin)
+
         if enclosing_class:
             enclosing_class.addMethod(method)
         else:
             # it's a standalone method in the CU
-            cuns.addMethod(name, method)
-        _add_type(method, None, die.offset)
+            cuns.addMethod(method)
+
+        if dieattr('external') and not enclosing_class:
+            # Also publish this method to the globals list in addition to the CUNS.
+            _global_syms.addMethod(method)
+
+        _add_entry(method, None, die.offset)
 
         if dieattr('low_pc'):
             # has a PC range associated with it.
             cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, name)
-        if dieattr('abstract_origin'):
-            method.setOrigin(_resolve_abstract_origin())
 
-        # TODO(aaron): Make use of DW_AT_frame_base ?
-
-        ctxt = context.copy()
-        ctxt['method'] = method
-        for child in die.iter_children():
-            parseTypesFromDIE(child, cuns, ctxt)
-    elif die.tag == 'DW_TAG_subroutine_type':
-        # Seems used only for 'pointers to methods', but doesn't actually include any info.
-        # This is used as a target for a TAG_pointer_type to a vtable entry.
-        enclosing_class = context.get("class") or None
-        return_type = _lookup_type() or _VOID
-        method = MethodType(None, return_type, [], enclosing_class, 0, 1)
-        if dieattr('abstract_origin'):
-            method.setOrigin(_resolve_abstract_origin())
-        if enclosing_class:
-            enclosing_class.addMethod(method)
-        _add_type(method, None, die.offset)
-
-        if dieattr('low_pc'):
-            # has a PC range associated with it.
-            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, name)
+        # TODO(aaron): Make use of DW_AT_frame_base
 
         ctxt = context.copy()
         ctxt['method'] = method
@@ -748,8 +1086,18 @@ def parseTypesFromDIE(die, cuns, context={}):
     elif die.tag == 'DW_TAG_inlined_subroutine':
         # Defines a PC range associated with a subroutine inlined within another one.
         definition = _resolve_abstract_origin()
+        name = definition.method_name or dieattr('name') # try demangled name from def'n first
+        return_type = definition.return_type or _lookup_type() or _VOID
+
+        # inline instance of a method is niether declaration nor definition.
+        is_decl = False
+        is_def = False
+
+        method = MethodInfo(name, return_type, cuns, definition.member_of, definition.virtual,
+            definition.accessibility, is_decl, is_def, definition)
+
         if dieattr('low_pc') and dieattr('high_pc'):
-            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), definition, definition.name)
+            cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, definition.name)
         elif dieattr('ranges'):
             # Some inlined methods have a DW_AT_entry_pc and a 'DW_AT_ranges' field.
             # Use multiple PCRanges to record this.
@@ -757,25 +1105,42 @@ def parseTypesFromDIE(die, cuns, context={}):
             if range_lists:
                 rangelist = range_lists.get_range_list_at_offset(dieattr('ranges'))
                 for r in rangelist:
-                    cuns.define_pc_range(r.begin_offset, r.end_offset, definition, definition.name)
+                    cuns.define_pc_range(r.begin_offset, r.end_offset, method, definition.name)
 
+        # TODO(aaron): Make use of DW_AT_frame_base
+
+        _add_entry(method, None, die.offset)
 
         ctxt = context.copy()
-        ctxt['method'] = definition
+        ctxt['method'] = method
         for child in die.iter_children():
             parseTypesFromDIE(child, cuns, ctxt)
+
     elif die.tag == 'DW_TAG_lexical_block':
         # Lexical block defines a PCRange that can contain variables.
         origin = None
         if dieattr('abstract_origin'):
             origin = _resolve_abstract_origin()
         lexical_scope = LexicalScope(origin, context['method'])
-        _add_type(lexical_scope, None, die.offset)
+        _add_entry(lexical_scope, None, die.offset)
         if dieattr('low_pc') and dieattr('high_pc'):
             cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), lexical_scope, None)
 
         ctxt = context.copy()
         ctxt['method'] = lexical_scope
+        for child in die.iter_children():
+            parseTypesFromDIE(child, cuns, ctxt)
+    elif die.tag == 'DW_TAG_subroutine_type':
+        # Used only for 'pointers to methods'. Establishes a type for a pointer to
+        # a method with a specified return type & formal arg types.
+        # This is used as a target for a TAG_pointer_type to a vtable entry.
+        name = dieattr('name')
+        enclosing_class = context.get("class") or None
+        return_type = _lookup_type() or _VOID
+        method_type = MethodPtrType(name, return_type, enclosing_class)
+        _add_entry(method_type, name, die.offset)
+        ctxt = context.copy()
+        ctxt['method'] = method_type
         for child in die.iter_children():
             parseTypesFromDIE(child, cuns, ctxt)
     elif die.tag == 'DW_TAG_formal_parameter':
@@ -789,99 +1154,43 @@ def parseTypesFromDIE(die, cuns, context={}):
             return # skip for now. It's an implicit 'this' pointer.
 
         context['method'].addFormal(base)
-        _add_type(base, None, die.offset)
-    elif die.tag == 'DW_TAG_typedef':
-        # name, type
-        base = _lookup_type()
-        name = dieattr('name')
-        _add_type(AliasType(name, base), name, die.offset)
-    elif die.tag == 'DW_TAG_array_type':
-        # type
-        base = _lookup_type()
-        arr = ArrayType(base)
-        _add_type(arr, arr.name, die.offset) # TODO: if this causes redundancy problems, remove arr.name.
-        ctxt = context.copy()
-        ctxt['array'] = arr
-        for child in die.iter_children():
-            parseTypesFromDIE(child, cuns, ctxt)
-    elif die.tag == 'DW_TAG_subrange_type': # Size of array
-        # [lower_bound=0], upper_bound
-        lower = dieattr("lower_bound", 0)
-        upper = dieattr("upper_bound")
-        length = upper - lower + 1
-        context['array'].setLength(length)
-    elif die.tag == 'DW_TAG_enumeration_type':
-        # name, type, byte_size
-        name = dieattr('name')
-        base = _lookup_type()
-        enum = EnumType(name, base)
-        _add_type(enum, enum.name, die.offset)
-        ctxt = context.copy()
-        ctxt['enum'] = enum
-        for child in die.iter_children():
-            parseTypesFromDIE(child, cuns, ctxt)
-    elif die.tag == 'DW_TAG_enumerator': # Member of enumeration
-        # name, const_value
-        name = dieattr('name')
-        val = dieattr('const_value')
-        context['enum'].addEnum(name, val)
-    elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type': # class or struct
-        # name, byte_size, containing_type
-        # TODO: can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
-        name = dieattr('name')
-        size = dieattr('byte_size')
+        _add_entry(base, None, die.offset)
+    elif die.tag == 'DW_TAG_variable':
+        origin = None
+        if dieattr('abstract_origin'):
+            origin = _resolve_abstract_origin()
 
-        if name and cuns.type_by_name(name) is not None:
-            # This is a redefinition of a type that already exists. Just install it here.
-            # TODO: Do we need to recurse and handle the redundant 'member', vtbl_ptr, etc.s?
-            _add_type(getType(name), None, die.offset)
+        name = dieattr('name')
+        if name is None and origin is not None:
+            name = origin.var_name
+        base = _lookup_type()
+        if base is None and origin is not None:
+            base = origin.var_type
+        location = dieattr('location')
+        is_decl = dieattr('declaration') and True
+        is_def = not is_decl # Variables are one or the other of decl and def.
+
+        if context.get('method'):
+            enclosing_scope = context['method']
+        else:
+            enclosing_scope = None
+
+        if name is None:
+            # Nothing to actually define here... degenerate variable entry.
             return
 
-        parent_type_offset = dieattr("containing_type", None)
-        if parent_type_offset is None:
-            parent_type = None
-        else:
-            parent_type = _lookup_type("containing_type")
-        class_type = ClassType(name, size, parent_type)
-        _add_type(class_type, name, die.offset)
-        ctxt = context.copy()
-        ctxt['class'] = class_type
-        for child in die.iter_children():
-            parseTypesFromDIE(child, cuns, ctxt)
-    elif die.tag == 'DW_TAG_member':
-        # name, type, data_member_location
-        # accessibility (1=public, 2=protected, 3=private)
-        # data_member_location is a multibyte sequence:
-        # [23h, Xh] means 'at offset Xh' (DW_OP_plus_uconst)
-        name = dieattr('name')
-        base = _lookup_type()
-        data_member_location = dieattr('data_member_location')
-
-        # class member offsets are technically stack machine exprs that require full
-        # evaluation. g++ seems to encode them all as DW_OP_plus_uconst [offset], but
-        # we've got the ability to calculate more complicated patterns, so long as they
-        # don't require access to current memory or registers here (which they shouldn't,
-        # as part of a static type definition). The expr assumes the address of the
-        # object is already on the expr stack to provide a true member address; we push '0'
-        # here as a starting stack to get a member offset rather than a member address.
-        expr_machine = eval_location.DWARFExprMachine(
-            cuns.getExprParser().parse_expr(data_member_location),
-            {}, context['debugger'], [0])
-        offset = expr_machine.eval()
-
-        accessibility = dieattr('accessibility', 1)
-        field = FieldType(name, context.get("class"), base, offset, accessibility)
-        context['class'].addField(field)
-        _add_type(field, None, die.offset)
-    elif die.tag == 'DW_TAG_variable':
-        name = dieattr('name')
-        base = _lookup_type()
+        var = VariableInfo(name, base, cuns, location, is_decl, is_def, origin, enclosing_scope)
         if context.get('method'):
             # method or lexical block wrapped around this.
-            context['method'].addVariable(name, base)
+            context['method'].addVariable(var)
         else:
             # It's global in scope within the CU Namespace.
-            cuns.addVariable(name, base)
+            cuns.addVariable(var)
+
+        _add_entry(var, None, die.offset)
+
+        if dieattr('external'):
+            _global_syms.addVariable(var)
     else:
         # TODO(aaron): Consider parsing DW_TAG_GNU_call_site
         for child in die.iter_children():
@@ -905,7 +1214,7 @@ def parseTypeInfo(dwarf_info, debugger):
     _default_context_keys = [ 'debugger', 'int_size', 'range_lists' ]
 
     for compile_unit in dwarf_info.iter_CUs():
-        cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit)
+        cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit, debugger)
         _cu_namespaces.append(cuns)
         parseTypesFromDIE(compile_unit.get_top_DIE(), cuns, context)
 

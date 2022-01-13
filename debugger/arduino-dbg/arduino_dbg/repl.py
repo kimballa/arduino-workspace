@@ -140,24 +140,25 @@ class Repl(object):
             print(f'No such stack frame {frameId}')
             return
 
+        nest = 0
         for scope in frameScopes:
-            if isinstance(scope, types.MethodType):
-                print(f'Method: {scope.method_name}')
-                formals = scope.formal_args
-                if len(formals):
-                    print("Formal arguments:")
-                    for formal in formals:
-                        # TODO(aaron): This just prints a type; not a formal param name. useful?
-                        #print(f'  {formal}')
-                        pass
+            nest_str = nest * ' '
+            if isinstance(scope, types.MethodInfo):
+                if not scope.is_decl and not scope.is_def:
+                    inl_str = 'Inlined method'
+                else:
+                    inl_str = 'Method'
+                print(f'{nest_str}{inl_str} scope: {scope}')
 
             var_list = scope.getVariables()
             if len(var_list):
-                print("Locals:")
+                print("{nest_str}  Locals:")
                 for local_name, local_type in var_list:
                     if local_name is None:
                         continue
-                    print(f'  {local_name}: {local_type.name}')
+                    print(f'{nest_str}  {local_name}: {local_type.name}')
+
+            nest += 2
 
 
 
@@ -1004,10 +1005,10 @@ class Repl(object):
         registers = self._debugger.get_registers()
         pc = registers["PC"]
         sym = argv[0]
-        (kind, typ) = types.getTypeByName(sym, pc)
+        (kind, typ) = types.getNamedDebugInfoEntry(sym, pc)
         if kind is None:
             print(f'{sym}: <unknown type>')
-        elif kind == types.TYPE or kind == types.METHOD:
+        elif kind == types.KIND_TYPE or kind == types.KIND_METHOD:
             # Print the type description directly, or print the method signature (which includes
             # the method name) directly
             print(f'{typ}')

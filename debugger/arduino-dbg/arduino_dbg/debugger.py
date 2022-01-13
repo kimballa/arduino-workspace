@@ -974,7 +974,7 @@ class Debugger(object):
             return None # No such frame.
 
         pc = frame_regs["PC"]
-        return types.getScopesForPC(pc)
+        return types.getScopesForPC(pc, include_global=False)
 
 
     def get_return_addr_from_stack(self, stack_addr):

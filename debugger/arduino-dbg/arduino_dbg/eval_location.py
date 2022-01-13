@@ -102,7 +102,7 @@ class DWARFExprMachine(object):
 
         if new_stack is not None:
             self.stack = new_stack
-        elif new_stack is None:
+        else:
             # Generally we don't want to retain the old stack under any normal reset condition;
             # we want to have a fresh empty satck. The prior eval() will have left its computed
             # address on the stack and we want to clear that.
