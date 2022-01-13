@@ -6,6 +6,7 @@
 
 import elftools.dwarf.constants as dwarf_constants
 import elftools.dwarf.dwarf_expr as dwarf_expr
+from elftools.dwarf.locationlists import LocationParser
 from sortedcontainers import SortedList
 
 import arduino_dbg.binutils as binutils
@@ -161,7 +162,7 @@ class CompilationUnitNamespace(object):
         return self.entry_by_addr(addr) is not None
 
     def addVariable(self, var):
-        self._variables[var.name] = var.var_type
+        self._variables[var.name] = var
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -190,7 +191,7 @@ class GlobalScope(object):
         self._methods = {}
 
     def addVariable(self, var):
-        self._variables[var.name] = var.var_type
+        self._variables[var.name] = var
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -372,7 +373,7 @@ class LexicalScope(object):
         self._variables = {}
 
     def addVariable(self, var):
-        self._variables[var.name] = var.var_type
+        self._variables[var.name] = var
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -391,6 +392,9 @@ class LexicalScope(object):
         if self._containingScope:
             self._containingScope.addFormal(arg)
 
+    def getFormals(self):
+        return []
+
     def __repr__(self):
         return 'LexicalScope'
 
@@ -407,11 +411,11 @@ class MethodPtrType(PrgmType):
 
     def addFormal(self, arg):
         if arg is None:
-            arg = _VOID
+            arg = FormalArg('', _VOID, None)
         self.formal_args.append(arg)
 
     def __repr__(self):
-        formals = ', '.join(map(lambda arg: f'{arg.name}', self.formal_args))
+        formals = ', '.join(map(lambda arg: f'{arg}', self.formal_args))
         if self.member_of:
             member = self.member_of.name + '::'
         else:
@@ -458,11 +462,14 @@ class MethodInfo(PrgmType):
 
     def addFormal(self, arg):
         if arg is None:
-            arg = _VOID
+            arg = FormalArg('', _VOID, None)
         self.formal_args.append(arg)
 
+    def getFormals(self):
+        return self.formal_args
+
     def addVariable(self, var):
-        self._variables[var.name] = var.var_type
+        self._variables[var.name] = var
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -491,12 +498,70 @@ class MethodInfo(PrgmType):
         if self.virtual:
             s += 'virtual '
         s += f'{self.return_type} {self.method_name}('
-        s += ', '.join(map(lambda arg: f'{arg.name}', self.formal_args))
+        s += ', '.join(map(lambda arg: f'{arg}', self.formal_args))
         s += ')'
         if self.virtual == dwarf_constants.DW_VIRTUALITY_pure_virtual:
             # pure virtual.
             s += ' = 0'
         return s
+
+class FormalArg(object):
+    def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None):
+        self.name = name
+        self.arg_type = arg_type
+        self._cuns = cuns
+        self._origin = origin
+        self._location = location
+        self._const_val = const_val
+
+    def __repr__(self):
+        return f'{self.arg_type.name} {self.name}'
+
+    def setOrigin(self, origin):
+        self._origin = origin
+
+    def getOrigin(self):
+        return self._origin or self
+
+    def getAddress(self, regs):
+        """
+        Evaluate the location info to get the memory address of this variable.
+
+        @param regs the current register state for the frame.
+        @return the memory address of the variable, or None if no such info is available.
+        """
+        loc = self._location or self.getOrigin()._location
+        if loc is None:
+            return None
+
+        debugger = self._cuns.getDebugger()
+        expr_machine = eval_location.DWARFExprMachine(
+            self._cuns.getExprParser().parse_expr(loc),
+            regs, debugger)
+        return expr_machine.eval()
+
+    def getValue(self, regs):
+        """
+        Evaluate the location info to get the current value of this variable.
+
+        @param regs the current register state for the frame.
+        @return the value of the variable, or None if no such info is available.
+        """
+        if self._const_val is not None:
+            # It got hardcoded in the end.
+            return self._const_val
+
+        loc = self._location or self.getOrigin()._location
+        if loc is None:
+            return None
+
+        debugger = self._cuns.getDebugger()
+        expr_machine = eval_location.DWARFExprMachine(
+            self._cuns.getExprParser().parse_expr(loc),
+            regs, debugger)
+        return expr_machine.access(self.arg_type.size)
+
+
 
 class FieldType(PrgmType):
     def __init__(self, field_name, member_of, field_type, offset, accessibility):
@@ -582,6 +647,7 @@ class VariableInfo(PrgmType):
         self._cuns = cuns           # CompilationUnitNS owner of this DIE (needed to eval locations)
         self._location = location   # Expression (or pc range -> expr list) defining how to find
                                     # the value in the prgm memory / regs
+        self._const_val = None
 
         self.is_decl = is_decl      # See MethodInfo for definitions of these two flags.
         self.is_def = is_def
@@ -625,6 +691,10 @@ class VariableInfo(PrgmType):
         @param regs the current register state for the frame.
         @return the value of the variable, or None if no such info is available.
         """
+        if self._const_val is not None:
+            # It got hardcoded in the end.
+            return self._const_val
+
         loc = self._location or self.getOrigin()._location
         if loc is None:
             return None
@@ -634,6 +704,12 @@ class VariableInfo(PrgmType):
             cuns.getExprParser().parse_expr(loc),
             regs, debugger)
         return expr_machine.access(self.size)
+
+    def setConstValue(self, val):
+        """
+        This variable has been const-reduced.
+        """
+        self._const_val = val
 
     def is_type(self):
         return False
@@ -838,7 +914,6 @@ def parseTypesFromDIE(die, cuns, context={}):
         except KeyError:
             return None # No 'type' field for this DIE.
 
-
         if addr == die.offset:
             # Struct/class can refer to their own addr as containing_type. Do nothing.
             return None
@@ -873,6 +948,16 @@ def parseTypesFromDIE(die, cuns, context={}):
         except KeyError:
             return default_value
 
+    def _get_locations(attr_name='location'):
+        """
+        Return location expression or a list of LocationEntry elements.
+        """
+        try:
+            attr = die.attributes['DW_AT_' + attr_name]
+            return LocationParser(context['loc_lists']).parse_from_attribute(attr, context['dwarf_ver'])
+        except KeyError:
+            return None
+
 
     if not die.tag:
         return # null DIE to terminate nested set.
@@ -880,8 +965,8 @@ def parseTypesFromDIE(die, cuns, context={}):
         return # Our seek-driven parsing has already parsed this entry, don't double-process.
 
     total_off = die.offset + cu_offset
-    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
-    print(die)
+    #print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
+    #print(die)
 
     if dieattr('name') and cuns.entry_by_name(dieattr('name')):
         # We're redefining a type name that already exists.
@@ -924,6 +1009,10 @@ def parseTypesFromDIE(die, cuns, context={}):
         base = _lookup_type() or _VOID
         ptr = PointerType(base)
         _add_entry(ptr, ptr.name, die.offset)
+    elif die.tag == 'DW_TAG_reference_type':
+        base = _lookup_type() or _VOID
+        ref = ReferenceType(base)
+        _add_entry(ref, ref.name, die.offset)
     elif die.tag == 'DW_TAG_typedef':
         # name, type
         base = _lookup_type()
@@ -1148,13 +1237,30 @@ def parseTypesFromDIE(die, cuns, context={}):
         # artificial=1 if added by compiler (e.g., implicit 'this')
         # TODO(aaron): Should we actually add artificials to the type? Needed for stack dissection,
         # but needs to be suppressed for pretty-printing. (TODO - Add later)
+        origin = None
+        if dieattr('abstract_origin'):
+            origin = _resolve_abstract_origin()
+        name = dieattr('name')
+        if name is None and origin is not None:
+            name = origin.name
         base = _lookup_type()
-        artificial = dieattr('artificial', 0)
-        if artificial:
-            return # skip for now. It's an implicit 'this' pointer.
+        if base is None and origin is not None:
+            base = origin.arg_type
 
-        context['method'].addFormal(base)
-        _add_entry(base, None, die.offset)
+        artificial = dieattr('artificial', 0)
+
+        location = _get_locations()
+        const_val = dieattr('const_value')
+
+        if location is not None and isinstance(location, list):
+            print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
+            print(die)
+            print(f"Location is {location}")
+
+        formal = FormalArg(name, base, cuns, origin, location, const_val)
+        _add_entry(formal, None, die.offset)
+        if not artificial:
+            context['method'].addFormal(formal)
     elif die.tag == 'DW_TAG_variable':
         origin = None
         if dieattr('abstract_origin'):
@@ -1166,7 +1272,7 @@ def parseTypesFromDIE(die, cuns, context={}):
         base = _lookup_type()
         if base is None and origin is not None:
             base = origin.var_type
-        location = dieattr('location')
+        location = _get_locations()
         is_decl = dieattr('declaration') and True
         is_def = not is_decl # Variables are one or the other of decl and def.
 
@@ -1180,6 +1286,12 @@ def parseTypesFromDIE(die, cuns, context={}):
             return
 
         var = VariableInfo(name, base, cuns, location, is_decl, is_def, origin, enclosing_scope)
+
+        const_val = dieattr('const_value')
+        if const_val is not None:
+            # Hard-coded 'variable' value within this scope.
+            var.setConstValue(const_val)
+
         if context.get('method'):
             # method or lexical block wrapped around this.
             context['method'].addVariable(var)
@@ -1208,12 +1320,15 @@ def parseTypeInfo(dwarf_info, debugger):
     context['debugger'] = debugger
     context['int_size'] = int_size
     context['range_lists'] = dwarf_info.range_lists()
+    context['loc_lists'] = dwarf_info.location_lists()
 
-    # TODO(aaron): Keep this list in sync with the initializers above.
+    # TODO(aaron): Keep this list in sync with the initializers above and below.
     global _default_context_keys
-    _default_context_keys = [ 'debugger', 'int_size', 'range_lists' ]
+    _default_context_keys = [ 'debugger', 'int_size', 'range_lists', 'loc_lists', 'dwarf_ver' ]
 
     for compile_unit in dwarf_info.iter_CUs():
+        context['dwarf_ver'] = compile_unit.header['version']
+
         cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit, debugger)
         _cu_namespaces.append(cuns)
         parseTypesFromDIE(compile_unit.get_top_DIE(), cuns, context)

@@ -136,6 +136,7 @@ class Repl(object):
 
         frameId = int(argv[0])
         frameScopes = self._debugger.get_frame_vars(frameId)
+        frameRegs = self._debugger.get_frame_regs(frameId)
         if frameScopes is None:
             print(f'No such stack frame {frameId}')
             return
@@ -150,13 +151,30 @@ class Repl(object):
                     inl_str = 'Method'
                 print(f'{nest_str}{inl_str} scope: {scope}')
 
+            formals = scope.getFormals()
+            if len(formals) > 0:
+                print("{nest_str}  Formals:")
+                for formal in formals:
+                    formal_val = formal.getValue(frameRegs)
+                    if formal_val is not None:
+                        val_str = f' = {formal_val}'
+                    else:
+                        val_str = ''
+                    print(f'{nest_str}  {formal.name}: {formal.arg_type.name}{val_str}')
+
+
             var_list = scope.getVariables()
             if len(var_list):
                 print("{nest_str}  Locals:")
-                for local_name, local_type in var_list:
+                for local_name, local_var in var_list:
                     if local_name is None:
                         continue
-                    print(f'{nest_str}  {local_name}: {local_type.name}')
+                    local_val = local_var.getValue(frameRegs)
+                    if local_val is not None:
+                        val_str = ' = {local_val}'
+                    else:
+                        val_str = ''
+                    print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str}')
 
             nest += 2
 

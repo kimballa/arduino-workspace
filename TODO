@@ -10,6 +10,11 @@ On-device service capabilities:
 
 Client:
 
+.... we've just changed formal.location and var.location to instead of being a list(byte),
+being either a LocationExpr (containing a list(byte)) or a list(LocationEntry|BaseAddressEntry)
+... see https://github.com/eliben/pyelftools/blob/master/elftools/dwarf/locationlists.py
+make it work.
+
   * readline autocompleter 
     - command names
     - symbols
@@ -19,14 +24,6 @@ Client:
     and the first non-empty line of each command func's __doc__ string.
   * Ability to show local variables within stack frame.
     `locals` command searches nested scopes for VARIABLE entries in .debug_info
-      - Need to eval DW_AT_location expressions to read variable contents
-      - DW_AT_const_value may happen if it's been optimized down to a const.
-    Print name, type. For those with a location tag, show the actual value?
-    * get the names of formal parameters (not just type) and their values?
-      (wait -- [some?!] formal params *do* have names. we're just not reading them / processing them
-      correctly?) ... need to actually read dieattr('name').
-      ... at least within inlined_subroutine, they can have DW_AT_location.
-    * Have a better FormalArg class to hold this whole data.
     * Handle 'ranges' on CU, not just low_pc/high_pc.
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
