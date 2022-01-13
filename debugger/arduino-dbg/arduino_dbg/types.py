@@ -8,6 +8,7 @@ import elftools.dwarf.dwarf_expr as dwarf_expr
 from sortedcontainers import SortedList
 
 import arduino_dbg.binutils as binutils
+import arduino_dbg.eval_location as eval_location
 
 _INT_ENCODING = 5
 
@@ -69,8 +70,13 @@ class CompilationUnitNamespace(object):
         self._variables = {}
         self._methods = {}
 
+        self.expr_parser = dwarf_expr.DWARFExprParser(cu.structs)
+
     def getCU(self):
         return self._cu
+
+    def getExprParser(self):
+        return self.expr_parser
 
     def define_pc_range(self, pc_lo, pc_hi, scope, method_name):
         self._pc_ranges.add(PCRange(pc_lo, pc_hi, self, scope, method_name))
@@ -514,7 +520,7 @@ def getScopesForPC(pc):
     out = {}
     for pcr in pc_ranges:
         if pcr.variable_scope:
-            # Save variable scopes as dict keys to get the unique set, 
+            # Save variable scopes as dict keys to get the unique set,
             # as a lexical scope's variable_scope may just point to the enclosing method.
             out[pcr.variable_scope] = True
 
@@ -554,6 +560,17 @@ def parseTypesFromDIE(die, cuns, context={}):
     cu = cuns.getCU()
     cu_offset = cu.cu_offset
 
+    def _fresh_context():
+        """
+            Return a context that is 'clean' of any nested DIE state, for use in non-local
+            parsing requirements.
+        """
+        ctxt = {}
+        for key in _default_context_keys:
+            ctxt[key] = context[key]
+
+        return ctxt
+
     def _lookup_type(param='type'):
         """
             Look up the 'DW_AT_type' attribute and resolve it to a PrgmType within the current
@@ -575,7 +592,7 @@ def parseTypesFromDIE(die, cuns, context={}):
             # We haven't processed this address yet; it's e.g. a forward reference.
             # We need to process that entry before returning a type to the caller of this method.
             sub_die = cu.get_DIE_from_refaddr(addr)
-            parseTypesFromDIE(sub_die, cuns, {})
+            parseTypesFromDIE(sub_die, cuns, _fresh_context())
 
         return cuns.type_by_addr(addr)
 
@@ -839,15 +856,19 @@ def parseTypesFromDIE(die, cuns, context={}):
         name = dieattr('name')
         base = _lookup_type()
         data_member_location = dieattr('data_member_location')
-        if (len(data_member_location) == 2 and
-                data_member_location[0] == dwarf_expr.DW_OP_name2opcode['DW_OP_plus_uconst']):
-            # class member offsets are technically stack machine exprs that require full
-            # evaluation but g++ seems to encode them all as DW_OP_plus_uconst [offset].
-            # TODO(aaron): Replace with stack eval machine-based processing.
-            offset = data_member_location[1]
-        else:
-            print(f"Warning: Could not calculate offset for {context.get('class').name}::{name}")
-            offset = 0 # TODO(aaron): Parse data_member_location eval code
+
+        # class member offsets are technically stack machine exprs that require full
+        # evaluation. g++ seems to encode them all as DW_OP_plus_uconst [offset], but
+        # we've got the ability to calculate more complicated patterns, so long as they
+        # don't require access to current memory or registers here (which they shouldn't,
+        # as part of a static type definition). The expr assumes the address of the
+        # object is already on the expr stack to provide a true member address; we push '0'
+        # here as a starting stack to get a member offset rather than a member address.
+        expr_machine = eval_location.DWARFExprMachine(
+            cuns.getExprParser().parse_expr(data_member_location),
+            {}, context['debugger'], [0])
+        offset = expr_machine.eval()
+
         accessibility = dieattr('accessibility', 1)
         field = FieldType(name, context.get("class"), base, offset, accessibility)
         context['class'].addField(field)
@@ -868,12 +889,21 @@ def parseTypesFromDIE(die, cuns, context={}):
 
 
 
-def parseTypeInfo(dwarf_info, int_size):
+_default_context_keys = []
+
+def parseTypeInfo(dwarf_info, debugger):
+    int_size = debugger.get_arch_conf("int_size")
     _populateEncodings(int_size) # start with base primitive types.
 
     context = {}
+    context['debugger'] = debugger
     context['int_size'] = int_size
     context['range_lists'] = dwarf_info.range_lists()
+
+    # TODO(aaron): Keep this list in sync with the initializers above.
+    global _default_context_keys
+    _default_context_keys = [ 'debugger', 'int_size', 'range_lists' ]
+
     for compile_unit in dwarf_info.iter_CUs():
         cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit)
         _cu_namespaces.append(cuns)

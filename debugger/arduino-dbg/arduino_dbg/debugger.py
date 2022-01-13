@@ -37,6 +37,55 @@ def _silent(*args):
     """
     pass
 
+# Control codes for verboseprintall() - if this sequence preceeds an int, prints it as:
+VDEC = b'\x00\xFF\x0a' # Print base 10
+VHEX = b'\x00\xFF\x10' # Print base 16
+VHEX2 = b'\x00\xFF\x10\x02' # Print base 16, 0-pad to 2 places
+VHEX4 = b'\x00\xFF\x10\x04' # Print base 16, 0-pad to 4 places
+VHEX8 = b'\x00\xFF\x10\x08' # Print base 16, 0-pad to 8 places
+
+def _verbose_print_all(*args):
+    """
+    Verbose printing method that lazily concatenates its arguments rather than requiring
+    callers to compute an f'string that might get swallowed by _silent() if verbose printing is
+    disabled.
+    """
+
+    s = ''
+    next_ctrl = None
+    for arg in args:
+        if isinstance(arg, bytes):
+            if arg == VDEC or arg == VHEX or arg == VHEX2 or arg == VHEX4 or arg == VHEX8:
+                next_ctrl = arg
+                continue
+            else:
+                # Just a byte string to format.
+                s += repr(arg)
+        elif next_ctrl is not None and isinstance(arg, int):
+            if next_ctrl == VDEC:
+                s += f'{arg}'
+            elif next_ctrl == VHEX:
+                s += f'{arg:x}'
+            elif next_ctrl == VHEX2:
+                s += f'{arg:02x}'
+            elif next_ctrl == VHEX4:
+                s += f'{arg:04x}'
+            elif next_ctrl == VHEX8:
+                s += f'{arg:08x}'
+            else:
+                # Shouldn't get here with an invalid next_ctrl setting...
+                s += f'<???>{arg}<???>'
+        elif isinstance(arg, str):
+            s += arg
+        else:
+            s += repr(arg)
+
+        next_ctrl = None
+
+    print(s)
+
+
+
 
 
 def _load_conf_module(module_name, resource_name):
@@ -106,7 +155,7 @@ class Debugger(object):
         self._dwarf_info = None
         self.elf = None
         self._elf_file_handle = None
-        self.verboseprint = _silent # verboseprint() method is either _silent() or print()
+        self.verboseprint = _silent # verboseprint() method is either _silent() or _verbose_print_all()
 
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
@@ -289,7 +338,7 @@ class Debugger(object):
 
     def _config_verbose_print(self):
         if self._config['dbg.verbose']:
-            self.verboseprint = print
+            self.verboseprint = _verbose_print_all
         else:
             self.verboseprint = _silent
 
@@ -391,7 +440,7 @@ class Debugger(object):
                 self._dwarf_info = None
                 self.verboseprint("Warning: empty debug info in program binary.")
             if self._dwarf_info:
-                types.parseTypeInfo(self._dwarf_info, self.get_arch_conf("int_size"))
+                types.parseTypeInfo(self._dwarf_info, self)
                 # TODO(aaron): Link the parsed .debug_info / type information to our symbol table.
 
                 # Link .debug_frame unwind info to symbols:

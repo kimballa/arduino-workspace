@@ -4,12 +4,14 @@
 
 import elftools.dwarf.dwarf_expr as dwarf_expr
 
-class DwarfExprMachine(object):
+import arduino_dbg.debugger as dbg
+
+class DWARFExprMachine(object):
     """
     Stack machine to evaluate a DWARF expression to a location address.
 
     Usage:
-        dem = DwarfExprMachine([opcodes], {regs}, debugger)
+        dem = DWARFExprMachine([opcodes], {regs}, debugger)
         addr = dem.eval()
 
     Depending on the operations performed, 'addr' may have 1 of three types:
@@ -19,6 +21,10 @@ class DwarfExprMachine(object):
                  Used to assemble results of PIECE operations.
 
     Or instead of `dem.eval()`, use `dem.access(size)` to access size bytes at addr.
+
+    After calling eval() once, you must call `dem.reset()` to run again. The reset
+    method gives the opportunity to refresh the current register state, regs + instructions,
+    or regs + instructions + initial stack.
 
     # TODO(aaron): Handle PIECE, FBREG
     """
@@ -35,14 +41,14 @@ class DwarfExprMachine(object):
 
     def __init__(self, opcodes, regs, debugger, initial_stack=None):
         # Handle one-time setups for evaluation environment, if needed.
-        if DwarfExprMachine.__dispatch == None:
-            DwarfExprMachine.__init_dispatch()
-        if DwarfExprMachine.__instruction_set == None:
+        if DWARFExprMachine.__dispatch == None:
+            DWARFExprMachine.__init_dispatch()
+        if DWARFExprMachine.__instruction_set == None:
             # Set this up as a class value; assume arch is constant within debugger prgm lifetime
-            DwarfExprMachine.__instruction_set = debugger.get.arch_conf('instruction_set')
-            DwarfExprMachine.__register_mapping = debugger.get.arch_conf('stack_unwind_registers')
-            DwarfExprMachine.__addr_size = debugger.get.arch_conf('ret_addr_size')
-            DwarfExprMachine.__word_len = debugger.get.arch_conf('push_word_len')
+            DWARFExprMachine.__instruction_set = debugger.get_arch_conf('instruction_set')
+            DWARFExprMachine.__register_mapping = debugger.get_arch_conf('stack_unwind_registers')
+            DWARFExprMachine.__addr_size = debugger.get_arch_conf('ret_addr_size')
+            DWARFExprMachine.__word_len = debugger.get_arch_conf('push_word_len')
 
 
         self.opcodes = opcodes           # Set of parsed DWARF expression opcodes to evaluate
@@ -53,17 +59,21 @@ class DwarfExprMachine(object):
     def eval(self):
         """
         Evaluate the bytecode program to resolve the location.
+        Returns the address where the data is held.
         """
         for op in self.opcodes:
-            self._debugger.verboseprint(f'Processing opcode {op.op_name}')
-            func = cls.__dispatch[op.op]
+            self._debugger.verboseprint('Processing opcode ', op.op_name)
+            func = DWARFExprMachine.__dispatch[op.op]
             func(self, op)
 
-        return self.top()
+        out = self.top()
+        self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
+        return out
 
     def access(self, size):
         """
         Evaluate the bytecode program to resolve the location. Then get the result at that location.
+        Returns the value of size 'size' located at the address computed by the expression.
         """
         addr = self.eval()
         if isinstance(addr, int):
@@ -72,8 +82,31 @@ class DwarfExprMachine(object):
             return self.regs[reg]
         elif callable(addr):
             return addr()
-        else
+        else:
             raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+
+    def reset(self, new_regs=None, new_opcodes=None, new_stack=None):
+        """
+        Resets the expression processor state to enable the objec to perform a new computation.
+
+        If new_regs or new_opcodes are 'None', they are left as-is.
+        If new_stack is 'None', the stack is cleared to an empty stack.
+
+        Otherwise, the new non-None values replace the internal state.
+        """
+        if new_regs is not None:
+            self.regs = new_regs
+
+        if new_opcodes is not None:
+            self.opcodes = new_opcodes
+
+        if new_stack is not None:
+            self.stack = new_stack
+        elif new_stack is None:
+            # Generally we don't want to retain the old stack under any normal reset condition;
+            # we want to have a fresh empty satck. The prior eval() will have left its computed
+            # address on the stack and we want to clear that.
+            self.stack = []
 
 
     def _unimplemented_op(self, op):
@@ -87,7 +120,7 @@ class DwarfExprMachine(object):
 
     def _deref(self, op):
         addr = self.pop()
-        self.push(self.mem(addr, DwarfExprMachine.__addr_size))
+        self.push(self.mem(addr, DWARFExprMachine.__addr_size))
 
     def _xderef(self, op):
         size = op.args[0]
@@ -101,7 +134,7 @@ class DwarfExprMachine(object):
         self.pop()
 
     def _over(self, op):
-        self.push(self.at_stack(1)
+        self.push(self.at_stack(1))
 
     def _pick(self, op):
         self.push(self.at_stack(op.args[0]))
@@ -120,7 +153,7 @@ class DwarfExprMachine(object):
         self.push(fst)
         self.push(trd)
         self.push(snd)
-        
+
     def _abs(self, op):
         self.push(abs(self.pop()))
 
@@ -128,12 +161,12 @@ class DwarfExprMachine(object):
         fst = self.pop()
         snd = self.pop()
         self.push(fst & snd)
-        
+
     def _div(self, op):
         fst = self.pop()
         snd = self.pop()
         self.push(snd / fst)
-        
+
     def _minus(self, op):
         fst = self.pop()
         snd = self.pop()
@@ -174,7 +207,7 @@ class DwarfExprMachine(object):
         fst = self.pop()
         snd = self.pop()
         self.push(snd << fst)
-        
+
     def _shr(self, op):
         fst = self.pop()
         snd = self.pop()
@@ -233,6 +266,9 @@ class DwarfExprMachine(object):
         # TODO(aaron): Implement PIECE
         # This should actually create a closure that assembles the result and push
         # that to the stack.
+        # ... or maybe we use PIECE to carry finalized addresses off to a separate
+        # [(addr, sz)] list which are concatenated at the end; if no PIECE statements
+        # are seen, we just use [(top(), whatever_size_arg)]?
         _unimplemented_op(op)
 
     def _nop(self, op):
@@ -250,7 +286,7 @@ class DwarfExprMachine(object):
         self.push(self.reg_name(reg_num))
 
     def _regx(self, op):
-        """ value is directly in register arg[0] """ 
+        """ value is directly in register arg[0] """
         reg_num = op.args[0]
         self.push(self.reg_name(reg_num))
 
@@ -268,7 +304,7 @@ class DwarfExprMachine(object):
     def _reg_lookup_internal(self, reg_num, offset=0):
         """ handle breg0...breg31 and bregx after args are decoded. """
         addr = self.reg(reg_num)
-        if DwarfExprMachine.__instruction_set == 'avr' and  0 <= reg_num and reg_num <= 31:
+        if DWARFExprMachine.__instruction_set == 'avr' and  0 <= reg_num and reg_num <= 31:
             # Addresses are 2-bytes wide but registers r0..r31 are 1 byte. (r32=SP is 2 bytes.)
             # Assume it's a register like X, Y, or Z and use two successive regs.
             addr_hi = self.reg(reg_num + 1)
@@ -343,13 +379,13 @@ class DwarfExprMachine(object):
             register name before looking up in the regs map.
         @return the value of the register
         """
-        return self.regs[DwarfExprMachine.__register_mapping[reg_num]]
+        return self.regs[DWARFExprMachine.__register_mapping[reg_num]]
 
     def reg_name(self, reg_num):
         """
         Get the name of a machine register associated with the DWARF register number argument.
         """
-        return DwarfExprMachine.__register_mapping[reg_num]
+        return DWARFExprMachine.__register_mapping[reg_num]
 
     def mem(self, addr, size=1):
         """
@@ -365,91 +401,91 @@ class DwarfExprMachine(object):
         Initialize the opcode dispatch table the first time we're used.
         """
         d = {
-            0x03: _addr, # DW_OP_addr
-            0x06: _deref, # DW_OP_deref
-            0x08: _const, # DW_OP_const1u
-            0x09: _const, # DW_OP_const1s
-            0x0a: _const, # DW_OP_const2u
-            0x0b: _const, # DW_OP_const2s
-            0x0c: _const, # DW_OP_const4u
-            0x0d: _const, # DW_OP_const4s
-            0x0e: _const, # DW_OP_const8u
-            0x0f: _const, # DW_OP_const8s
-            0x10: _const, # DW_OP_constu
-            0x11: _const, # DW_OP_consts
-            0x12: _dup, # DW_OP_dup
-            0x13: _drop, # DW_OP_drop
-            0x14: _over, # DW_OP_over
-            0x15: _pick, # DW_OP_pick
-            0x16: _swap, # DW_OP_swap
-            0x17: _rot, # DW_OP_rot
-            0x18: _xderef, # DW_OP_xderef
-            0x19: _abs, # DW_OP_abs
-            0x1a: _and, # DW_OP_and
-            0x1b: _div, # DW_OP_div
-            0x1c: _minus, # DW_OP_minus
-            0x1d: _mod, # DW_OP_mod
-            0x1e: _mul, # DW_OP_mul
-            0x1f: _neg, # DW_OP_neg
-            0x20: _not, # DW_OP_not
-            0x21: _or, # DW_OP_or
-            0x22: _plus, # DW_OP_plus
-            0x23: _plus_uconst, # DW_OP_plus_uconst
-            0x24: _shl, # DW_OP_shl
-            0x25: _shr, # DW_OP_shr
-            0x26: _shra, # DW_OP_shra
-            0x27: _xor, # DW_OP_xor
-            0x28: _bra, # DW_OP_bra
-            0x29: _eq, # DW_OP_eq
-            0x2a: _ge, # DW_OP_ge
-            0x2b: _gt, # DW_OP_gt
-            0x2c: _le, # DW_OP_le
-            0x2d: _lt, # DW_OP_lt
-            0x2e: _ne, # DW_OP_ne
-            0x2f: _skip, # DW_OP_skip
-            0x90: _regx, # DW_OP_regx
-            0x91: _fbreg, # DW_OP_fbreg
-            0x92: _bregx, # DW_OP_bregx
-            0x93: _piece, # DW_OP_piece
-            0x94: _deref_size, # DW_OP_deref_size
-            0x95: _xderef_size, # DW_OP_xderef_size
-            0x96: _nop, # DW_OP_nop
-            0x97: _push_object_address, # DW_OP_push_object_address
-            0x98: _call2, # DW_OP_call2
-            0x99: _call4, # DW_OP_call4
-            0x9a: _call_ref, # DW_OP_call_ref
-            0x9b: _form_tls_address, # DW_OP_form_tls_address
-            0x9c: _call_frame_cfa, # DW_OP_call_frame_cfa
-            0x9d: _bit_piece, # DW_OP_bit_piece
-            0x9e: _implicit_value, # DW_OP_implicit_value
-            0x9f: _stack_value, # DW_OP_stack_value
-            0xa0: _implicit_pointer, # DW_OP_implicit_pointer
-            0xa1: _addrx, # DW_OP_addrx
-            0xa2: _constx, # DW_OP_constx
-            0xa3: _entry_value, # DW_OP_entry_value
-            0xa4: _const_type, # DW_OP_const_type
-            0xa5: _regval_type, # DW_OP_regval_type
-            0xa6: _deref_type, # DW_OP_deref_type
-            0xa7: _xderef_type, # DW_OP_xderef_type
-            0xa8: _convert, # DW_OP_convert
-            0xa9: _reinterpret, # DW_OP_reinterpret
-            0xf2: _GNU_implicit_pointer, # DW_OP_GNU_implicit_pointer
-            0xf3: _GNU_entry_value, # DW_OP_GNU_entry_value
-            0xf4: _GNU_const_type, # DW_OP_GNU_const_type
-            0xf5: _GNU_regval_type, # DW_OP_GNU_regval_type
-            0xf6: _GNU_deref_type, # DW_OP_GNU_deref_type
-            0xf7: _GNU_convert, # DW_OP_GNU_convert
-            0xfa: _GNU_parameter_ref, # DW_OP_GNU_parameter_ref
+            0x03: cls._addr, # DW_OP_addr
+            0x06: cls._deref, # DW_OP_deref
+            0x08: cls._const, # DW_OP_const1u
+            0x09: cls._const, # DW_OP_const1s
+            0x0a: cls._const, # DW_OP_const2u
+            0x0b: cls._const, # DW_OP_const2s
+            0x0c: cls._const, # DW_OP_const4u
+            0x0d: cls._const, # DW_OP_const4s
+            0x0e: cls._const, # DW_OP_const8u
+            0x0f: cls._const, # DW_OP_const8s
+            0x10: cls._const, # DW_OP_constu
+            0x11: cls._const, # DW_OP_consts
+            0x12: cls._dup, # DW_OP_dup
+            0x13: cls._drop, # DW_OP_drop
+            0x14: cls._over, # DW_OP_over
+            0x15: cls._pick, # DW_OP_pick
+            0x16: cls._swap, # DW_OP_swap
+            0x17: cls._rot, # DW_OP_rot
+            0x18: cls._xderef, # DW_OP_xderef
+            0x19: cls._abs, # DW_OP_abs
+            0x1a: cls._and, # DW_OP_and
+            0x1b: cls._div, # DW_OP_div
+            0x1c: cls._minus, # DW_OP_minus
+            0x1d: cls._mod, # DW_OP_mod
+            0x1e: cls._mul, # DW_OP_mul
+            0x1f: cls._neg, # DW_OP_neg
+            0x20: cls._not, # DW_OP_not
+            0x21: cls._or, # DW_OP_or
+            0x22: cls._plus, # DW_OP_plus
+            0x23: cls._plus_uconst, # DW_OP_plus_uconst
+            0x24: cls._shl, # DW_OP_shl
+            0x25: cls._shr, # DW_OP_shr
+            0x26: cls._shra, # DW_OP_shra
+            0x27: cls._xor, # DW_OP_xor
+            0x28: cls._bra, # DW_OP_bra
+            0x29: cls._eq, # DW_OP_eq
+            0x2a: cls._ge, # DW_OP_ge
+            0x2b: cls._gt, # DW_OP_gt
+            0x2c: cls._le, # DW_OP_le
+            0x2d: cls._lt, # DW_OP_lt
+            0x2e: cls._ne, # DW_OP_ne
+            0x2f: cls._skip, # DW_OP_skip
+            0x90: cls._regx, # DW_OP_regx
+            0x91: cls._fbreg, # DW_OP_fbreg
+            0x92: cls._bregx, # DW_OP_bregx
+            0x93: cls._piece, # DW_OP_piece
+            0x94: cls._deref_size, # DW_OP_deref_size
+            0x95: cls._xderef_size, # DW_OP_xderef_size
+            0x96: cls._nop, # DW_OP_nop
+            0x97: cls._push_object_address, # DW_OP_push_object_address
+            0x98: cls._call2, # DW_OP_call2
+            0x99: cls._call4, # DW_OP_call4
+            0x9a: cls._call_ref, # DW_OP_call_ref
+            0x9b: cls._form_tls_address, # DW_OP_form_tls_address
+            0x9c: cls._call_frame_cfa, # DW_OP_call_frame_cfa
+            0x9d: cls._bit_piece, # DW_OP_bit_piece
+            0x9e: cls._implicit_value, # DW_OP_implicit_value
+            0x9f: cls._stack_value, # DW_OP_stack_value
+            0xa0: cls._implicit_pointer, # DW_OP_implicit_pointer
+            0xa1: cls._addrx, # DW_OP_addrx
+            0xa2: cls._constx, # DW_OP_constx
+            0xa3: cls._entry_value, # DW_OP_entry_value
+            0xa4: cls._const_type, # DW_OP_const_type
+            0xa5: cls._regval_type, # DW_OP_regval_type
+            0xa6: cls._deref_type, # DW_OP_deref_type
+            0xa7: cls._xderef_type, # DW_OP_xderef_type
+            0xa8: cls._convert, # DW_OP_convert
+            0xa9: cls._reinterpret, # DW_OP_reinterpret
+            0xf2: cls._implicit_pointer, # DW_OP_GNU_implicit_pointer
+            0xf3: cls._entry_value, # DW_OP_GNU_entry_value
+            0xf4: cls._const_type, # DW_OP_GNU_const_type
+            0xf5: cls._regval_type, # DW_OP_GNU_regval_type
+            0xf6: cls._deref_type, # DW_OP_GNU_deref_type
+            0xf7: cls._convert, # DW_OP_GNU_convert
+            0xfa: cls._parameter_ref, # DW_OP_GNU_parameter_ref
         }
 
         # Add lit0..lit31, reg0..reg31, breg0..breg31 to mappings
         for i in range(0, 32):
-            d[i + 0x30] = _literal
-            d[i + 0x50] = _reg_direct
-            d[i + 0x70] = _reg_lookup
+            d[i + 0x30] = cls._literal
+            d[i + 0x50] = cls._reg_direct
+            d[i + 0x70] = cls._reg_lookup
 
         # Convert the map above into an array for fast lookups.
-        cls.__dispatch = (max(d.keys()) + 1) * [ _unimplemented_op ]
+        cls.__dispatch = (max(d.keys()) + 1) * [ cls._unimplemented_op ]
         for (idx, func) in d.items():
             cls.__dispatch[idx] = func
 
