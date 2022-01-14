@@ -6,7 +6,7 @@
 
 import elftools.dwarf.constants as dwarf_constants
 import elftools.dwarf.dwarf_expr as dwarf_expr
-from elftools.dwarf.locationlists import LocationParser
+import elftools.dwarf.locationlists as locationlists
 from sortedcontainers import SortedList
 
 import arduino_dbg.binutils as binutils
@@ -62,10 +62,11 @@ class CompilationUnitNamespace(object):
         Compilation Unit-specific namespacing for types, methods, $PC ranges.
     """
 
-    def __init__(self, die_offset, cu, debugger):
+    def __init__(self, die_offset, cu, range_lists, debugger):
         self._named_entries = {} # name -> entry
         self._addr_entries = {}  # DIE offset -> entry
-        self._pc_ranges = SortedList()
+        self._pc_ranges = SortedList() # Range intervals held by methods, etc. within this CU.
+        self._range_lists = range_lists # Complete .debug_range data from DWARFInfo object.
 
         self._die_offset = die_offset
         self._cu = cu
@@ -74,14 +75,31 @@ class CompilationUnitNamespace(object):
 
         top_die = cu.get_top_DIE()
         try:
+            self._cu_ranges = None # PCRange objects defining the CU itself, if any.
             self._low_pc = top_die.attributes['DW_AT_low_pc'].value
             self._high_pc = top_die.attributes['DW_AT_high_pc'].value
         except KeyError:
-            # Compilation unit covers noncontiguous range or otherwise unknown extent.
-            # TODO(aaron): CU may have multiple intervals in DW_AT_ranges.
-            # handle this as a list, not fixed scalars.
-            self._low_pc = None
+            # Ordinarily location ranges are relative to the compilation unit base address,
+            # but if the compilation unit is itself defined as a set of ranges, they are absolute.
+            # Either way, we need _low_pc to be an integer.
+            self._low_pc = 0
             self._high_pc = None
+
+            # Compilation unit covers noncontiguous range or otherwise unknown extent.
+            # CU may have multiple intervals in DW_AT_ranges.
+            print(top_die)
+            range_data_offset = None
+            range_attr = top_die.attributes.get('DW_AT_ranges')
+            if range_attr:
+                range_data_offset = range_attr.value
+            if range_data_offset and range_lists:
+                rangelist = range_lists.get_range_list_at_offset(range_data_offset)
+                self._cu_ranges = SortedList()
+                for r in rangelist:
+                    debugger.verboseprint(f'Extracted range for CU: {r.begin_offset:04x}' +
+                        f' -- {r.end_offset:04x}')
+                    self._cu_ranges.add(PCRange(r.begin_offset, r.end_offset, self))
+
 
         self.expr_parser = dwarf_expr.DWARFExprParser(cu.structs)
         self._debugger = debugger
@@ -89,8 +107,47 @@ class CompilationUnitNamespace(object):
     def getCU(self):
         return self._cu
 
-    def getExprParser(self):
-        return self.expr_parser
+    def getExprMachine(self, location_expr_data, regs):
+        """
+        Return an expression evaluation machine ready to process the specified location info.
+        @param location_expr_data the result of a LocationParser (either a LocationExpr or
+        a list of LocationEntry/BaseAddressEntry objects).
+
+        @return the ready-to-go expr eval machine loaded with the right location expression opcodes
+        for the current PC location, or None if there is no location data valid at the current PC.
+        """
+
+        parser = self.expr_parser
+        location_expr_bytes = None
+        if isinstance(location_expr_data, locationlists.LocationExpr):
+            # It's a single list<int> representing the universal location expression for this var.
+            location_expr_bytes = location_expr_data.loc_expr
+        else:
+            # It's a list of pc-dependent location entries.
+            pc = regs["PC"]
+            base_addr = self._low_pc
+            for loc_list_entry in location_expr_data:
+                if isinstance(loc_list_entry, locationlists.BaseAddressEntry):
+                    # I *think* this means the list in .debug_loc is not relative to CU start,
+                    # but is now relative to this value. Is this *also* relative to CU start,
+                    # or is it supposed to be absolute? Don't have example data to work with.
+                    base_addr = loc_list_entry.base_address
+                else:
+                    interval_low = base_addr + loc_list_entry.begin_offset
+                    interval_high = base_addr + loc_list_entry.end_offset
+                    if pc >= interval_low and pc < interval_high:
+                        # We found it.
+                        location_expr_bytes = loc_list_entry.loc_expr
+                        break
+
+        if location_expr_bytes is None:
+            # No location entry info mapped to current $PC.
+            return None
+
+        return eval_location.DWARFExprMachine(
+            parser.parse_expr(location_expr_bytes),
+            regs, self._debugger)
+
 
     def getDebugger(self):
         return self._debugger
@@ -98,33 +155,36 @@ class CompilationUnitNamespace(object):
     def define_pc_range(self, pc_lo, pc_hi, scope, method_name):
         self._pc_ranges.add(PCRange(pc_lo, pc_hi, self, scope, method_name))
 
-    def get_cu_range(self):
+    def cu_contains_pc(self, pc):
         """
-        Return the total range span of this compilation unit
+        Return True if the PC is in-range for this CU, or if the CU contains no PC info whatsoever.
         """
-        return (self._low_pc, self._high_pc)
+        if self._low_pc is not None and self._high_pc is not None:
+            return pc >= self._low_pc and pc < self._high_pc
+        elif self._cu_ranges is not None:
+            for r in self._cu_ranges:
+                if r.includes_pc(pc):
+                    return True
+            return False
+        else:
+            # No PC range info whatsoever associated w/ this compilation unit. Assume True.
+            return True
 
     def is_cu_range_defined(self):
         """
-        Return True if this CU has a defined PC range it covers.
+        Return True if this CU declares bookend PC range information.
         """
-        return self._low_pc is not None
-
-    def cu_maybe_contains_pc(self, pc):
-        """
-        Return True if the PC is in-range for this CU, or this CU doesn't have a single
-        well-defined range.
-        """
-        return not self.is_cu_range_defined() or (pc >= self._low_pc and pc < self._high_pc)
+        return (self._low_pc is not None and self._high_pc is not None) or \
+            self._cu_ranges is not None
 
     def get_ranges_for_pc(self, pc):
         """
-        Return all PCRanges in this CU that include $PC.
+        Return all PCRanges for methods, lexical scopes, etc. in this CU that include $PC.
         Returned in sorted order.
         """
         out = SortedList()
 
-        if not self.cu_maybe_contains_pc(pc):
+        if not self.cu_contains_pc(pc):
             # Out of bounds.
             return out
 
@@ -528,16 +588,16 @@ class FormalArg(object):
         Evaluate the location info to get the memory address of this variable.
 
         @param regs the current register state for the frame.
-        @return the memory address of the variable, or None if no such info is available.
+        @return the memory and register location info for the variable (in the format
+            returned by the DWARFExprMachine), or None if no such info is available.
         """
         loc = self._location or self.getOrigin()._location
         if loc is None:
             return None
 
-        debugger = self._cuns.getDebugger()
-        expr_machine = eval_location.DWARFExprMachine(
-            self._cuns.getExprParser().parse_expr(loc),
-            regs, debugger)
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return None
         return expr_machine.eval()
 
     def getValue(self, regs):
@@ -555,10 +615,9 @@ class FormalArg(object):
         if loc is None:
             return None
 
-        debugger = self._cuns.getDebugger()
-        expr_machine = eval_location.DWARFExprMachine(
-            self._cuns.getExprParser().parse_expr(loc),
-            regs, debugger)
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return None
         return expr_machine.access(self.arg_type.size)
 
 
@@ -672,16 +731,16 @@ class VariableInfo(PrgmType):
         Evaluate the location info to get the memory address of this variable.
 
         @param regs the current register state for the frame.
-        @return the memory address of the variable, or None if no such info is available.
+        @return the memory and register location info for the variable (in the format
+            returned by the DWARFExprMachine), or None if no such info is available.
         """
         loc = self._location or self.getOrigin()._location
         if loc is None:
             return None
 
-        debugger = self._cuns.getDebugger()
-        expr_machine = eval_location.DWARFExprMachine(
-            cuns.getExprParser().parse_expr(loc),
-            regs, debugger)
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return None
         return expr_machine.eval()
 
     def getValue(self, regs):
@@ -699,10 +758,9 @@ class VariableInfo(PrgmType):
         if loc is None:
             return None
 
-        debugger = self._cuns.getDebugger()
-        expr_machine = eval_location.DWARFExprMachine(
-            cuns.getExprParser().parse_expr(loc),
-            regs, debugger)
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return None
         return expr_machine.access(self.size)
 
     def setConstValue(self, val):
@@ -743,12 +801,12 @@ def getNamedDebugInfoEntry(name, pc):
     pc_ranges = SortedList()
     search_cuns = None
     for cuns in _cu_namespaces:
-        if cuns.cu_maybe_contains_pc(pc) and cuns.is_cu_range_defined():
+        if cuns.cu_contains_pc(pc) and cuns.is_cu_range_defined():
             # The above update is the exclusive namespace search we need.
             # Don't keep searching.
             search_cuns = cuns
             break
-        elif cuns.cu_maybe_contains_pc(pc):
+        elif cuns.cu_contains_pc(pc):
             # Try to search method-by-method to see if this cuns covers it.
             pc_ranges.update(cuns.get_ranges_for_pc(pc))
             if len(pc_ranges) > 0:
@@ -776,14 +834,13 @@ def getNamedDebugInfoEntry(name, pc):
         return (KIND_TYPE, typ)
 
     # Also search globals if not found locally.
-    global_entry = _global_syms.get(name)
+    global_entry = _global_syms.getVariable(name)
     if global_entry:
-        if isinstance(global_entry, MethodInfo):
-            return (KIND_METHOD, global_entry)
-        elif isinstance(global_entry, VariableInfo):
-            return (KIND_VARIABLE, global_entry)
-        else:
-            return (KIND_TYPE, global_entry)
+        return (KIND_VARIABLE, global_entry)
+
+    global_entry = _global_syms.getMethod(name)
+    if global_entry:
+        return (KIND_METHOD, global_entry)
 
     return (None, None)
 
@@ -833,7 +890,7 @@ def getScopesForPC(pc, include_global=False):
     for cuns in _cu_namespaces:
         pc_ranges.update(cuns.get_ranges_for_pc(pc))
 
-        if cuns.cu_maybe_contains_pc(pc) and cuns.is_cu_range_defined():
+        if cuns.cu_contains_pc(pc) and cuns.is_cu_range_defined():
             # The above update is the exclusive namespace search we need.
 
             # If include_globals is true, then include the CUNS itself as a containing scope..
@@ -877,7 +934,6 @@ def _populateEncodings(int_size):
     _add(8, PrimitiveType('unsigned char', 1, signed=False))
     _add(0x10, PrimitiveType('<UTF8_string>', 1))
     _add(0x12, PrimitiveType('<ASCII_string>', 1))
-
 
 def parseTypesFromDIE(die, cuns, context={}):
     """
@@ -954,7 +1010,8 @@ def parseTypesFromDIE(die, cuns, context={}):
         """
         try:
             attr = die.attributes['DW_AT_' + attr_name]
-            return LocationParser(context['loc_lists']).parse_from_attribute(attr, context['dwarf_ver'])
+            return locationlists.LocationParser(context['loc_lists']).parse_from_attribute(
+                attr, context['dwarf_ver'])
         except KeyError:
             return None
 
@@ -1087,10 +1144,15 @@ def parseTypesFromDIE(die, cuns, context={}):
         # as part of a static type definition). The expr assumes the address of the
         # object is already on the expr stack to provide a true member address; we push '0'
         # here as a starting stack to get a member offset rather than a member address.
-        expr_machine = eval_location.DWARFExprMachine(
-            cuns.getExprParser().parse_expr(data_member_location),
-            {}, context['debugger'], [0])
-        offset = expr_machine.eval()
+        #
+        # nb evaluating for offset here means doing so without a $PC, so we're assuming
+        # it's a single location expr and not a location_list. The latter _seems_ impossible
+        # for a field offset location to be PC-dependent, but maybe not?
+        expr_machine = cuns.getExprMachine(
+            locationlists.LocationExpr(data_member_location), {})
+        expr_machine.push(0)
+        offset_list = expr_machine.eval()
+        (offset, _) = offset_list[0]
 
         accessibility = dieattr('accessibility', 1)
         field = FieldType(name, context.get("class"), base, offset, accessibility)
@@ -1252,10 +1314,10 @@ def parseTypesFromDIE(die, cuns, context={}):
         location = _get_locations()
         const_val = dieattr('const_value')
 
-        if location is not None and isinstance(location, list):
-            print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
-            print(die)
-            print(f"Location is {location}")
+        #if location is not None and isinstance(location, list):
+        #    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
+        #    print(die)
+        #    print(f"Location is {location}")
 
         formal = FormalArg(name, base, cuns, origin, location, const_val)
         _add_entry(formal, None, die.offset)
@@ -1315,11 +1377,12 @@ _default_context_keys = []
 def parseTypeInfo(dwarf_info, debugger):
     int_size = debugger.get_arch_conf("int_size")
     _populateEncodings(int_size) # start with base primitive types.
+    range_lists = dwarf_info.range_lists()
 
     context = {}
     context['debugger'] = debugger
     context['int_size'] = int_size
-    context['range_lists'] = dwarf_info.range_lists()
+    context['range_lists'] = range_lists
     context['loc_lists'] = dwarf_info.location_lists()
 
     # TODO(aaron): Keep this list in sync with the initializers above and below.
@@ -1329,7 +1392,7 @@ def parseTypeInfo(dwarf_info, debugger):
     for compile_unit in dwarf_info.iter_CUs():
         context['dwarf_ver'] = compile_unit.header['version']
 
-        cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit, debugger)
+        cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit, range_lists, debugger)
         _cu_namespaces.append(cuns)
         parseTypesFromDIE(compile_unit.get_top_DIE(), cuns, context)
 

@@ -153,7 +153,7 @@ class Repl(object):
 
             formals = scope.getFormals()
             if len(formals) > 0:
-                print("{nest_str}  Formals:")
+                print(f"{nest_str}  Formals:")
                 for formal in formals:
                     formal_val = formal.getValue(frameRegs)
                     if formal_val is not None:
@@ -165,13 +165,13 @@ class Repl(object):
 
             var_list = scope.getVariables()
             if len(var_list):
-                print("{nest_str}  Locals:")
+                print(f"{nest_str}  Locals:")
                 for local_name, local_var in var_list:
                     if local_name is None:
                         continue
                     local_val = local_var.getValue(frameRegs)
                     if local_val is not None:
-                        val_str = ' = {local_val}'
+                        val_str = f' = {local_val}'
                     else:
                         val_str = ''
                     print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str}')
@@ -1050,10 +1050,10 @@ class Repl(object):
             return
 
         kind = self._sym_datatype(argv)
-        if kind != types.TYPE:
+        if kind != types.KIND_TYPE:
             # For methods and variables, show the address
             self._addr_for_sym(argv)
-        if kind == types.VARIABLE:
+        if kind == types.KIND_VARIABLE:
             # For variables, show the memory value at that address
             self._print(argv)
 

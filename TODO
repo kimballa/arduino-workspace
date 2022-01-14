@@ -10,21 +10,13 @@ On-device service capabilities:
 
 Client:
 
-.... we've just changed formal.location and var.location to instead of being a list(byte),
-being either a LocationExpr (containing a list(byte)) or a list(LocationEntry|BaseAddressEntry)
-... see https://github.com/eliben/pyelftools/blob/master/elftools/dwarf/locationlists.py
-make it work.
-
-  * readline autocompleter 
-    - command names
-    - symbols
   * repl should use a custom @cmd attr that declares the keywords for each method,
     and the cmd map should be built up automatically.
   * repl `help` should build the command text dynamically through the @cmd attrs
     and the first non-empty line of each command func's __doc__ string.
-  * Ability to show local variables within stack frame.
-    `locals` command searches nested scopes for VARIABLE entries in .debug_info
-    * Handle 'ranges' on CU, not just low_pc/high_pc.
+  * readline autocompleter 
+    - command names
+    - symbols
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
   * Link type information for methods & variables to Symbols in Debugger initialization

@@ -12,21 +12,24 @@ class DWARFExprMachine(object):
 
     Usage:
         dem = DWARFExprMachine([opcodes], {regs}, debugger)
-        addr = dem.eval()
+        addrs = dem.eval()
 
-    Depending on the operations performed, 'addr' may have 1 of three types:
+    addrs is a list of (addr, size) tuples. If the value is in multiple reigsters or
+    addresses, this instructs how many bytes to fetch from each such addr. If the
+    result is in a single contiguous location, size=DWARFExprMachine.ALL.
+
+    Depending on the operations performed, 'addr' may have different types:
         int    - A memory address you should access to get the variable's value.
         str    - The name of a machine register holding the variable's value directly.
-        fn     - A function that will access the variable in question when called.
-                 Used to assemble results of PIECE operations.
 
-    Or instead of `dem.eval()`, use `dem.access(size)` to access size bytes at addr.
+    Or instead of `dem.eval()`, use `dem.access(size)` to directly retrieve a result with the
+    specified total size in bytes from the location identified by the expression.
 
     After calling eval() once, you must call `dem.reset()` to run again. The reset
     method gives the opportunity to refresh the current register state, regs + instructions,
     or regs + instructions + initial stack.
 
-    # TODO(aaron): Handle PIECE, FBREG
+    # TODO(aaron): Handle FBREG
     """
 
     # Dispatch table from opcode to method.
@@ -38,6 +41,9 @@ class DWARFExprMachine(object):
     __register_mapping = None  # DWARF reg nums -> machine register names
     __addr_size = None         # Architecture's address size in bytes
     __word_len  = None         # Architecture's word size in a register, or as pushed to stack.
+
+    ALL = -1                # 'size' for degenerate 'piece' instruction to get the entire result.
+    TOP = '__dw_stack_top'  # 'register' for access() method to use to grab from top-of-stack.
 
     def __init__(self, opcodes, regs, debugger, initial_stack=None):
         # Handle one-time setups for evaluation environment, if needed.
@@ -55,19 +61,90 @@ class DWARFExprMachine(object):
         self.regs = regs                 # Registers for current stack frame.
         self._debugger = debugger        # Debugger with access to running process SRAM
         self.stack = initial_stack or [] # Initial stack machine state.
+        self._pieces = []
 
     def eval(self):
         """
         Evaluate the bytecode program to resolve the location.
         Returns the address where the data is held.
         """
+        self._pieces = []
         for op in self.opcodes:
             self._debugger.verboseprint('Processing opcode ', op.op_name)
             func = DWARFExprMachine.__dispatch[op.op]
             func(self, op)
 
-        out = self.top()
-        self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
+        # What's the result address? If we got PIECE instructions, deliver a list of addrs and
+        # sizes. Otherwise, return a singleton list with the address and DEM.ALL..
+        if len(self._pieces):
+            self._debugger.verboseprint(f'Resolved to pieces: {self._pieces}')
+            return self._pieces
+        else:
+            out = self.top()
+            self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
+            return [(out, DWARFExprMachine.ALL)]
+
+    def __access_big_endian(self, size):
+        addrs = self.eval()
+        out = 0
+        for (addr, piece_size) in addrs:
+            if piece_size == DWARFExprMachine.ALL:
+                piece_size = size # There is only one piece, and it is the caller-decl'd size
+
+            if isinstance(addr, int):
+                out = (out << (8 * piece_size)) | self.mem(addr, piece_size)
+            elif isinstance(addr, str):
+                if addr == DWARFExprMachine.TOP:
+                    regval = self.top()
+                else:
+                    regval = self.regs[addr]
+
+                if piece_size == 1:
+                    regval = regval & 0xFF
+                elif piece_size == 2:
+                    regval = regval & 0xFFFF
+                elif piece_size == 4:
+                    regval = regval & 0xFFFFFFFF
+                elif piece_size == 8:
+                    regval = regval & 0xFFFFFFFFFFFFFFFF
+                else:
+                    raise Exception(f'Unknown piece size arg {piece_size}')
+                out = (out << (8 * piece_size)) | regval
+            else:
+                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+
+        return out
+
+    def __access_little_endian(self, size):
+        addrs = self.eval()
+        out = 0
+        new_shift = 0
+        existing_mask = 0
+
+        for (addr, piece_size) in addrs:
+            if piece_size == DWARFExprMachine.ALL:
+                piece_size = size # There is only one piece, and it is the caller-decl'd size
+
+            if isinstance(addr, int):
+                out = (self.mem(addr, piece_size) << new_shift) | (out & existing_mask)
+            elif isinstance(addr, str):
+                if addr == DWARFExprMachine.TOP:
+                    regval = self.top()
+                else:
+                    regval = self.regs[addr]
+                out = (regval << new_shift) | (out & existing_mask)
+            else:
+                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+
+            # Account for bit width of result built-so-far growing by piece_size bytes.
+            for i in range(0, piece_size):
+                # mask off `piece_size` more bytes on lsb-side of result as present.
+                existing_mask <<= 8
+                existing_mask |= 0xFF
+
+            new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
+                                        # before slotting in
+
         return out
 
     def access(self, size):
@@ -75,15 +152,11 @@ class DWARFExprMachine(object):
         Evaluate the bytecode program to resolve the location. Then get the result at that location.
         Returns the value of size 'size' located at the address computed by the expression.
         """
-        addr = self.eval()
-        if isinstance(addr, int):
-            return self.mem(addr, size)
-        elif isinstance(addr, str):
-            return self.regs[reg]
-        elif callable(addr):
-            return addr()
+        if self._debugger.get_arch_conf("endian") == "big":
+            return self.__access_big_endian(size)
         else:
-            raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+            return self.__access_little_endian(size)
+
 
     def reset(self, new_regs=None, new_opcodes=None, new_stack=None):
         """
@@ -263,13 +336,11 @@ class DWARFExprMachine(object):
     _bra = _unimplemented_op
 
     def _piece(self, op):
-        # TODO(aaron): Implement PIECE
-        # This should actually create a closure that assembles the result and push
-        # that to the stack.
-        # ... or maybe we use PIECE to carry finalized addresses off to a separate
-        # [(addr, sz)] list which are concatenated at the end; if no PIECE statements
-        # are seen, we just use [(top(), whatever_size_arg)]?
-        _unimplemented_op(op)
+        # Mark that the addr on top of the stack is a piece of the result, size N.
+        addr = self.top()
+        size = op.args[0]
+        piece = (addr, size)
+        self._pieces.append(piece)
 
     def _nop(self, op):
         pass
@@ -316,6 +387,13 @@ class DWARFExprMachine(object):
         # TODO(aaron): Implement FBREG
         _unimplemented_op(op)
 
+    def _stack_value(self, op):
+        # DW_OP_stack_value says that the _location_ we are computing does not
+        # exist in memory or registers at a particular address, but the value at
+        # that logical location is currently at stack.top()
+
+        piece = (DWARFExprMachine.TOP, DWARFExprMachine.ALL)
+        self._pieces.append(piece)
 
     # Unimplemented opcodes; not specified in DWARF2; maybe D3 or D4?
     _deref_size = _unimplemented_op
@@ -328,7 +406,6 @@ class DWARFExprMachine(object):
     _call_frame_cfa = _unimplemented_op
     _bit_piece = _unimplemented_op
     _implicit_value = _unimplemented_op
-    _stack_value = _unimplemented_op
     _implicit_pointer = _unimplemented_op
     _addrx = _unimplemented_op
     _constx = _unimplemented_op
