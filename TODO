@@ -10,8 +10,6 @@ On-device service capabilities:
 
 Client:
 
-  * repl help should show 'tm' and 'tu' as synonyms for 'time'
-
   * readline autocompleter 
     - command names
     - symbols

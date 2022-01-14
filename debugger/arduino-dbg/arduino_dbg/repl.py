@@ -36,11 +36,13 @@ class Command(object):
     _cmd_map = {}               # Lookup from all keywords to Command instances
     _cmd_index = SortedDict()   # Set of Command instances keyed by primary keyword only.
 
-    def __init__(self, keywords):
-        self.keywords = keywords
-        self.command_func = None
-        self.short_help = ''
-        self.long_help = ''
+    def __init__(self, keywords, help_keywords=None, display_help=True):
+        self.keywords = keywords # Set of keywords that activate this command.
+        self.help_keywords = help_keywords or [] # Additional keywords to display in cmd summary.
+        self.command_func = None # The function to call (memoized in __call__)
+        self.short_help = ''     # 1-line help summary extracted from fn docstring.
+        self.long_help = ''      # Full help summary extracted from fn docstring.
+        self.display_help = display_help # Does this show up in the command summary?
 
         if not isinstance(keywords, list):
             raise Exception("Expected syntax @Command(keywords=[...])")
@@ -53,7 +55,6 @@ class Command(object):
             if Command._cmd_map.get(kw):
                 raise Exception(f"Warning: keyword '{kw}' used multiple times")
             Command._cmd_map[kw] = self
-            print(f"Got keyword {kw}")
 
         # Register this in the full command map
         Command._cmd_index[keywords[0]] = self
@@ -70,19 +71,22 @@ class Command(object):
 
     def __call__(self, *args, **kwargs):
         """
+        Memoize the actual function associated with this command, and extract help text
+        from docstring.
 
-        @Command(keywords=['x','y'])
-        def some_fn(): ...
+            @Command(keywords=['x','y'])
+            def some_fn(): ...
 
-        is equivalent to:
+            is equivalent to:
 
-        def some_fn(): ...
-        some_fn = Command(keywords=['x','y'])(some_fn)
+            def some_fn(): ...
+            some_fn = Command(keywords=['x','y'])(some_fn)
 
-        ... is equivalent to...
+            ... is equivalent to...
 
-        c = Command(keywords=...)
-        some_fn = c.__call__(some_fn)
+            def some_fn(): ...
+            c = Command(keywords=...)
+            some_fn = c.__call__(some_fn)
 
         This callable method will be invoked with the function itself as the arg, to transform
         that function. We want to save the function argument as 'what we really invoke' and
@@ -95,13 +99,18 @@ class Command(object):
 
         # The long help (shown in `help <kwd>`) is the entire cleanly-reformatted docstring,
         # along with the list of keyword synonyms to invoke it.
-        if len(self.keywords) > 1:
-            keywordsIntro = f"{self.keywords[0]} ({', '.join(self.keywords[1:])})"
+        all_keywords = []
+        all_keywords.extend(self.keywords)
+        all_keywords.extend(self.help_keywords) # Some keywords like 'tm' show up as synonyms
+                                                # for <X> without activating <X> directly.
+
+        if len(all_keywords) > 1:
+            keywordsIntro = f"{all_keywords[0]} ({', '.join(all_keywords[1:])})"
         else:
-            keywordsIntro = f"{self.keywords[0]}"
+            keywordsIntro = f"{all_keywords[0]}"
 
         docstring = inspect.cleandoc(fn.__doc__)
-        helptext = f"  {keywordsIntro}\n\n{docstring}"
+        helptext = f"    {keywordsIntro}\n\n{docstring}"
         self.long_help = helptext
 
         # The short help (shown in the `help` summary) is the keyword list and
@@ -154,88 +163,6 @@ class Repl(object):
         self._last_sym_used = None   # last symbol referenced by the user.
 
         self._break_count = 0 # How many times has the user mashed ^C?
-
-    def _setup_cmd_map(self):
-        m = {}
-        m["addr"] = self._addr_for_sym
-        m["."] = self._addr_for_sym
-
-        m["backtrace"] = self._backtrace
-        m["\\t"] = self._backtrace
-
-        m["break"] = self._break
-        m["continue"] = self._continue
-        m["c"] = self._continue
-        m["\\c"] = self._continue
-
-        m["flash"] = self._flash
-        m["xf"] = self._flash
-
-        m['frame'] = self._frame
-        m["\\f"] = self._frame
-
-        m["gpio"] = self._gpio
-
-        m["help"] = self.print_help
-
-        m["info"] = self._sym_info
-        m["\\i"] = self._sym_info
-
-        m["locals"] = self._show_locals
-
-        m["mem"] = self._mem
-        m["x"] = self._mem
-        m["\\m"] = self._mem
-
-        m["memstats"] = self._memstats
-
-        m["poke"] = self._poke
-
-        m["print"] = self._print
-        m["v"] = self._print
-        m["\\v"] = self._print
-
-        m["regs"] = self._regs
-        m["reset"] = self._reset
-        m["set"] = self._set_conf
-
-        m["stack"] = self._stack_display
-
-        m["stackaddr"] = self._stack_mem_read
-        m["xs"] = self._stack_mem_read
-
-        m["setv"] = self._set_var
-        m["!"] = self._set_var
-
-        m["sym"] = self._symbol_search
-        m["?"] = self._symbol_search
-        m["syms"] = self._list_symbols
-
-        m["time"] = self._print_time
-        m["tm"] = self._print_time_millis
-        m["tu"] = self._print_time_micros
-
-        m["type"] = self._sym_datatype
-        m["types"] = self._list_types
-
-        m["quit"] = self._quit
-        m["exit"] = self._quit
-        m["\\q"] = self._quit
-
-        self._cmd_map = m
-
-    def _synonyms(self, cmd):
-        """
-        Return a list of all synonymous commands that run the same method as 'cmd'.
-        """
-
-        cmd_func = self._cmd_map[cmd]
-        lst = []
-        for (name, func) in self._cmd_map.items():
-            if func == cmd_func:
-                lst.append(name)
-
-        return lst
 
 
     @Command(keywords=['locals'])
@@ -374,6 +301,8 @@ class Repl(object):
         Read or write a GPIO pin
 
             Syntax: gpio <pinId> [<value>]
+
+        This command can only write to pins already configured as outputs.
         """
 
         if len(argv) == 0:
@@ -448,7 +377,8 @@ class Repl(object):
         """
         Read a memory address on the Arduino
 
-        Syntax: mem [<size>] <addr (hex)>
+            Syntax: mem [<size>] <addr (hex)>
+
         size must be 1, 2, or 4.
         """
         if len(argv) == 0:
@@ -918,7 +848,7 @@ class Repl(object):
 
 
 
-    @Command(keywords=['time'])
+    @Command(keywords=['time'], help_keywords=['tm','tu'])
     def _print_time(self, argv):
         """
         Read the time from the device in milli- or microseconds
@@ -941,15 +871,15 @@ class Repl(object):
             return
 
 
-    @Command(keywords=['tm'])
+    @Command(keywords=['tm'], display_help=False)
     def _print_time_millis(self, argv):
         """
-        Print time since device startup in milliseconds.
+        Print time since device startup (or rollover) in milliseconds.
         """
         print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
 
 
-    @Command(keywords=['tu'])
+    @Command(keywords=['tu'], display_help=False)
     def _print_time_micros(self, argv):
         """
         Print time since device startup (or rollover) in microseconds.
@@ -1227,7 +1157,8 @@ class Repl(object):
 
         cmdIndex = Command.getCommandIndex()
         for (keyword, cmdObj) in cmdIndex.items(): # iterate over sorted map.
-            print(cmdObj.short_help)
+            if cmdObj.display_help:
+                print(cmdObj.short_help)
 
         print("")
         print("After doing a symbol search with sym or '?', you can reference results by")
