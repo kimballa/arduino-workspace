@@ -10,10 +10,8 @@ On-device service capabilities:
 
 Client:
 
-  * repl should use a custom @cmd attr that declares the keywords for each method,
-    and the cmd map should be built up automatically.
-  * repl `help` should build the command text dynamically through the @cmd attrs
-    and the first non-empty line of each command func's __doc__ string.
+  * repl help should show 'tm' and 'tu' as synonyms for 'time'
+
   * readline autocompleter 
     - command names
     - symbols

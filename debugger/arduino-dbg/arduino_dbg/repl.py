@@ -4,6 +4,7 @@ import functools
 import inspect
 import readline
 import signal
+from sortedcontainers import SortedDict
 import traceback
 
 import arduino_dbg.binutils as binutils
@@ -21,6 +22,124 @@ def _softint(intstr, base=10):
         return None
 
 
+class Command(object):
+    """
+    meta-decorator that tags a given function as a command that can be executed in the repl.
+    Binds the keyword(s) to the function, registers the function's docstring as its help
+    text, and the first non-empty line of the function's docstring as its short help text
+    shown by the 'help' command.
+
+    @param keywords is a list of keywords that trigger the command function.
+    @return a decorator that directly returns its function argument unmodified.
+    """
+
+    _cmd_map = {}               # Lookup from all keywords to Command instances
+    _cmd_index = SortedDict()   # Set of Command instances keyed by primary keyword only.
+
+    def __init__(self, keywords):
+        self.keywords = keywords
+        self.command_func = None
+        self.short_help = ''
+        self.long_help = ''
+
+        if not isinstance(keywords, list):
+            raise Exception("Expected syntax @Command(keywords=[...])")
+
+        if keywords is None or len(keywords) == 0:
+            raise Exception("Must supply one or more keywords to @command.")
+
+        # Register binding from each keyword to this object.
+        for kw in keywords:
+            if Command._cmd_map.get(kw):
+                raise Exception(f"Warning: keyword '{kw}' used multiple times")
+            Command._cmd_map[kw] = self
+            print(f"Got keyword {kw}")
+
+        # Register this in the full command map
+        Command._cmd_index[keywords[0]] = self
+
+    def invoke(self, repl, args):
+        """
+        Actually invoke the command function we decorated.
+
+        @param repl the repl instance that owns the method.
+        @param args the arg array to pass to the method.
+        """
+
+        return self.command_func(repl, args) # repl is 'self' from pov of called method.
+
+    def __call__(self, *args, **kwargs):
+        """
+
+        @Command(keywords=['x','y'])
+        def some_fn(): ...
+
+        is equivalent to:
+
+        def some_fn(): ...
+        some_fn = Command(keywords=['x','y'])(some_fn)
+
+        ... is equivalent to...
+
+        c = Command(keywords=...)
+        some_fn = c.__call__(some_fn)
+
+        This callable method will be invoked with the function itself as the arg, to transform
+        that function. We want to save the function argument as 'what we really invoke' and
+        return the identity transformation in-place.
+
+        """
+
+        fn = args[0]
+        self.command_func = fn # The function argument is what we'll call to run the command.
+
+        # The long help (shown in `help <kwd>`) is the entire cleanly-reformatted docstring,
+        # along with the list of keyword synonyms to invoke it.
+        if len(self.keywords) > 1:
+            keywordsIntro = f"{self.keywords[0]} ({', '.join(self.keywords[1:])})"
+        else:
+            keywordsIntro = f"{self.keywords[0]}"
+
+        docstring = inspect.cleandoc(fn.__doc__)
+        helptext = f"  {keywordsIntro}\n\n{docstring}"
+        self.long_help = helptext
+
+        # The short help (shown in the `help` summary) is the keyword list and
+        # the first non-empty line of the docstring.
+        docstr_lines = docstring.split("\n")
+        if len(docstr_lines) == 1:
+            self.short_help = f'{keywordsIntro} -- {docstring.strip()}'
+        else:
+            first_real_line = None
+            for line in docstr_lines:
+                if len(line.strip()) > 0:
+                    first_real_line = line.strip()
+                    break
+            if first_real_line:
+                self.short_help = f'{keywordsIntro} -- {first_real_line}'
+            else:
+                # Just use.. the entire (empty?) docstring
+                self.short_help = f'{keywordsIntro} -- {docstring.strip()}'
+
+        return fn
+
+    @classmethod
+    def getCommandMap(cls):
+        """
+        Return full mapping from keywords to Command instances.
+        """
+        return cls._cmd_map
+
+    @classmethod
+    def getCommandIndex(cls):
+        """
+        Return sorted mapping from primary keyword to Command instances.
+        """
+        return cls._cmd_index
+
+
+
+
 class Repl(object):
     """
     The interactive command-line the user interacts with directly.
@@ -28,7 +147,6 @@ class Repl(object):
 
     def __init__(self, debugger):
         self._debugger = debugger
-        self._setup_cmd_map()
 
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
@@ -120,10 +238,10 @@ class Repl(object):
         return lst
 
 
-
+    @Command(keywords=['locals'])
     def _show_locals(self, argv):
         """
-        Show info about local variables in a stack frame.
+        Show info about local variables in a stack frame
 
             Syntax: locals <frame>
 
@@ -179,15 +297,11 @@ class Repl(object):
             nest += 2
 
 
-
-
-
-
-
-
+    @Command(keywords=['backtrace', '\\t'])
     def _backtrace(self, argv):
         """
-        Enumerate the method calls on the stack, along with the return point in the source.
+        Show the function call stack
+        Enumerates the method calls on the stack, along with the return point in the source.
 
             Syntax: backtrace
 
@@ -203,23 +317,27 @@ class Repl(object):
             print(f"{i}. {frames[i]}")
 
 
+    @Command(keywords=['break'])
     def _break(self, argv=None):
         """
-        Interrupt the running program and enable debugging at the current $PC.
+        Interrupt program execution for debugging
         """
         self._debugger.send_break()
 
 
+    @Command(keywords=['continue', 'c', '\\c'])
     def _continue(self, argv=None):
         """
-        Continue running the program after an interrupt or breakpoint.
+        Continue main program execution
+        Resumes execution after a breakpoint or interrupt.
         """
         self._debugger.send_continue()
 
 
+    @Command(keywords=['flash', 'xf'])
     def _flash(self, argv):
         """
-        Access data in the flash memory segment.
+        Read a flash address on the Arduino
 
             Syntax: flash [<size>] <addr (hex)>
 
@@ -250,10 +368,10 @@ class Repl(object):
         elif size == 4:
             print(f"{v:08x}")
 
-
+    @Command(keywords=['gpio'])
     def _gpio(self, argv):
         """
-        Set or retrieve a gpio pin value.
+        Read or write a GPIO pin
 
             Syntax: gpio <pinId> [<value>]
         """
@@ -300,10 +418,10 @@ class Repl(object):
             self._debugger.set_gpio_value(pin, val)
 
 
-
+    @Command(keywords=['memstats'])
     def _memstats(self, argv):
         """
-        Print metrics about how much memory is in use.
+        Display info about memory map and RAM usage
         """
         mem_map = self._debugger.get_memstats()
         ram_end = mem_map["RAMEND"]
@@ -325,9 +443,10 @@ class Repl(object):
         print(f'     Globals:  {global_size:>4} (.data + .bss)')
 
 
+    @Command(keywords=['mem', 'x', '\\m'])
     def _mem(self, argv):
         """
-        Retrieve data from RAM, by address.
+        Read a memory address on the Arduino
 
         Syntax: mem [<size>] <addr (hex)>
         size must be 1, 2, or 4.
@@ -356,9 +475,10 @@ class Repl(object):
             print(f"{v:08x}")
 
 
+    @Command(keywords=['poke'])
     def _poke(self, argv):
         """
-        Overwrite memory in RAM with the specified value.
+        Write to a variable or memory address on the Arduino
 
             Syntax: poke <addr (hex)> <value> [size=1] [base=10]
 
@@ -419,9 +539,10 @@ class Repl(object):
             self._debugger.set_sram(addr, val, size)
 
 
+    @Command(keywords=['print', 'v', '\\v'])
     def _print(self, argv):
         """
-        Retrieve data from flash or RAM, by symbol.
+        Print a global variable's value
 
             Syntax: print <symbol_name>
 
@@ -492,25 +613,28 @@ class Repl(object):
 
         print("")
 
+    @Command(keywords=['regs'])
     def _regs(self, argv):
         """
-        Print current values of registers.
+        Print current values of registers
         """
         self.__format_registers(self._debugger.get_registers())
 
 
+    @Command(keywords=['reset'])
     def _reset(self, argv=None):
         """
-        Reset the device.
+        Reset the Arduino device
 
         Execution resumes at the program entry point. This will disconnect the debugger.
         """
         self._debugger.reset_sketch()
 
 
+    @Command(keywords=['set'])
     def _set_conf(self, argv):
         """
-        Set or print configuration variables.
+        Set or retrieve a config variable of the debugger
 
             Syntax: set [keyname [[=] value]]
 
@@ -671,9 +795,10 @@ class Repl(object):
                 print(str(e))
 
 
+    @Command(keywords=['stack'])
     def _stack_display(self, argv):
         """
-        Read several values from the stack and display them.
+        Display memory from a range of addresses on the stack
 
             Syntax: stack [<length>] [<offset>]
 
@@ -707,9 +832,10 @@ class Repl(object):
             print(f'Next: stack 16 {length + offset}')
 
 
+    @Command(keywords=['stackaddr', 'xs'])
     def _stack_mem_read(self, argv):
         """
-        Read a memory address relative to SP
+        Read an address relative to the $SP register
 
             Syntax: stackaddr [size] <offset (hex)>
         """
@@ -737,9 +863,10 @@ class Repl(object):
             print(f"{v:08x}")
 
 
+    @Command(keywords=['frame', '\\f'])
     def _frame(self, argv):
         """
-        Display stack contents of a stack frame.
+        Display memory contents of a stack frame
 
             Syntax: frame <n>
 
@@ -791,11 +918,14 @@ class Repl(object):
 
 
 
+    @Command(keywords=['time'])
     def _print_time(self, argv):
         """
-        Prints the time since start (or rollover) as reported by the device.
+        Read the time from the device in milli- or microseconds
 
             Syntax: time {millis|micros}
+
+        Prints the time since start (or rollover) as reported by the device.
         """
 
         if len(argv) == 0:
@@ -811,7 +941,7 @@ class Repl(object):
             return
 
 
-
+    @Command(keywords=['tm'])
     def _print_time_millis(self, argv):
         """
         Print time since device startup in milliseconds.
@@ -819,6 +949,7 @@ class Repl(object):
         print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
 
 
+    @Command(keywords=['tu'])
     def _print_time_micros(self, argv):
         """
         Print time since device startup (or rollover) in microseconds.
@@ -826,9 +957,10 @@ class Repl(object):
         print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
 
 
+    @Command(keywords=['setv', '!'])
     def _set_var(self, argv):
         """
-        Update data in RAM, by symbol.
+        Update the value of a global variable
 
             Syntax: setv <symbol_name> [=] <value> [base=10]"
 
@@ -909,9 +1041,10 @@ class Repl(object):
             self._debugger.set_sram(addr, val, size)
 
 
+    @Command(keywords=['sym', "?"])
     def _symbol_search(self, argv):
         """
-        Search the symbol database for symbols that contain a given substring.
+        Look up symbols containing a substring
 
             Syntax: sym <symbol_substr>
 
@@ -968,9 +1101,10 @@ class Repl(object):
                 print(f"#{i}. {asterisk}{this_sym}")
 
 
+    @Command(keywords=['syms'])
     def _list_symbols(self, argv):
         """
-        syms - List all symbols.
+        List all symbols
         """
         all_syms = self._debugger.syms_by_substr("")
         if len(all_syms) == 0:
@@ -980,17 +1114,20 @@ class Repl(object):
         for i in range(0, len(all_syms)):
             print(f"#{i}. {all_syms[i]}")
 
+
+    @Command(keywords=['types'])
     def _list_types(self, argv):
         """
-        types - List all types.
+        List all defined datatypes
         """
 
         for (name, typ) in types.types():
             print(typ)
 
+    @Command(keywords=['addr', '.'])
     def _addr_for_sym(self, argv):
         """
-        Resolve a symbol to a memory address.
+        Show address of a symbol
 
             Syntax: addr <symbol_name>
 
@@ -1010,9 +1147,11 @@ class Repl(object):
         print(f'{sym.demangled}: {sym.addr:08x} ({sym.size})')
         self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
 
+
+    @Command(keywords=['type'])
     def _sym_datatype(self, argv):
         """
-        Show datatype for symbol or type name.
+        Show datatype for symbol or type name
 
             Syntax: type <name>
         """
@@ -1036,9 +1175,10 @@ class Repl(object):
 
         return kind
 
+    @Command(keywords=['info', '\\i'])
     def _sym_info(self, argv):
         """
-        Show info about a symbol: type, addr, value.
+        Show info about a symbol: type, addr, value
 
             Syntax: info <symbol_name>
 
@@ -1058,9 +1198,10 @@ class Repl(object):
             self._print(argv)
 
 
+    @Command(keywords=['help'])
     def print_help(self, argv):
         """
-        Print usage information.
+        Print usage information
 
         Syntax: help [cmd]
 
@@ -1071,13 +1212,9 @@ class Repl(object):
         if len(argv) > 0:
             try:
                 cmd = argv[0]
-                cmd_method = self._cmd_map[cmd]
-                synonyms = self._synonyms(cmd)
-                if len(synonyms) > 1:
-                    print(f"  '{cmd}' ({', '.join(synonyms)})\n")
-                else:
-                    print(f"  '{cmd}'\n")
-                print(inspect.cleandoc(cmd_method.__doc__))
+                cmdMap = Command.getCommandMap()
+                cmdObj = cmdMap[cmd]
+                print(cmdObj.long_help)
             except:
                 print(f"Error: No command {argv[0]} found.")
                 print("Try 'help' to list all available commands.")
@@ -1087,32 +1224,11 @@ class Repl(object):
 
         print("Commands")
         print("--------")
-        print("addr (.) -- Show address of a symbol")
-        print("backtrace (\\t) -- Show the function call stack")
-        print("break (^C) -- Interrupt program execution for debugging")
-        print("continue (c, \\c) -- Continue main program execution")
-        print("flash (xf) -- Read a flash address on the Arduino")
-        print("frame (\\f) -- Show memory contents of a stack frame")
-        print("gpio -- Read or write a GPIO pin")
-        print("help -- Show this help text")
-        print("info (\\i) -- Show info about a symbol: type, addr, value")
-        print("locals -- Show info about local variables in a stack frame")
-        print("mem (x, \\m) -- Read a memory address on the Arduino")
-        print("memstats -- Display info about memory map and RAM usage")
-        print("poke -- Write to a variable or memory address on the Arduino")
-        print("print (v, \\v) -- Print a variable's value")
-        print("regs -- Dump contents of registers")
-        print("reset -- Reset the Arduino device")
-        print("set -- Set or retrieve a config variable of the debugger")
-        print("stack -- Display memory from a range of addresses on the stack")
-        print("stackaddr (xs) -- Read an address relative to the SP register")
-        print("setv (!) -- Update the value of a global variable")
-        print("sym (?) -- Look up symbols containing a substring")
-        print("syms -- List all symbols")
-        print("time (tm, tu) -- Read the time from the device in milli- or microseconds")
-        print("type -- Show datatype for symbol")
-        print("types -- List all defined datatypes")
-        print("quit (\q) -- Quit the debugger console")
+
+        cmdIndex = Command.getCommandIndex()
+        for (keyword, cmdObj) in cmdIndex.items(): # iterate over sorted map.
+            print(cmdObj.short_help)
+
         print("")
         print("After doing a symbol search with sym or '?', you can reference results by")
         print("number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
@@ -1122,11 +1238,11 @@ class Repl(object):
         print("For more information, type: help <command>")
 
 
+    @Command(keywords=['quit', '\\q'])
     def _quit(self, argv):
         """
-        Exit the debugger.
+        Quit the debugger console
         """
-
         # This method does not actually quit -- that is behavior hardcoded into the REPL.
         # However, having this method in the _cmd_map enables its docstring to be used for
         # `help quit`.
@@ -1137,6 +1253,7 @@ class Repl(object):
             Primary function to call inside a loop; executes one flow of Read-eval-print.
             Returns True if we want to quit, False to continue.
         """
+        commandMap = Command.getCommandMap()
 
         try:
             cmdline = input("(adbg) ")
@@ -1188,10 +1305,10 @@ class Repl(object):
 
         if cmd == "quit" or cmd == "exit" or cmd == "\\q":
             return True # Actually quit.
-        elif cmd in self._cmd_map.keys():
+        elif cmd in commandMap.keys():
             try:
-                fn = self._cmd_map[cmd]
-                fn(tokens[1:])
+                cmd_obj = commandMap[cmd]
+                cmd_obj.invoke(self, tokens[1:])
             except Exception as e:
                 print(f"Error running '{cmd}': {e}")
                 if self._debugger.get_conf("dbg.verbose"):
