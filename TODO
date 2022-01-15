@@ -12,8 +12,6 @@ Client:
   * Use alternative readline interface (see readline manual sec 2.4.12 and .14) to enable
     us to listen on serial connection as well as handle readline input simultaneously.
 
-  * Extract framebuffer records from .debug_info
-    * Implement FBREG expr operation
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
