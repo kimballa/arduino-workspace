@@ -10,8 +10,6 @@ On-device service capabilities:
 
 Client:
 
-  * bug: `type <someobj>` says the type is <someobj>. see e.g `type lcd` it reports `lcd: lcd`,
-    not the class name.
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
   * Link type information for methods & variables to Symbols in Debugger initialization

@@ -28,7 +28,7 @@ class Completions(object):
     These can be used as entries in the `completions` list argument to @Command, and
     are interpreted by the ReplAutocompleter to query the right set of possibilities.
     """
-    NONE = ''                   # A token that is uncompletable. Used as 'filler' in the 
+    NONE = ''                   # A token that is uncompletable. Used as 'filler' in the
                                 # completions list, before later completable token positions.
     KW = 'kw'                   # Another keyword that starts with the token as prefix.
     SYM = 'sym'                 # A symbol name that starts with the token as prefix.
@@ -218,7 +218,7 @@ class ReplAutoComplete(object):
 
     def complete_type(self, prefix):
         lst = SortedList()
-        # types.types() iteratively yields tuples of (typename, typedata). Just keep the name. 
+        # types.types() iteratively yields tuples of (typename, typedata). Just keep the name.
         lst.update([elt[0] for elt in types.types(prefix)])
         return lst
 
@@ -1256,7 +1256,7 @@ class Repl(object):
             print(f'{typ}')
         else:
             # kind == types.VARIABLE
-            print(f'{sym}: {typ.name}')
+            print(f'{typ.var_name}: {typ.var_type.name}')
 
         return kind
 
