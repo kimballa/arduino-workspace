@@ -13,6 +13,8 @@ Client:
   * readline autocompleter 
     - command names
     - symbols
+    - see
+      https://sites.google.com/site/xiangyangsite/home/technical-tips/software-development/python/python-readline-completions
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
   * Link type information for methods & variables to Symbols in Debugger initialization

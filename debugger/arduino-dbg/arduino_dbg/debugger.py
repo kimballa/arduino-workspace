@@ -6,7 +6,7 @@ from elftools.dwarf.callframe import CIE
 import importlib.resources as resources
 import os
 import serial
-from sortedcontainers import SortedDict
+from sortedcontainers import SortedDict, SortedList
 import time
 
 import arduino_dbg.binutils as binutils
@@ -354,6 +354,12 @@ class Debugger(object):
         """
         return self._config.items()
 
+    def get_conf_keys(self):
+        """
+        Return the set of valid configuration keys for use with 'set'.
+        """
+        return _dbg_conf_keys
+
     def get_arch_conf(self, key):
         """
             Return an architecture-specific property setting. These are read-only
@@ -526,6 +532,23 @@ class Debugger(object):
         return self.get_image_bytes(symdata.addr, symdata.size)
 
 
+    def syms_by_prefix(self, prefix):
+        """
+            Return all symbol names that start with the specified prefix.
+        """
+        if prefix is None or len(prefix) == 0:
+            nextfix = None # Empty str prefix means return all symbols.
+        else:
+            # Increment the last char of the string to get the first possible symbol
+            # after the matching set.
+            last_char = prefix[-1]
+            next_char = chr(ord(last_char) + 1)
+            nextfix = prefix[0:-1] + next_char
+
+        out = SortedList()
+        out.update(self._symbols.irange(prefix, nextfix, inclusive=(True, False)))
+        out.update(self._demangled_to_symbol.irange(prefix, nextfix, inclusive=(True, False)))
+        return out
 
     def syms_by_substr(self, substr):
         """

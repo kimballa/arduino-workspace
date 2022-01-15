@@ -4,7 +4,7 @@ import functools
 import inspect
 import readline
 import signal
-from sortedcontainers import SortedDict
+from sortedcontainers import SortedDict, SortedList
 import traceback
 
 import arduino_dbg.binutils as binutils
@@ -22,6 +22,25 @@ def _softint(intstr, base=10):
         return None
 
 
+class Completions(object):
+    """
+    Enumeration of valid autocomplete token classes.
+    These can be used as entries in the `completions` list argument to @Command, and
+    are interpreted by the ReplAutocompleter to query the right set of possibilities.
+    """
+    NONE = ''                   # A token that is uncompletable. Used as 'filler' in the 
+                                # completions list, before later completable token positions.
+    KW = 'kw'                   # Another keyword that starts with the token as prefix.
+    SYM = 'sym'                 # A symbol name that starts with the token as prefix.
+    TYPE = 'type'               # A type name that starts with the token as prefix.
+    SYM_OR_TYPE = 'sym/type'    # Either a symbol or a type name.
+    WORD_SIZE = 'word_size'     # An integer that's a valid word size {1, 2, 4}.
+    BINARY = 'binary'           # Values 0 and 1.
+    BASE = 'base'               # integer base: 2, 8, 10, 16.
+    CONF_KEY = 'conf_key'       # A configuration key.
+
+
+
 class Command(object):
     """
     meta-decorator that tags a given function as a command that can be executed in the repl.
@@ -33,10 +52,13 @@ class Command(object):
     @return a decorator that directly returns its function argument unmodified.
     """
 
-    _cmd_map = {}               # Lookup from all keywords to Command instances
-    _cmd_index = SortedDict()   # Set of Command instances keyed by primary keyword only.
+    _cmd_map = {}                 # Lookup from all keywords to Command instances
+    _cmd_index = SortedDict()     # Set of Command instances keyed by primary keyword only.
+    _cmd_list = SortedList()      # Sorted list of all keywords.
+    _cmd_syntax_completions = {}  # Instructions indicating the kinds of tokens that can follow
+                                  # each keyword, for use in tab autocompletion.
 
-    def __init__(self, keywords, help_keywords=None, display_help=True):
+    def __init__(self, keywords, help_keywords=None, display_help=True, completions=None):
         self.keywords = keywords # Set of keywords that activate this command.
         self.help_keywords = help_keywords or [] # Additional keywords to display in cmd summary.
         self.command_func = None # The function to call (memoized in __call__)
@@ -55,6 +77,8 @@ class Command(object):
             if Command._cmd_map.get(kw):
                 raise Exception(f"Warning: keyword '{kw}' used multiple times")
             Command._cmd_map[kw] = self
+            Command._cmd_list.add(kw)
+            Command._cmd_syntax_completions[kw] = completions
 
         # Register this in the full command map
         Command._cmd_index[keywords[0]] = self
@@ -146,7 +170,130 @@ class Command(object):
         """
         return cls._cmd_index
 
+    @classmethod
+    def getCommandList(cls):
+        """
+        Return sorted list of keywords.
+        """
+        return cls._cmd_list
 
+    @classmethod
+    def getCommandCompletions(cls, keyword):
+        """
+        Return a list of completion tokens accepted by each keyword
+        """
+        return cls._cmd_syntax_completions[keyword]
+
+
+class ReplAutoComplete(object):
+    """
+    readline autocompleter for debugger repl.
+    """
+
+    def __init__(self, debugger):
+        self._debugger = debugger
+
+
+    def complete_keyword(self, prefix):
+        """
+        Return completions for keyword
+        """
+        if prefix is None or len(prefix) == 0:
+            nextfix = None
+        else:
+            last_char = prefix[-1]
+            next_char = chr(ord(last_char) + 1)
+            nextfix = prefix[0:-1] + next_char
+
+        return Command.getCommandList().irange(prefix, nextfix, inclusive=(True,False))
+
+    def complete_symbol(self, prefix):
+        return self._debugger.syms_by_prefix(prefix)
+
+    def complete_type(self, prefix):
+        lst = SortedList()
+        lst.update(types.types(prefix))
+        return lst
+
+    def complete_symbol_or_type(self, prefix):
+        lst = SortedList()
+        lst.update(self.complete_symbol(prefix))
+        lst.update(self.complete_type(prefix))
+        return lst
+
+    def complete_conf_key(self, prefix):
+        conf_keys = self._debugger.get_conf_keys()
+        return list(filter(lambda key: key.startswith(prefix), conf_keys))
+
+    def suggest(self, tokens, prefix):
+        if len(tokens) == 0 or len(tokens) == 1:
+            # We are trying to suggest the first token in the line, which is always a keyword.
+            return self.complete_keyword(prefix)
+
+        # Otherwise, we need to recommend a keyword-specific next token.
+        keyword = tokens[0]
+        arg_tokens = tokens[1:]
+        # Get a list of the form [ clsA, clsB, clsC ] where clsA..C are strings in the
+        # 'Completions' string enumeration. Each of these defines the set of things that
+        # can be completed in each successive position of the arguments to the keyword.
+        completion_sets = Command.getCommandCompletions(keyword)
+        if completion_sets is None or len(completion_sets) < len(arg_tokens):
+            # We can't complete this far into the token set for this command
+            return []
+
+        # Get the completion set relevant to the current token
+        completion_set = completion_sets[len(arg_tokens) - 1]
+        if completion_set == Completions.NONE:
+            return [] # No suggestions
+        elif completion_set == Completions.KW:
+            return self.complete_keyword(prefix)
+        elif completion_set == Completions.SYM:
+            return self.complete_symbol(prefix)
+        elif completion_set == Completions.TYPE:
+            return self.complete_type(prefix)
+        elif completion_set == Completions.SYM_OR_TYPE:
+            return self.complete_symbol_or_type(prefix)
+        elif completion_set == Completions.WORD_SIZE:
+            return [ 1, 2, 4 ]
+        elif completion_set == Completions.BINARY:
+            return [ 0, 1 ]
+        elif completion_set == Completions.BASE:
+            return [ 2, 8, 10, 16 ]
+        elif completion_set == Completions.CONF_KEY:
+            return self.complete_conf_key(prefix)
+        elif isinstance(completion_set, list):
+            # Completion set is itself a set of explicit choices.
+            return list(filter(lambda choice: choice.startswith(prefix), completion_set))
+
+        # Don't know what this completion set is supposed to be.
+        raise Exception(f"Unknown completion set: '{completion_set}'")
+
+
+    def complete(self, prefix, state):
+        """
+        Main interface method for readline autocomplete.
+        We are passed the current token to complete as 'text' and the iteration number in 'state'.
+        Incrementally higher 'state' values should yield subsequently-indexed suggestions.
+        """
+        try:
+            tokens = readline.get_line_buffer().split()
+            if not tokens or readline.get_line_buffer()[-1] == ' ':
+                tokens.append('')
+
+            raw_results = list(self.suggest(tokens, prefix))
+            results = [ rec + ' ' for rec in raw_results ]  # Add a space after each rec to advance token.
+            results.append(None) # Append a 'None' to the end to signal
+                                 # stop-iteration condition to readline.
+
+            return results[state] # state is an index into the output list.
+
+        except Exception as e:
+            # readline swallows our exceptions. Print them out, because we need to know
+            # what's going on.
+            print(f'\nException in autocomplete: {e}')
+            if self._debugger.get_conf("dbg.verbose"):
+                traceback.print_tb(e.__traceback__)
+            raise # rethrow
 
 
 class Repl(object):
@@ -261,7 +408,7 @@ class Repl(object):
         self._debugger.send_continue()
 
 
-    @Command(keywords=['flash', 'xf'])
+    @Command(keywords=['flash', 'xf'], completions=[Completions.WORD_SIZE])
     def _flash(self, argv):
         """
         Read a flash address on the Arduino
@@ -295,7 +442,7 @@ class Repl(object):
         elif size == 4:
             print(f"{v:08x}")
 
-    @Command(keywords=['gpio'])
+    @Command(keywords=['gpio'], completions=[Completions.NONE, Completions.BINARY])
     def _gpio(self, argv):
         """
         Read or write a GPIO pin
@@ -372,7 +519,7 @@ class Repl(object):
         print(f'     Globals:  {global_size:>4} (.data + .bss)')
 
 
-    @Command(keywords=['mem', 'x', '\\m'])
+    @Command(keywords=['mem', 'x', '\\m'], completions=[Completions.WORD_SIZE])
     def _mem(self, argv):
         """
         Read a memory address on the Arduino
@@ -405,7 +552,8 @@ class Repl(object):
             print(f"{v:08x}")
 
 
-    @Command(keywords=['poke'])
+    @Command(keywords=['poke'],
+        completions=[Completions.NONE, Completions.NONE, Completions.WORD_SIZE, Completions.BASE])
     def _poke(self, argv):
         """
         Write to a variable or memory address on the Arduino
@@ -469,7 +617,7 @@ class Repl(object):
             self._debugger.set_sram(addr, val, size)
 
 
-    @Command(keywords=['print', 'v', '\\v'])
+    @Command(keywords=['print', 'v', '\\v'], completions=[Completions.SYM])
     def _print(self, argv):
         """
         Print a global variable's value
@@ -561,7 +709,7 @@ class Repl(object):
         self._debugger.reset_sketch()
 
 
-    @Command(keywords=['set'])
+    @Command(keywords=['set'], completions=[Completions.CONF_KEY])
     def _set_conf(self, argv):
         """
         Set or retrieve a config variable of the debugger
@@ -762,7 +910,7 @@ class Repl(object):
             print(f'Next: stack 16 {length + offset}')
 
 
-    @Command(keywords=['stackaddr', 'xs'])
+    @Command(keywords=['stackaddr', 'xs'], completions=[Completions.WORD_SIZE])
     def _stack_mem_read(self, argv):
         """
         Read an address relative to the $SP register
@@ -848,7 +996,7 @@ class Repl(object):
 
 
 
-    @Command(keywords=['time'], help_keywords=['tm','tu'])
+    @Command(keywords=['time'], help_keywords=['tm','tu'], completions=[['millis', 'micros']])
     def _print_time(self, argv):
         """
         Read the time from the device in milli- or microseconds
@@ -887,7 +1035,7 @@ class Repl(object):
         print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
 
 
-    @Command(keywords=['setv', '!'])
+    @Command(keywords=['setv', '!'], completions=[Completions.SYM])
     def _set_var(self, argv):
         """
         Update the value of a global variable
@@ -1054,7 +1202,7 @@ class Repl(object):
         for (name, typ) in types.types():
             print(typ)
 
-    @Command(keywords=['addr', '.'])
+    @Command(keywords=['addr', '.'], completions=[Completions.SYM])
     def _addr_for_sym(self, argv):
         """
         Show address of a symbol
@@ -1078,7 +1226,7 @@ class Repl(object):
         self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
 
 
-    @Command(keywords=['type'])
+    @Command(keywords=['type'], completions=[Completions.SYM_OR_TYPE])
     def _sym_datatype(self, argv):
         """
         Show datatype for symbol or type name
@@ -1105,7 +1253,7 @@ class Repl(object):
 
         return kind
 
-    @Command(keywords=['info', '\\i'])
+    @Command(keywords=['info', '\\i'], completions=[Completions.SYM])
     def _sym_info(self, argv):
         """
         Show info about a symbol: type, addr, value
@@ -1128,7 +1276,7 @@ class Repl(object):
             self._print(argv)
 
 
-    @Command(keywords=['help'])
+    @Command(keywords=['help'], completions=[Completions.KW])
     def print_help(self, argv):
         """
         Print usage information
@@ -1259,6 +1407,10 @@ class Repl(object):
             Returns the exit status for the program. (0 for success)
         """
         readline.parse_and_bind('set editing-mode vi')
+        readline.parse_and_bind('tab: complete')
+        completer = ReplAutoComplete(self._debugger)
+        readline.set_completer(completer.complete)
+
         quit = False
         while not quit:
             if self._debugger.process_state() == dbg.PROCESS_STATE_BREAK:

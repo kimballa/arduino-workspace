@@ -7,7 +7,7 @@
 import elftools.dwarf.constants as dwarf_constants
 import elftools.dwarf.dwarf_expr as dwarf_expr
 import elftools.dwarf.locationlists as locationlists
-from sortedcontainers import SortedList
+from sortedcontainers import SortedDict, SortedList
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.eval_location as eval_location
@@ -63,7 +63,7 @@ class CompilationUnitNamespace(object):
     """
 
     def __init__(self, die_offset, cu, range_lists, debugger):
-        self._named_entries = {} # name -> entry
+        self._named_entries = SortedDict() # name -> entry
         self._addr_entries = {}  # DIE offset -> entry
         self._pc_ranges = SortedList() # Range intervals held by methods, etc. within this CU.
         self._range_lists = range_lists # Complete .debug_range data from DWARFInfo object.
@@ -779,12 +779,30 @@ _cu_namespaces = [] # Set of CompilationUnitNamespace objects.
 
 _global_syms = GlobalScope() # vars/methods tagged DW_AT_external visible from any CU.
 
-def types():
+def types(prefix=None):
     """
     Iterator over all typedefs.
+
+    If prefix is specified, returns all type names that begin with 'prefix'.
     """
+    if prefix is None or len(prefix) == 0:
+        nextfix = None # Empty str prefix means return all types.
+        prefix = None
+    else:
+        # Increment the last char of the string to get the first possible type
+        # after the matching set.
+        last_char = prefix[-1]
+        next_char = chr(ord(last_char) + 1)
+        nextfix = prefix[0:-1] + next_char
+
     for cuns in _cu_namespaces:
-        for (name, typ) in cuns._named_entries.items():
+        # Do a prefix search.
+        #
+        # Note that this will efficiently search for appropriate keys across all
+        # compilation units, but it will yield items in sorted order only per-CU; a
+        # globally sorted list requires yielding all items and then sorting the results.
+        for name in cuns._named_entries.irange(prefix, nextfix, inclusive=(True, False)):
+            typ = cuns._named_entries[name]
             if typ.is_type():
                 yield (name, typ)
 
