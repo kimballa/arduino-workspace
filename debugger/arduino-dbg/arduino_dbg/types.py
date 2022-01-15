@@ -557,7 +557,7 @@ class MethodInfo(PrgmType):
 
         if self.virtual:
             s += 'virtual '
-        s += f'{self.return_type} {self.method_name}('
+        s += f'{self.return_type.name} {self.method_name}('
         s += ', '.join(map(lambda arg: f'{arg}', self.formal_args))
         s += ')'
         if self.virtual == dwarf_constants.DW_VIRTUALITY_pure_virtual:
@@ -634,14 +634,16 @@ class FieldType(PrgmType):
         return False
 
     def __repr__(self):
-        s = ''
         if self.accessibility == PUBLIC:
-            s += 'public '
+            acc = 'public'
         elif self.accessibility == PROTECTED:
-            s += 'protected '
+            acc = 'protected'
         elif self.accessibility == PRIVATE:
-            s += 'private '
-        return f'{s}{self.parent_type().name} {self.field_name} ' + \
+            acc = 'private'
+        else:
+            acc = 'public' # Assume public by default.
+
+        return f'{acc} {self.parent_type().name} {self.field_name} ' + \
             f'[size={self.parent_type().size}, offset={self.offset:#x}]'
 
 class ClassType(PrgmType):
