@@ -193,6 +193,12 @@ class ReplAutoComplete(object):
     def __init__(self, debugger):
         self._debugger = debugger
 
+    @staticmethod
+    def __filter(iterable, prefix):
+        """
+        Helper method: return only elements of the list that start with the prefix.
+        """
+        return list(filter(lambda item: item.startswith(prefix), iterable))
 
     def complete_keyword(self, prefix):
         """
@@ -212,7 +218,8 @@ class ReplAutoComplete(object):
 
     def complete_type(self, prefix):
         lst = SortedList()
-        lst.update(types.types(prefix))
+        # types.types() iteratively yields tuples of (typename, typedata). Just keep the name. 
+        lst.update([elt[0] for elt in types.types(prefix)])
         return lst
 
     def complete_symbol_or_type(self, prefix):
@@ -223,7 +230,7 @@ class ReplAutoComplete(object):
 
     def complete_conf_key(self, prefix):
         conf_keys = self._debugger.get_conf_keys()
-        return list(filter(lambda key: key.startswith(prefix), conf_keys))
+        return self.__filter(conf_keys, prefix)
 
     def suggest(self, tokens, prefix):
         if len(tokens) == 0 or len(tokens) == 1:
@@ -254,11 +261,11 @@ class ReplAutoComplete(object):
         elif completion_set == Completions.SYM_OR_TYPE:
             return self.complete_symbol_or_type(prefix)
         elif completion_set == Completions.WORD_SIZE:
-            return [ 1, 2, 4 ]
+            return self.__filter([ '1', '2', '4' ], prefix)
         elif completion_set == Completions.BINARY:
-            return [ 0, 1 ]
+            return self.__filter([ '0', '1' ], prefix)
         elif completion_set == Completions.BASE:
-            return [ 2, 8, 10, 16 ]
+            return self.__filter([ '2', '8', '10', '16' ], prefix)
         elif completion_set == Completions.CONF_KEY:
             return self.complete_conf_key(prefix)
         elif isinstance(completion_set, list):
@@ -1119,7 +1126,7 @@ class Repl(object):
             self._debugger.set_sram(addr, val, size)
 
 
-    @Command(keywords=['sym', "?"])
+    @Command(keywords=['sym', "?"], completions=[Completions.SYM])
     def _symbol_search(self, argv):
         """
         Look up symbols containing a substring
