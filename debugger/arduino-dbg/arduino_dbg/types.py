@@ -87,7 +87,7 @@ class CompilationUnitNamespace(object):
 
             # Compilation unit covers noncontiguous range or otherwise unknown extent.
             # CU may have multiple intervals in DW_AT_ranges.
-            print(top_die)
+            #print(top_die)
             range_data_offset = None
             range_attr = top_die.attributes.get('DW_AT_ranges')
             if range_attr:
@@ -447,6 +447,12 @@ class LexicalScope(object):
     def getContainingScope(self):
         return self._containingScope
 
+    def evalFrameBase(self, regs):
+        scope = self.getContainingScope()
+        if not scope:
+            return None
+        return scope.evalFrameBase(regs)
+
     def addFormal(self, arg):
         # Pass formal argument on to containing Method.
         if self._containingScope:
@@ -519,10 +525,12 @@ class MethodInfo(PrgmType):
         self._variables = {}
         self._origin = origin
         self.formal_args = []
+        self.frame_base = None
 
     def addFormal(self, arg):
         if arg is None:
             arg = FormalArg('', _VOID, None)
+        arg.setScope(self)
         self.formal_args.append(arg)
 
     def getFormals(self):
@@ -542,6 +550,25 @@ class MethodInfo(PrgmType):
 
     def getOrigin(self):
         return self._origin or self
+
+    def setFrameBase(self, frame_base):
+        """ Set the LocationExpr / LocationList for the frame pointer """
+        self._frame_base = frame_base
+
+    def evalFrameBase(self, regs):
+        """
+        Evaluate the location info in frame_base to get the canonical frame addr (CFA)
+        for the current method. Used in the FBREG operation for a framebase-relative
+        variable storage location.
+        """
+        loc = self._location # TODO - or self.getOrigin()._location??
+        if loc is None:
+            return None
+
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return None
+        return expr_machine.access(self.size)
 
     def is_type(self):
         return False
@@ -566,13 +593,14 @@ class MethodInfo(PrgmType):
         return s
 
 class FormalArg(object):
-    def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None):
+    def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None):
         self.name = name
         self.arg_type = arg_type
         self._cuns = cuns
         self._origin = origin
         self._location = location
         self._const_val = const_val
+        self._scope = scope
 
     def __repr__(self):
         return f'{self.arg_type.name} {self.name}'
@@ -582,6 +610,9 @@ class FormalArg(object):
 
     def getOrigin(self):
         return self._origin or self
+
+    def setScope(self, scope):
+        self._scope = scope
 
     def getAddress(self, regs):
         """
@@ -598,6 +629,7 @@ class FormalArg(object):
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
+        expr_machine.setScope(self._scope)
         return expr_machine.eval()
 
     def getValue(self, regs):
@@ -618,6 +650,7 @@ class FormalArg(object):
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
+        expr_machine.setScope(self._scope)
         return expr_machine.access(self.arg_type.size)
 
 
@@ -714,6 +747,7 @@ class VariableInfo(PrgmType):
         self.is_def = is_def
 
         self._origin = origin        # Resolved DW_AT_abstract_origin, if any, poiting decl->def
+        self._scope = scope
 
     def __repr__(self):
         return f'{self.var_type.name} {self.var_name}'
@@ -743,6 +777,7 @@ class VariableInfo(PrgmType):
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
+        expr_machine.setScope(self._scope)
         return expr_machine.eval()
 
     def getValue(self, regs):
@@ -763,6 +798,7 @@ class VariableInfo(PrgmType):
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
+        expr_machine.setScope(self._scope)
         return expr_machine.access(self.size)
 
     def setConstValue(self, val):
@@ -1099,7 +1135,7 @@ def parseTypesFromDIE(die, cuns, context={}):
         # type
         base = _lookup_type()
         arr = ArrayType(base)
-        _add_entry(arr, arr.name, die.offset) # TODO: if this causes redundancy problems, remove arr.name.
+        _add_entry(arr, arr.name, die.offset) # TODO: if this causes collision problems, remove arr.name.
         ctxt = context.copy()
         ctxt['array'] = arr
         for child in die.iter_children():
@@ -1248,7 +1284,9 @@ def parseTypesFromDIE(die, cuns, context={}):
             # has a PC range associated with it.
             cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, name)
 
-        # TODO(aaron): Make use of DW_AT_frame_base
+        frame_base_loc = _get_locations('frame_base')
+        if frame_base_loc is not None:
+            method.setFrameBase(frame_base_loc)
 
         ctxt = context.copy()
         ctxt['method'] = method
@@ -1278,7 +1316,9 @@ def parseTypesFromDIE(die, cuns, context={}):
                 for r in rangelist:
                     cuns.define_pc_range(r.begin_offset, r.end_offset, method, definition.name)
 
-        # TODO(aaron): Make use of DW_AT_frame_base
+        frame_base_loc = _get_locations('frame_base')
+        if frame_base_loc is not None:
+            method.setFrameBase(frame_base_loc)
 
         _add_entry(method, None, die.offset)
 

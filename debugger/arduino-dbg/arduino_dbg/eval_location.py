@@ -28,8 +28,6 @@ class DWARFExprMachine(object):
     After calling eval() once, you must call `dem.reset()` to run again. The reset
     method gives the opportunity to refresh the current register state, regs + instructions,
     or regs + instructions + initial stack.
-
-    # TODO(aaron): Handle FBREG
     """
 
     # Dispatch table from opcode to method.
@@ -62,6 +60,10 @@ class DWARFExprMachine(object):
         self._debugger = debugger        # Debugger with access to running process SRAM
         self.stack = initial_stack or [] # Initial stack machine state.
         self._pieces = []
+        self._scope = None               # Containing scope (used for frame base calc)
+
+    def setScope(self, scope):
+        self._scope = scope
 
     def eval(self):
         """
@@ -384,8 +386,17 @@ class DWARFExprMachine(object):
         self.push(addr)
 
     def _fbreg(self, op):
-        # TODO(aaron): Implement FBREG
-        _unimplemented_op(op)
+        if self._scope is None:
+            raise Exception("Cannot evaluate DW_OP_fbreg without containing scope")
+
+        fb_addr = self._scope.evalFrameBase(self.regs)
+        if fb_addr is None:
+            # Scope isn't helpful enough.
+            raise Exception("Cannot evaluate DW_OP_fbreg; missing/invalid DW_AT_frame_base in scope")
+
+        offset = op.args[0]
+        self.push(fb_addr + offset)
+
 
     def _stack_value(self, op):
         # DW_OP_stack_value says that the _location_ we are computing does not
@@ -395,7 +406,7 @@ class DWARFExprMachine(object):
         piece = (DWARFExprMachine.TOP, DWARFExprMachine.ALL)
         self._pieces.append(piece)
 
-    # Unimplemented opcodes; not specified in DWARF2; maybe D3 or D4?
+    # Unimplemented opcodes; not specified in DWARF2; added in DWARF4.
     _deref_size = _unimplemented_op
     _xderef_size = _unimplemented_op
     _push_object_address = _unimplemented_op
