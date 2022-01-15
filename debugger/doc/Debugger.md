@@ -22,10 +22,10 @@ Goals, from easiest to hardest:
   * pretty-print call stack including function calls and arg names/values.
     * print metrics about mem usage: stack size, globals, heap
   * register/remove legitimate hardware breakpoints
-  * step through code execution 
+  * step through code execution
   * register 'watch' variables.
   * manipulate gpio ports
-  * ... manually set registers 
+  * ... manually set registers
   * Initiate soft reset (via watchdog)
 
 
@@ -35,27 +35,28 @@ Configuration
 ```
 #include<dbg.h>
 
-SETUP() { // replace `void setup()` with this
+void SETUP() { // replace `setup()` with `SETUP()`
   /* your setup fn. */
 }
 ```
 
 This unwraps to:
 ```
-#define SETUP() \
-  void __user_setup(); /* fwd-declare */ \
-  void setup() {              \
-    * set up timer irq 
-    * wait for `if(Serial)` if WAIT_FOR_CONNECT defined.
-    * start in BREAK() if START_PAUSED defined.
-
-    __user_setup(); /* normal setup */ \
-  }                          \
-  /* user's code below... */ \
-  void __user_setup()         \
+#define SETUP()                             \
+    __user_setup(); /* fwd declare */       \
+    void setup() {                          \
+      /* set up timer irq  */               \
+      /* wait for `if(Serial)` */           \ (if WAIT_FOR_CONNECT defined)
+      /* start in BREAK() */                \ (if START_PAUSED defined)
+      __user_setup();                       \
+    }                                       \
+    /* user's code starts below. */         \
+    void __user_setup()
 ```
 
-(and if `DEBUG` isn't defined, just `#define SETUP() void setup()`)
+(and if `DEBUG` isn't defined, we just `#define SETUP() setup()`)
+
+
 ... or check `#if !defined(NDEBUG)` instead to play nice with g++?
 
 

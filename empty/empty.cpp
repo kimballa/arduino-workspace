@@ -14,7 +14,7 @@
 
 static const int PIN = 5;
 
-SETUP() {
+void SETUP() {
   pinMode(PIN, OUTPUT);
 }
 

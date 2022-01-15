@@ -15,9 +15,31 @@ Client:
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
+
   * Lots of methods named None. Data parse error? Or just need to clean up formatting?
-  * Some formal args don't have names and report "void foo(<sometype> None, ...)"
+    Examples:
+
+			2. 149a: I2CParallel::getByte()  (twi.c:219)
+
+			I2CParallel::getByte() and a bunch of inlined TwoWire member methods have 'public void None'
+			signatures in `locals` -- failing to get type/name from abstract origin, maybe?
+
+
+
+			4. 0d4a: NewhavenLcd0440::_scrollScreen()  (NewhavenLcd0440.cpp:296)
+			(adbg) locals 4
+			Method scope: public void None()
+
+		* Some formal args don't have names and report "void foo(<sometype> None, ...)"
     Get the name? At minimum, clean up the formatting?
+
+	* Need to implement GNU extensions to DW_OP list. e.g.:
+
+			3. 14d8: I2C4BitNhdByteSender::readByte(unsigned char, unsigned char)
+					(I2C4BitNhdByteSender.cpp:73)
+
+			Error running 'locals': Unimplemented DWARF expr op='DW_OP_GNU_entry_value'
+					args=[[DWARFExprOp(op=102, op_name='DW_OP_reg22', args=[])]]
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
@@ -25,6 +47,13 @@ Client:
     after parsing dwarf_info().
   * types.py should handle union type? bit fields?
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
+
+  * Add ability to dump registers and SRAM image to local core dump file
+    * Optional: embed ELF file in core dump file, or save the filename of a linked ELF.
+  * Add ability to mount a core-dump file and emulate the avr server instead of actual usb
+    connection
+  * ... use this for integration testing. 
+    Set up BREAK() statements in various strategic places to set up different test cases.
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 * Breakpoint unit support

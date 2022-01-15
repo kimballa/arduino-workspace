@@ -76,14 +76,15 @@ static inline void __dbg_reset() {
 void __dbg_setup() {
   DBG_SERIAL.begin(DBG_SERIAL_SPEED);
 
-  // Set up timer IRQ: 1Hz on Timer1
+  // Set up timer IRQ: 4Hz on Timer1
   // (see https://www.instructables.com/Arduino-Timer-Interrupts/)
   cli();
   TCCR1A = 0; // set entire TCCR1A register to 0
   TCCR1B = 0; // same for TCCR1B
   TCNT1  = 0; // initialize counter value to 0
-  // set compare match register for 1Hz increments
-  OCR1A = (F_CPU / 1024) - 1; // 15624 = (16*10^6) / (1*1024) - 1 (must be <65536)
+  // set compare match register for 4Hz increments
+  // match_register_value = ( F_CPU / (prescaler * target_interrupt_freq_hz) ) - 1
+  OCR1A = ((F_CPU) / (4 * 1024)) - 1; // (16*10^6) / (4*1024) - 1 = 3905 (must be <65536)
   TCCR1B |= (1 << WGM12); // turn on CTC mode
   // Set CS10 and CS12 bits for 1024 prescaler
   TCCR1B |= (1 << CS12) | (1 << CS10);

@@ -6,9 +6,9 @@
 //
 // 1) include `dbg` in your  Makefile's `libs` list variable.
 // 2) #include <dbg.h>
-// 3) replace the words `void setup()` in your sketch with `SETUP()`. e.g.:
+// 3) replace the words `void setup()` in your sketch with `void SETUP()`. e.g.:
 //
-//     SETUP() {
+//     void SETUP() {
 //       /* your setup function. */
 //     }
 //
@@ -75,7 +75,7 @@
 
 #ifndef DBG_ENABLED /* Suppress debugger support. */
 
-#define SETUP() void setup()
+#define SETUP() setup()
 #define BREAK()
 #define ASSERT(x)
 #define TRACE(x)
@@ -335,7 +335,7 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 #endif /* DBG_WAIT_FOR_CONNECT ? */
 
 #define SETUP() \
-    static void __user_setup(); /* fwd declare. */ \
+    __user_setup(); /* fwd declare */       \
     void setup() {                          \
       __dbg_setup();                        \
       __optional_wait_for_conn();           \
@@ -343,7 +343,7 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
       __user_setup();                       \
     }                                       \
     /* user's code starts below. */         \
-    static void __user_setup()
+    void __user_setup()
 
 #define DBGPRINT(x) __dbg_print(x)
 
