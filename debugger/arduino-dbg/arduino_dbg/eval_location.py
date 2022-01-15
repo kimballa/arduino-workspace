@@ -70,18 +70,18 @@ class DWARFExprMachine(object):
         """
         self._pieces = []
         for op in self.opcodes:
-            self._debugger.verboseprint('Processing opcode ', op.op_name)
+            #self._debugger.verboseprint('Processing opcode ', op.op_name)
             func = DWARFExprMachine.__dispatch[op.op]
             func(self, op)
 
         # What's the result address? If we got PIECE instructions, deliver a list of addrs and
         # sizes. Otherwise, return a singleton list with the address and DEM.ALL..
         if len(self._pieces):
-            self._debugger.verboseprint(f'Resolved to pieces: {self._pieces}')
+            #self._debugger.verboseprint(f'Resolved to pieces: {self._pieces}')
             return self._pieces
         else:
             out = self.top()
-            self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
+            #self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
             return [(out, DWARFExprMachine.ALL)]
 
     def __access_big_endian(self, size):
@@ -389,8 +389,8 @@ class DWARFExprMachine(object):
 
     def _stack_value(self, op):
         # DW_OP_stack_value says that the _location_ we are computing does not
-        # exist in memory or registers at a particular address, but the value at
-        # that logical location is currently at stack.top()
+        # exist in memory or registers at a particular address, but the _value_ at
+        # that logical location is currently at stack.top(). (DWARF v4)
 
         piece = (DWARFExprMachine.TOP, DWARFExprMachine.ALL)
         self._pieces.append(piece)

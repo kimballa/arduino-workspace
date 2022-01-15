@@ -9,6 +9,14 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * Extract framebuffer records from .debug_info
+    * Implement FBREG expr operation
+  * Can we implement a 'setlocal' ?
+    * Would need to use call frame info to determine where on the stack it lives...
+      or where on the stack frame above the local the register got saved.
+  * Lots of methods named None. Data parse error? Or just need to clean up formatting?
+  * Some formal args don't have names and report "void foo(<sometype> None, ...)"
+    Get the name? At minimum, clean up the formatting?
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`

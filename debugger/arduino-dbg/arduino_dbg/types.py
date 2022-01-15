@@ -96,8 +96,8 @@ class CompilationUnitNamespace(object):
                 rangelist = range_lists.get_range_list_at_offset(range_data_offset)
                 self._cu_ranges = SortedList()
                 for r in rangelist:
-                    debugger.verboseprint(f'Extracted range for CU: {r.begin_offset:04x}' +
-                        f' -- {r.end_offset:04x}')
+                    #debugger.verboseprint(f'Extracted range for CU: {r.begin_offset:04x}' +
+                    #    f' -- {r.end_offset:04x}')
                     self._cu_ranges.add(PCRange(r.begin_offset, r.end_offset, self))
 
 

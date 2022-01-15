@@ -192,6 +192,12 @@ class ReplAutoComplete(object):
 
     def __init__(self, debugger):
         self._debugger = debugger
+        self._cached_key = None     # (prefix, tokens, state) of previous request.
+        self._cached_result = None  # Last cached completion-suggestions value.
+
+    def clear_cache(self):
+        self._cached_key = None
+        self._cached_result = None
 
     @staticmethod
     def __filter(iterable, prefix):
@@ -200,7 +206,7 @@ class ReplAutoComplete(object):
         """
         return list(filter(lambda item: item.startswith(prefix), iterable))
 
-    def complete_keyword(self, prefix):
+    def _complete_keyword(self, prefix):
         """
         Return completions for keyword
         """
@@ -213,29 +219,29 @@ class ReplAutoComplete(object):
 
         return Command.getCommandList().irange(prefix, nextfix, inclusive=(True,False))
 
-    def complete_symbol(self, prefix):
+    def _complete_symbol(self, prefix):
         return self._debugger.syms_by_prefix(prefix)
 
-    def complete_type(self, prefix):
+    def _complete_type(self, prefix):
         lst = SortedList()
         # types.types() iteratively yields tuples of (typename, typedata). Just keep the name.
         lst.update([elt[0] for elt in types.types(prefix)])
         return lst
 
-    def complete_symbol_or_type(self, prefix):
+    def _complete_symbol_or_type(self, prefix):
         lst = SortedList()
-        lst.update(self.complete_symbol(prefix))
-        lst.update(self.complete_type(prefix))
+        lst.update(self._complete_symbol(prefix))
+        lst.update(self._complete_type(prefix))
         return lst
 
-    def complete_conf_key(self, prefix):
+    def _complete_conf_key(self, prefix):
         conf_keys = self._debugger.get_conf_keys()
         return self.__filter(conf_keys, prefix)
 
-    def suggest(self, tokens, prefix):
+    def _suggest(self, tokens, prefix):
         if len(tokens) == 0 or len(tokens) == 1:
             # We are trying to suggest the first token in the line, which is always a keyword.
-            return self.complete_keyword(prefix)
+            return self._complete_keyword(prefix)
 
         # Otherwise, we need to recommend a keyword-specific next token.
         keyword = tokens[0]
@@ -253,13 +259,13 @@ class ReplAutoComplete(object):
         if completion_set == Completions.NONE:
             return [] # No suggestions
         elif completion_set == Completions.KW:
-            return self.complete_keyword(prefix)
+            return self._complete_keyword(prefix)
         elif completion_set == Completions.SYM:
-            return self.complete_symbol(prefix)
+            return self._complete_symbol(prefix)
         elif completion_set == Completions.TYPE:
-            return self.complete_type(prefix)
+            return self._complete_type(prefix)
         elif completion_set == Completions.SYM_OR_TYPE:
-            return self.complete_symbol_or_type(prefix)
+            return self._complete_symbol_or_type(prefix)
         elif completion_set == Completions.WORD_SIZE:
             return self.__filter([ '1', '2', '4' ], prefix)
         elif completion_set == Completions.BINARY:
@@ -267,7 +273,7 @@ class ReplAutoComplete(object):
         elif completion_set == Completions.BASE:
             return self.__filter([ '2', '8', '10', '16' ], prefix)
         elif completion_set == Completions.CONF_KEY:
-            return self.complete_conf_key(prefix)
+            return self._complete_conf_key(prefix)
         elif isinstance(completion_set, list):
             # Completion set is itself a set of explicit choices.
             return list(filter(lambda choice: choice.startswith(prefix), completion_set))
@@ -283,14 +289,28 @@ class ReplAutoComplete(object):
         Incrementally higher 'state' values should yield subsequently-indexed suggestions.
         """
         try:
-            tokens = readline.get_line_buffer().split()
-            if not tokens or readline.get_line_buffer()[-1] == ' ':
+            line_buffer = readline.get_line_buffer()
+            tokens = line_buffer.split()
+            if not tokens or line_buffer[-1] == ' ':
                 tokens.append('')
 
-            raw_results = list(self.suggest(tokens, prefix))
+            # If this is the next 'state' for the same search, short-circuit by
+            # returning the next value in the cached suggestion result list.
+            expected_cache_key = (prefix, line_buffer, state - 1)
+            if self._cached_key == expected_cache_key and self._cached_result is not None:
+                # Cache hit
+                self._cached_key = (prefix, line_buffer, state)
+                return self._cached_result[state]
+
+            raw_results = list(self._suggest(tokens, prefix))
             results = [ rec + ' ' for rec in raw_results ]  # Add a space after each rec to advance token.
             results.append(None) # Append a 'None' to the end to signal
                                  # stop-iteration condition to readline.
+
+            # Cache the result on the way out, along with a key to ensure we're still on the same
+            # search next time we try to access a cached result.
+            self._cached_key = (prefix, line_buffer, state)
+            self._cached_result = results
 
             return results[state] # state is an index into the output list.
 
@@ -317,6 +337,12 @@ class Repl(object):
         self._last_sym_used = None   # last symbol referenced by the user.
 
         self._break_count = 0 # How many times has the user mashed ^C?
+
+        self._completer = ReplAutoComplete(self._debugger)
+        readline.parse_and_bind('set editing-mode vi')
+        readline.parse_and_bind('set bell-style none')
+        readline.parse_and_bind('tab: complete')
+        readline.set_completer(self._completer.complete)
 
 
     @Command(keywords=['locals'])
@@ -1342,6 +1368,7 @@ class Repl(object):
         commandMap = Command.getCommandMap()
 
         try:
+            self._completer.clear_cache() # Don't accidentally use suggestions from last input line.
             cmdline = input("(adbg) ")
         except KeyboardInterrupt:
             # Received '^C'; call the break function
@@ -1413,11 +1440,6 @@ class Repl(object):
 
             Returns the exit status for the program. (0 for success)
         """
-        readline.parse_and_bind('set editing-mode vi')
-        readline.parse_and_bind('tab: complete')
-        completer = ReplAutoComplete(self._debugger)
-        readline.set_completer(completer.complete)
-
         quit = False
         while not quit:
             if self._debugger.process_state() == dbg.PROCESS_STATE_BREAK:
