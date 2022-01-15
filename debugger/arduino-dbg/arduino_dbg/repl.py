@@ -342,6 +342,7 @@ class Repl(object):
         readline.parse_and_bind('set editing-mode vi')
         readline.parse_and_bind('set bell-style none')
         readline.parse_and_bind('tab: complete')
+        readline.set_completer_delims(" \t\r\n'\"") # We want chunkier tokens than RL default.
         readline.set_completer(self._completer.complete)
 
 
