@@ -123,6 +123,8 @@ void loop() {
   lcd.print(linebuf);
   first = false;
   line++;
+  DBGPRINT("meep");
+  DBGPRINT(line);
   if (line >= num_lines) {
     line = 0;
   }

@@ -15,7 +15,7 @@ import arduino_dbg.dump as dump
 import arduino_dbg.protocol as protocol
 import arduino_dbg.types as types
 
-PROMPT = "(adbg) "
+PROMPT = "\r(adbg) "
 
 def _softint(intstr, base=10):
     """
@@ -331,9 +331,9 @@ class ConsolePrinter(object):
     """
     Monitor that creates a queue of things to print to the console.
     Other threads may enqueue new text lines for printing.
-    Refreshes the readline prompt (if one is active) after each line is printed. 
+    Refreshes the readline prompt (if one is active) after each line is printed.
 
-    The primary use-case is printing messages that come in asynchronously from a 
+    The primary use-case is printing messages that come in asynchronously from a
     running connected device while the main thread is blocking on the readline
     prompt.
     """
@@ -344,7 +344,7 @@ class ConsolePrinter(object):
         self.print_q = queue.Queue(maxsize=16)
         self._alive = True
         self._readline_enabled = False
-        self._thread = threading.Thread(target=self.service)
+        self._thread = threading.Thread(target=self.service, name='Console print thread')
 
     def start(self):
         self._thread.start()
@@ -363,10 +363,17 @@ class ConsolePrinter(object):
             except queue.Empty:
                 continue
 
-            print(f'\r{textline}')
+            if self._readline_enabled:
+                cur_input = readline.get_line_buffer()
+            else:
+                cur_input = ''
+
+            # Blank out the prompt / input line and print the received text.
+
+            print(f'\r{(len(PROMPT) + len(cur_input)) * " "}\r{textline}')
+
             if self._readline_enabled:
                 # Refresh the visible console prompt
-                cur_input = readline.get_line_buffer()
                 print(f'{PROMPT}{cur_input}', end='', flush=True)
 
             self.print_q.task_done()
@@ -396,8 +403,6 @@ class Repl(object):
         readline.parse_and_bind('tab: complete')
         readline.set_completer_delims(" \t\r\n'\"") # We want chunkier tokens than RL default.
         readline.set_completer(self._completer.complete)
-
-        self._console_printer.set_readline_enabled(True)
 
     def close(self):
         if self._hosted_dbg_service:
@@ -1560,21 +1565,24 @@ class Repl(object):
 
             Returns the exit status for the program. (0 for success)
         """
+        self._console_printer.set_readline_enabled(True)
         quit = False
+        last_process_state = None
         while not quit:
-            if self._debugger.process_state() == dbg.PROCESS_STATE_BREAK:
-                # Program execution is paused; we accept commands from the user.
-                quit = self.loop_input_body()
-            else:
-                # The program is (maybe?) running. It could send debug/trace messages back,
-                # so we sit and wait for those and display them if/when they appear.
+            process_state = self._debugger.process_state()
+            if process_state != dbg.PROCESS_STATE_BREAK and process_state != last_process_state:
+                # The program is (maybe?) running. Let the user know how to change that.
                 print("Press ^C to interrupt Arduino sketch for debugging.")
-                try:
-                    self._debugger.wait_for_traces()
-                except KeyboardInterrupt as ki:
-                    # Received '^C'; call the break function
-                    print('') # Terminate line after visible '^C' in input.
-                    self._break() # This will update the process_state to BREAK.
+
+            last_process_state = process_state
+
+            # Regardless of process state, we also accept input from the user.
+            try:
+                quit = self.loop_input_body()
+            except KeyboardInterrupt as ki:
+                # Received '^C'; call the break function
+                print('') # Terminate line after visible '^C' in input.
+                self._break() # This will update the process_state to BREAK.
 
         return 0
 

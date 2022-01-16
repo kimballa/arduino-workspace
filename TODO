@@ -15,6 +15,8 @@ Client:
     * Eliminate set_process_state() - only needed to bump offline debugger into break mode.
     * Most debugger methods need a way to ensure process state is in BREAK before communicating cmds
 
+    * Make sure that when dump creates a new debugger, it properly attaches the print_q.
+
 
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...

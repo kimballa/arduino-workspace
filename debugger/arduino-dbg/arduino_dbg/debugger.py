@@ -5,7 +5,9 @@ from elftools.dwarf.callframe import CIE
 
 import importlib.resources as resources
 import os
+import queue
 from sortedcontainers import SortedDict, SortedList
+import threading
 import time
 
 import arduino_dbg.binutils as binutils
@@ -149,11 +151,16 @@ class Debugger(object):
     """
 
     def __init__(self, elf_name, connection, print_q):
-        self._print_q = print_q
         self._conn = connection
+        self._print_q = print_q # Data from serial conn to print directly to console.
+        self._recv_q = queue.Queue(maxsize=16) # Data from serial conn for debug internal use.
+        self._send_q = queue.Queue(maxsize=1) # Data to send out on serial conn.
+        self._alive = True
+
         self.elf_name = elf_name
         if self.elf_name:
             self.elf_name = os.path.realpath(elf_name)
+
         self._sections = {}
         self._addr_to_symbol = SortedDict()
         self._symbols = SortedDict()
@@ -167,8 +174,12 @@ class Debugger(object):
         if not self._conn:
             # If we're not connected to anything, stay in 'BREAK' state.
             self._process_state = PROCESS_STATE_BREAK
+            self._listen_thread = None
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
+            self._listen_thread = threading.Thread(target=self._conn_listener,
+                name='Debugger serial listener')
+            self._listen_thread.start()
 
         start_time = time.time()
 
@@ -185,20 +196,20 @@ class Debugger(object):
         """
             Clean up the debugger and release file resources.
         """
-        if self._elf_file_handle:
-            # Close the ELF file we opened at the beginning.
-            self._elf_file_handle.close()
-        self._elf_file_handle = None
+        self._alive = False
+        if self._listen_thread:
+            self._listen_thread.join()
+        self._listen_thread = None
 
+        # Close connection after stopping listener thread.
         if self._conn:
             self._conn.close()
         self._conn = None
 
-    def get_print_q(self):
-        """
-        Return the queue of items we want to print to the terminal.
-        """
-        return self.print_q
+        if self._elf_file_handle:
+            # Close the ELF file we opened at the beginning.
+            self._elf_file_handle.close()
+        self._elf_file_handle = None
 
     ###### Configuration file / config key management functions.
 
@@ -578,42 +589,184 @@ class Debugger(object):
     def is_open(self):
         return self._conn is not None and self._conn.is_open()
 
-    def wait_for_traces(self):
-        """
-            When the process is running, listen patiently to the socket for debug_msg() or trace()
-            data; print to the screen when it appears.
-
-            If the user wants to break from this, they can ^C and the caller should trap
-            KeyboardInterrupt.
-        """
-
-        if not self.is_open():
-            raise Exception("No debug server connection open")
-
-        while self._process_state != PROCESS_STATE_BREAK:
-            line = self._conn.readline().decode("utf-8").strip()
-            if len(line) == 0:
-                continue
-            elif line.startswith(protocol.DBG_RET_PRINT):
-                # got a message for the user.
-                print(line[1:])
-            elif line == protocol.DBG_PAUSE_MSG:
-                # Server has informed us that it switched to break mode.
-                # (e.g. program-triggered hardcoded breakpoint.)
-                print("Paused.")
-                self._process_state = PROCESS_STATE_BREAK
-                break;
-            else:
-                # Got a line of ... something but it didn't start with '>'.
-                # Either it _is_ for the user and we connected to the socket mid-message,
-                # or this client is somehow are in the non-break state while the server IS
-                # in the break state and sending a response to some earlier message...
-                print(f"Server: [{line}]")
-
+    QUEUE_TIMEOUT = 0.250 # wait up to 250ms to submit new data to a queue
 
     RESULT_SILENT = 0
     RESULT_ONELINE = 1
     RESULT_LIST = 2
+
+    def __send_msg(self, msgline, response_type):
+        """
+        Helper method for _conn_listener(), when we need to send a message to the server
+        and wait for a response.
+        """
+        self._conn.write(msgline.encode("utf-8"))
+        self._send_q.task_done() # Mark complete as soon as data's affirmatively sent.
+
+        if response_type == Debugger.RESULT_ONELINE:
+            line = None
+            while self._alive and (line is None or len(line) == 0):
+                line = self._conn.readline().decode("utf-8").strip()
+                if len(line) == 0:
+                    continue
+                elif line.startswith(protocol.DBG_RET_PRINT):
+                    # Send to the print queue.
+                    submitted = False
+                    while self._alive and not submitted:
+                        try:
+                            self._print_q.put(line[1:], timeout=Debugger.QUEUE_TIMEOUT)
+                            submitted = True
+                        except queue.Full:
+                            continue
+                    line = None
+
+            # We have received the response line.
+            submitted = False
+            #print(f"RECVQ: [{line}]")
+            while self._alive and not submitted:
+                try:
+                    self._recv_q.put(line, timeout=Debugger.QUEUE_TIMEOUT)
+                    submitted = True
+                except queue.Full:
+                    continue
+                self._recv_q.join() # Wait for response line to be acknowledged by debugger.
+        elif response_type == Debugger.RESULT_LIST:
+            while self._alive:
+                line = self._conn.readline().decode("utf-8").strip()
+                if len(line) == 0:
+                    continue
+                elif line.startswith(protocol.DBG_RET_PRINT):
+                    # Send to the print queue.
+                    submitted = False
+                    while self._alive and not submitted:
+                        try:
+                            self._print_q.put(line[1:], timeout=Debugger.QUEUE_TIMEOUT)
+                            submitted = True
+                        except queue.Full:
+                            continue
+                else:
+                    # Data response line to forward to consumer
+                    submitted = False
+                    #print(f"RECVQ: [{line}]")
+                    while self._alive and not submitted:
+                        try:
+                            self._recv_q.put(line, timeout=Debugger.QUEUE_TIMEOUT)
+                            submitted = True
+                        except queue.Full:
+                            continue
+
+                    if line == '$':
+                        # That line signaled end of the list.
+                        break
+
+            self._recv_q.join() # Wait for response lines to be acknowledged by debugger.
+        elif response_type == Debugger.RESULT_SILENT:
+            # Nothing further to process in this thread; no response.
+            pass
+        else:
+            self._print_q.put(f'Error: unkonwn response_type {response_type}')
+
+    def __flush_recv_q(self):
+        """
+        Before sending a new command, erase any unconsumed response lines from prior cmd.
+        """
+        while self._recv_q.qsize() > 0:
+            try:
+                self._recv_q.get(block=False)
+                self._recv_q.task_done()
+            except queue.Empty:
+                break # Nothing left to grab.
+
+        while self._conn.available():
+            self._conn.readline()
+
+
+    def __acknowledge_pause(self):
+        """
+        In the conn_listener thread, we received a "Paused" acknowledgement of break request
+        from the server. Set our state to confirm that we have received the break stmt.
+        """
+        self._process_state = PROCESS_STATE_BREAK # Confirm the BREAK status.
+        submitted = False
+        while self._alive and not submitted:
+            try:
+                self._print_q.put("Paused.", timeout=Debugger.QUEUE_TIMEOUT)
+                submitted = True
+            except queue.Full:
+                continue
+
+    def _conn_listener(self):
+        """
+        Run as its own thread; listens for data on the serial connection and also
+        sends commands out over the connection.
+
+        As new lines are received, they are either routed to the printer queue
+        or the debugger recv queue for processing.
+        """
+        while self._alive:
+            if self._process_state == PROCESS_STATE_BREAK:
+                # The device is guaranteed to be in the debugger service. Therefore, we wait
+                # for commands to be sent to us from the Debugger to relay to the device.
+                self.__flush_recv_q()
+                try:
+                    (msgline, response_type) = self._send_q.get(timeout=Debugger.QUEUE_TIMEOUT)
+                except queue.Empty:
+                    continue
+
+                self.__send_msg(msgline, response_type)
+            else:
+                # Process state is either RUNNING or UNKNOWN.
+                # We need to listen for traffic from the device in case it spontaneously
+                # emits a debug_print() or trace() message.
+
+                # But first: Send any pending outbound data.
+                if self._send_q.qsize() > 0:
+                    # Ensure the recv_q is empty; discard any pending lines, since they're
+                    # now all unclaimed.
+                    self.__flush_recv_q()
+
+                    # Send the outbound line.
+                    (msgline, response_type) = self._send_q.get(block=False)
+                    self.__send_msg(msgline, response_type)
+                    if self._process_state == PROCESS_STATE_BREAK:
+                        # We changed process states to BREAK via this msg.
+                        # Back to the main loop top, switch into send-biased mode.
+                        continue
+
+                # Ideally we would have a way to interrupt this if _send_q is filled
+                # while we're waiting on a silent channel, but I don't have a clean way
+                # to select() on both at once. Instead we rely on the timeout we specified
+                # when opening the connection to bring us back to the top of the loop.
+                line = self._conn.readline().decode("utf-8").strip()
+                submitted = False
+
+                if len(line) == 0:
+                    continue # Didn't get a line; timed out.
+                elif line.startswith(protocol.DBG_RET_PRINT):
+                    # got a message for the user from debug_msg() or trace().
+                    # forward it to the ConsolePrinter.
+                    while self._alive and not submitted:
+                        try:
+                            self._print_q.put(line[1:], timeout=Debugger.QUEUE_TIMEOUT)
+                            submitted = True
+                        except queue.Full:
+                            continue
+                elif line == protocol.DBG_PAUSE_MSG:
+                    # Server has informed us that it switched to break mode.
+                    # (e.g. program-triggered hardcoded breakpoint.)
+                    self.__acknowledge_pause()
+                else:
+                    # Got a line of something but it didn't start with '>'.
+                    # Either it _is_ for the user and we connected to the socket mid-message,
+                    # or we received a legitimate response to a query we sent to the server.
+                    # Either way, we forward it to the printer, since we don't expect to
+                    # receive a response to a command in this state.
+                    while self._alive and not submitted:
+                        try:
+                            self._print_q.put(line, timeout=Debugger.QUEUE_TIMEOUT)
+                            submitted = True
+                        except queue.Full:
+                            continue
 
     def send_cmd(self, dbg_cmd, result_type):
         """
@@ -627,18 +780,6 @@ class Debugger(object):
             print("Error: No debug server connection open")
             return None
 
-        # Before sending a command, make sure there is no pent-up data from the server.
-        # Discard all service-level data in the buffer and echo any debug statemetns to the console.
-        while self._conn.available():
-            line = self._conn.readline().decode("utf-8").strip()
-            #print("<-- %s" % line.strip())
-            if len(line) == 0:
-                continue
-            elif line.startswith(protocol.DBG_RET_PRINT):
-                # This is debug output for the user to see.
-                print(line[1:])
-
-
         if type(dbg_cmd) == list:
             dbg_cmd = [str(x) for x in dbg_cmd]
             dbg_cmd = " ".join(dbg_cmd) + "\n"
@@ -648,35 +789,28 @@ class Debugger(object):
         if not dbg_cmd.endswith("\n"):
             dbg_cmd = dbg_cmd + "\n"
 
-        self._conn.write(dbg_cmd.encode("utf-8"))
-        #print("--> %s" % dbg_cmd.strip())
-        # TODO(aaron): add debug verbosity that enables these i/o lines.
+        send_req = (dbg_cmd, result_type)
+        self._send_q.put(send_req)  # Tell the communication thread to send the command.
+        self._send_q.join()         # Wait for it to be sent.
 
-        if result_type == self.RESULT_SILENT:
+        if result_type == Debugger.RESULT_SILENT:
             return None
-        elif result_type == self.RESULT_ONELINE:
+        elif result_type == Debugger.RESULT_ONELINE:
             line = None
-            while True:
-                line = self._conn.readline().decode("utf-8").strip()
+            while line is None or len(line) == 0:
+                line = self._recv_q.get()
                 #print("<-- %s" % line.strip())
-                if len(line) == 0:
-                    continue
-                elif line.startswith(protocol.DBG_RET_PRINT):
-                    # This is debug output for the user to see.
-                    print(line[1:])
-                else:
-                    break
+                self._recv_q.task_done()
+
             return line
-        elif result_type == self.RESULT_LIST:
+        elif result_type == Debugger.RESULT_LIST:
             lines = []
             while True:
-                thisline = self._conn.readline().decode("utf-8").strip()
+                thisline = self._recv_q.get()
+                self._recv_q.task_done()
                 #print("<-- %s" % thisline.strip())
                 if len(thisline) == 0:
                     continue
-                elif thisline.startswith(protocol.DBG_RET_PRINT):
-                    # Just a message from the debugger/sketch; not part of response.
-                    print(thisline[1:])
                 elif thisline == "$":
                     break
                 else:
@@ -689,11 +823,8 @@ class Debugger(object):
     ###### Higher-level commands to communicate with server
 
     def send_break(self):
-        break_ok = self.send_cmd(protocol.DBG_OP_BREAK, self.RESULT_ONELINE)
-        # Wait up to 1 second for the interrupt to fire to connect the debugger.
-        #time.sleep(_break_interrupt_delay)
-        # Process state now known as in-break.
-        if break_ok == "Paused":
+        break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
+        if break_ok == protocol.DBG_PAUSE_MSG:
             self._process_state = PROCESS_STATE_BREAK
             print("Paused.")
         else:
@@ -703,7 +834,7 @@ class Debugger(object):
 
     def send_continue(self):
         self.clear_frame_cache() # Backtrace is invalidated by continued execution.
-        continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, self.RESULT_ONELINE)
+        continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, Debugger.RESULT_ONELINE)
         if continue_ok == "Continuing":
             self._process_state = PROCESS_STATE_RUNNING
             print("Continuing...")
@@ -730,7 +861,7 @@ class Debugger(object):
             register_map = self._arch["register_list_fmt"]
             num_general_regs = self._arch["general_regs"]
 
-        reg_values = self.send_cmd(protocol.DBG_OP_REGISTERS, self.RESULT_LIST)
+        reg_values = self.send_cmd(protocol.DBG_OP_REGISTERS, Debugger.RESULT_LIST)
         registers = {}
         idx = 0
         general_reg_num = 0
@@ -769,7 +900,7 @@ class Debugger(object):
             print(f"Warning: cannot set memory poke size = {size}; using 1")
             size = 1
 
-        self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], self.RESULT_SILENT)
+        self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], Debugger.RESULT_SILENT)
 
     def get_sram(self, addr, size=1):
         """
@@ -785,14 +916,14 @@ class Debugger(object):
             print(f"Warning: cannot set memory fetch size = {size}; using 1")
             size = 1
 
-        result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], self.RESULT_ONELINE)
+        result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], Debugger.RESULT_ONELINE)
         return int(result, base=16)
 
     def get_stack_sram(self, offset, size=1):
         """
             Return data from SRAM on the instance, relative to the stack pointer.
         """
-        result = self.send_cmd([protocol.DBG_OP_STACKREL, size, offset], self.RESULT_ONELINE)
+        result = self.send_cmd([protocol.DBG_OP_STACKREL, size, offset], Debugger.RESULT_ONELINE)
         return int(result, base=16)
 
     def get_flash(self, addr, size=1):
@@ -800,7 +931,7 @@ class Debugger(object):
             Return data from Flash on the instance.
         """
 
-        result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], self.RESULT_ONELINE)
+        result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], Debugger.RESULT_ONELINE)
         return int(result, base=16)
 
     def get_stack_snapshot(self, size=16, skip=-1):
@@ -827,7 +958,7 @@ class Debugger(object):
         size = min(size, max_len)
         snapshot = []
         for i in range(sp + skip + 1, sp + skip + 1 + size):
-            v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, 1, i], self.RESULT_ONELINE), base=16)
+            v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, 1, i], Debugger.RESULT_ONELINE), base=16)
             snapshot.append(v)
         return (sp, sp + skip + 1, snapshot)
 
@@ -836,7 +967,7 @@ class Debugger(object):
         """
             Return info about memory map of the CPU and usage.
         """
-        lines = self.send_cmd(protocol.DBG_OP_MEMSTATS, self.RESULT_LIST)
+        lines = self.send_cmd(protocol.DBG_OP_MEMSTATS, Debugger.RESULT_LIST)
         lines = [int(x, base=16) for x in lines]
 
         mem_map = {}
@@ -862,7 +993,7 @@ class Debugger(object):
         if pin < 0 or pin >= self._platform["gpio_pins"]:
             return None
 
-        v = self.send_cmd([protocol.DBG_OP_PORT_IN, pin], self.RESULT_ONELINE)
+        v = self.send_cmd([protocol.DBG_OP_PORT_IN, pin], Debugger.RESULT_ONELINE)
         if len(v):
             return int(v)
         else:
@@ -876,7 +1007,7 @@ class Debugger(object):
         if pin < 0 or pin >= self._platform["gpio_pins"]:
             return
 
-        self.send_cmd([protocol.DBG_OP_PORT_OUT, pin, val], self.RESULT_SILENT)
+        self.send_cmd([protocol.DBG_OP_PORT_OUT, pin, val], Debugger.RESULT_SILENT)
 
     ######### Highest-level debugging functions built on top of low-level capabilities
 

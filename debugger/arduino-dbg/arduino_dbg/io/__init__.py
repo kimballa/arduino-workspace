@@ -211,7 +211,7 @@ def make_bidi_pipe():
     """
     (r1, w1) = os.pipe()
     (r2, w2) = os.pipe()
-    timeout = 1
+    timeout = 0.1
 
     left = LocalBidiPipeConn(r1, w2, timeout)
     right = LocalBidiPipeConn(r2, w1, timeout)
