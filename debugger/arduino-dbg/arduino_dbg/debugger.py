@@ -11,12 +11,12 @@ import time
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.protocol as protocol
+import arduino_dbg.serialize as serialize
 import arduino_dbg.stack as stack
 from arduino_dbg.symbol import Symbol
 import arduino_dbg.types as types
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
-_DBG_CONF_FMT_VERSION = 1
 
 _dbg_conf_keys = [
     "arduino.platform",
@@ -37,7 +37,12 @@ def _silent(*args):
     """
     pass
 
-# Control codes for verboseprintall() - if this sequence preceeds an int, prints it as:
+# Control codes for verboseprintall() - if this sequence preceeds an int, provides instructions on
+# how to format it when printed.
+#
+# n.b. that this is in-band signalling so theoretically could cause regular data we
+# verboseprintall() to be interpreted as a control code, but these are hopefully unlikely to appear
+# in such debugging statements.
 VDEC = b'\x00\xFF\x0a' # Print base 10
 VHEX = b'\x00\xFF\x10' # Print base 16
 VHEX2 = b'\x00\xFF\x10\x02' # Print base 16, 0-pad to 2 places
@@ -183,7 +188,7 @@ class Debugger(object):
             conf_map[k] = None
 
         # If we open a file it can overwrite this but we start with this non-None default val.
-        conf_map["dbg.conf.formatversion"] = _DBG_CONF_FMT_VERSION
+        conf_map["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
         conf_map["dbg.verbose"] = False
 
         return conf_map
@@ -193,37 +198,13 @@ class Debugger(object):
             If the user has a config file (see _LOCAL_CONF_FILENAME) then initialize self._config
             from that.
         """
-        new_conf = self._set_conf_defaults({})
-
-        # The loaded config will be a map named 'config' within an otherwise-empty environment
-        init_env = {}
-        init_env['config'] = {}
+        defaults = self._set_conf_defaults({})
+        config_key = 'config'
 
         if os.path.exists(_LOCAL_CONF_FILENAME):
-            with open(_LOCAL_CONF_FILENAME, "r") as f:
-                conf_text = f.read()
-                try:
-                    exec(conf_text, init_env, init_env)
-                except:
-                    # error parsing or executing the config file.
-                    print("Warning: error parsing config file '%s'" % _LOCAL_CONF_FILENAME)
-                    init_env['config'] = {}
-
-        try:
-            fmtver = init_env['formatversion']
-            if not isinstance(fmtver, int) or fmtver > _DBG_CONF_FMT_VERSION:
-                print(f"Error: Cannot read config file '{_LOCAL_CONF_FILENAME}' with version {fmtver}")
-                init_env['config'] = {} # Disregard the unsupported configuration data.
-
-            loaded_conf = init_env['config']
-        except:
-            print(f"Error in format for config file '{_LOCAL_CONF_FILENAME}'")
-            loaded_conf = {}
-
-
-        # Merge loaded data on top of our default config.
-        for (k, v) in loaded_conf.items():
-            new_conf[k] = v
+            new_conf = serialize.load_config_file(_LOCAL_CONF_FILENAME, config_key, defaults)
+        else:
+            new_conf = defaults
 
         self._config = new_conf
         self._platform = {} # Arduino platform-specific config (filled from conf file)
@@ -232,59 +213,16 @@ class Debugger(object):
 
         self._load_platform() # cascade platform def from config, arch def from platform.
 
-    def __persist_conf_var(self, f, k, v):
-        """
-            Persist k=v in serialized form to the file handle 'f'.
-
-            Can be called with k=None to serialize a nested value in a complex type.
-        """
-
-        if k:
-            f.write(f'  {repr(k)}: ')
-
-        if v is None or type(v) == str or type(v) == int or type(v) == float or type(v) == bool:
-            f.write(repr(v))
-        elif type(v) == list:
-            f.write('[')
-            for elem in v:
-                self.__persist_conf_var(f, None, elem)
-                f.write(", ")
-            f.write(']')
-        elif type(v) == dict:
-            f.write("{")
-            for (dirK, dirV) in v.items():
-                self.__persist_conf_var(f, None, dirK) # keys in a dir can be any type, not just str
-                f.write(": ")
-                self.__persist_conf_var(f, None, dirV)
-                f.write(", ")
-            f.write("}")
-        else:
-            print("Warning: unknown type serialization '%s'" % str(type(v)))
-            # Serialize it as an abstract map; filter out python internals and methods
-            objdir = dict([(dirK, dirV) for (dirK, dirV) in dir(v).items() if \
-                (not dirK.startswith("__") and not dirK.endswith("__") and \
-                not callable(getattr(v, dirK))) ])
-
-            self.__persist_conf_var(f, None, objdir)
-
-        if k:
-            f.write(",\n")
-
     def _persist_config(self):
         """
             Write the current config out to a file to reload the next time we use the debugger.
         """
-
         # Don't let user session change this value; we know what serialization version we're
         # writing.
-        self._config["dbg.conf.formatversion"] = _DBG_CONF_FMT_VERSION
+        self._config["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
 
-        with open(_LOCAL_CONF_FILENAME, "w") as f:
-            f.write(f"formatversion = {_DBG_CONF_FMT_VERSION}\n")
-            f.write("config = {\n\n")
-            for (k, v) in self._config.items():
-                self.__persist_conf_var(f, k, v)
-            f.write("\n}\n")
+        config_key = 'config'
+        serialize.persist_config_file(_LOCAL_CONF_FILENAME, config_key, self._config)
 
 
     def _load_platform(self):
@@ -913,6 +851,31 @@ class Debugger(object):
         mem_map.update(list(zip(mem_report_fmt, lines)))
         return mem_map
 
+    def get_gpio_value(self, pin):
+        """
+            Retrieve the value (1 or 0) of a GPIO pin on the device.
+        """
+        if pin < 0 or pin >= self._platform["gpio_pins"]:
+            return None
+
+        v = self.send_cmd([protocol.DBG_OP_PORT_IN, pin], self.RESULT_ONELINE)
+        if len(v):
+            return int(v)
+        else:
+            return None
+
+
+    def set_gpio_value(self, pin, val):
+        """
+            Set a GPIO pin to 1 or 0 based on 'val'.
+        """
+        if pin < 0 or pin >= self._platform["gpio_pins"]:
+            return
+
+        self.send_cmd([protocol.DBG_OP_PORT_OUT, pin, val], self.RESULT_SILENT)
+
+    ######### Highest-level debugging functions built on top of low-level capabilities
+
     def get_backtrace(self, limit=None):
         """
             Retrieve a list of memory addresses representing the top `limit` function calls
@@ -1017,27 +980,4 @@ class Debugger(object):
         ret_addr = ret_addr << 1 # AVR: LSH all PC values read from memory by 1.
         return ret_addr
 
-
-    def get_gpio_value(self, pin):
-        """
-            Retrieve the value (1 or 0) of a GPIO pin on the device.
-        """
-        if pin < 0 or pin >= self._platform["gpio_pins"]:
-            return None
-
-        v = self.send_cmd([protocol.DBG_OP_PORT_IN, pin], self.RESULT_ONELINE)
-        if len(v):
-            return int(v)
-        else:
-            return None
-
-
-    def set_gpio_value(self, pin, val):
-        """
-            Set a GPIO pin to 1 or 0 based on 'val'.
-        """
-        if pin < 0 or pin >= self._platform["gpio_pins"]:
-            return
-
-        self.send_cmd([protocol.DBG_OP_PORT_OUT, pin, val], self.RESULT_SILENT)
 

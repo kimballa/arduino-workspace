@@ -9,6 +9,7 @@ import traceback
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
+import arduino_dbg.dump as dump
 import arduino_dbg.protocol as protocol
 import arduino_dbg.types as types
 
@@ -1308,6 +1309,47 @@ class Repl(object):
         if kind == types.KIND_VARIABLE:
             # For variables, show the memory value at that address
             self._print(argv)
+
+    @Command(keywords=['dump'])
+    def dump_image(self, argv):
+        """
+        Save running image state info to file
+
+            Syntax: dump <filename>
+
+        Dumps the state of the connected device to a file for offline debugging.
+
+        Later, you can load the associated dump file with `load <filename>` or specify
+        this filename as a command-line argument to a later debugging session.
+        """
+        if len(argv) == 0:
+            print("Error: Missing filename")
+            print("Syntax: dump <filename>")
+            return
+
+        # TODO(aaron): Ensure we are in a paused/breakpoint state.
+        filename = argv[0]
+        print(f"Writing device state to file ({filename})...")
+        dump.capture_dump(self._debugger, filename)
+        print("Done.")
+
+
+    @Command(keywords=['load'])
+    def load_dump_image(self, argv):
+        """
+        Loads state of a connected device from a file for offline debugging
+
+            Syntax: load <filename>
+
+        You can load files saved with the `dump <filename>` command. This will disconnect
+        any currently-connected debugging session.
+        """
+        if len(argv) == 0:
+            print("Error: Missing filename")
+            print("Syntax: dump <filename>")
+            return
+
+        print("Error: Unimplemented")
 
 
     @Command(keywords=['help'], completions=[Completions.KW])
