@@ -150,7 +150,9 @@ class Debugger(object):
 
     def __init__(self, elf_name, connection):
         self._conn = connection
-        self.elf_name = os.path.realpath(elf_name)
+        self.elf_name = elf_name
+        if self.elf_name:
+            self.elf_name = os.path.realpath(elf_name)
         self._sections = {}
         self._addr_to_symbol = SortedDict()
         self._symbols = SortedDict()
@@ -167,11 +169,29 @@ class Debugger(object):
 
         self._read_elf()
 
-        self._process_state = PROCESS_STATE_UNKNOWN
+        if not self._conn:
+            # If we're not connected to anything, stay in 'BREAK' state.
+            self._process_state = PROCESS_STATE_BREAK
+        else:
+            self._process_state = PROCESS_STATE_UNKNOWN
+
         self._cached_frames = None
 
         end_time = time.time()
         self.verboseprint(f'Loaded debugger information in {1000*(end_time - start_time):0.01f}ms.')
+
+    def close(self):
+        """
+            Clean up the debugger and release file resources.
+        """
+        if self._elf_file_handle:
+            # Close the ELF file we opened at the beginning.
+            self._elf_file_handle.close()
+        self._elf_file_handle = None
+
+        if self._conn:
+            self._conn.close()
+        self._conn = None
 
     ###### Configuration file / config key management functions.
 
@@ -325,15 +345,6 @@ class Debugger(object):
         return self._platform.items()
 
     ###### ELF-file and symbol functions
-
-    def close(self):
-        """
-            Clean up the debugger and release file resources.
-        """
-        if self._elf_file_handle:
-            # Close the ELF file we opened at the beginning.
-            self._elf_file_handle.close()
-        self._elf_file_handle = None
 
     def _read_elf(self):
         """
@@ -551,12 +562,11 @@ class Debugger(object):
     def process_state(self):
         return self._process_state
 
-    def close(self):
+    def set_process_state(self, state):
         """
-            Close serial connection.
+        If we know what the process state is, override it with this method.
         """
-        self._conn.close()
-        self._conn = None
+        self._process_state = state
 
     def is_open(self):
         return self._conn is not None and self._conn.is_open()

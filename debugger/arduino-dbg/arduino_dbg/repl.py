@@ -329,8 +329,9 @@ class Repl(object):
     The interactive command-line the user interacts with directly.
     """
 
-    def __init__(self, debugger):
+    def __init__(self, debugger, hosted_dbg_service=None):
         self._debugger = debugger
+        self._hosted_dbg_service = hosted_dbg_service
 
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
@@ -346,6 +347,15 @@ class Repl(object):
         readline.set_completer_delims(" \t\r\n'\"") # We want chunkier tokens than RL default.
         readline.set_completer(self._completer.complete)
 
+    def close(self):
+        if self._hosted_dbg_service:
+            self._hosted_dbg_service.shutdown()
+
+        if self._debugger:
+            self._debugger.close()
+
+        self._debugger = None
+        self._hosted_dbg_service = None
 
     @Command(keywords=['locals'])
     def _show_locals(self, argv):
@@ -1349,7 +1359,19 @@ class Repl(object):
             print("Syntax: dump <filename>")
             return
 
-        print("Error: Unimplemented")
+        filename = argv[0]
+        print(f"Loading memory image from {filename}...")
+        (debugger, hosted_dbg_serv) = dump.load_dump(filename)
+
+        # If we were already hosting a debug service for a dump file, remove it and
+        # switch to the new one.
+        if self._hosted_dbg_service:
+            self._hosted_dbg_service.shutdown()
+        self._hosted_dbg_service = hosted_dbg_serv
+
+        # Swap out the active debugger instance for one attached to the specified file.
+        self._debugger.close()
+        self._debugger = debugger
 
 
     @Command(keywords=['help'], completions=[Completions.KW])

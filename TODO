@@ -48,11 +48,8 @@ Client:
   * types.py should handle union type? bit fields?
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
-  * Add ability to dump registers and SRAM image to local core dump file
-    * Optional: embed ELF file in core dump file, or save the filename of a linked ELF.
-  * Add ability to mount a core-dump file and emulate the avr server instead of actual usb
-    connection
-  * ... use this for integration testing. 
+  * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
+  * Use image dumps for integration testing. 
     Set up BREAK() statements in various strategic places to set up different test cases.
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
