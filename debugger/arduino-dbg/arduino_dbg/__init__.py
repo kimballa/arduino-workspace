@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from .debugger import Debugger
-from .repl import Repl
+from .repl import Repl, ConsolePrinter
 import arduino_dbg.io as io
 
 
@@ -23,9 +23,11 @@ def main(argv):
         print("No serial connection specified. Use 'load <filename>' to load a dump file.")
         connection = None
 
-    debugger = Debugger(args.file, connection)
+    console_printer = ConsolePrinter()
+    console_printer.start()
+    debugger = Debugger(args.file, connection, console_printer.print_q)
     ret = 1
-    repl = Repl(debugger)
+    repl = Repl(debugger, console_printer)
 
     try:
         ret = repl.loop()

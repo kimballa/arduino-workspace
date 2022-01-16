@@ -148,7 +148,8 @@ class Debugger(object):
         Main debugger state object.
     """
 
-    def __init__(self, elf_name, connection):
+    def __init__(self, elf_name, connection, print_q):
+        self._print_q = print_q
         self._conn = connection
         self.elf_name = elf_name
         if self.elf_name:
@@ -161,13 +162,7 @@ class Debugger(object):
         self.elf = None
         self._elf_file_handle = None
         self.verboseprint = _silent # verboseprint() method is either _silent() or _verbose_print_all()
-
-        # General user-accessible config.
-        # Load latest config from a dotfile in user's $HOME.
-        start_time = time.time()
-        self._init_config_from_file()
-
-        self._read_elf()
+        self._cached_frames = None
 
         if not self._conn:
             # If we're not connected to anything, stay in 'BREAK' state.
@@ -175,7 +170,13 @@ class Debugger(object):
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
 
-        self._cached_frames = None
+        start_time = time.time()
+
+        # General user-accessible config.
+        # Load latest config from a dotfile in user's $HOME.
+        self._init_config_from_file()
+
+        self._read_elf()
 
         end_time = time.time()
         self.verboseprint(f'Loaded debugger information in {1000*(end_time - start_time):0.01f}ms.')
@@ -192,6 +193,12 @@ class Debugger(object):
         if self._conn:
             self._conn.close()
         self._conn = None
+
+    def get_print_q(self):
+        """
+        Return the queue of items we want to print to the terminal.
+        """
+        return self.print_q
 
     ###### Configuration file / config key management functions.
 

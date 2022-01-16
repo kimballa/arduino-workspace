@@ -2,9 +2,11 @@
 
 import functools
 import inspect
+import queue
 import readline
 import signal
 from sortedcontainers import SortedDict, SortedList
+import threading
 import traceback
 
 import arduino_dbg.binutils as binutils
@@ -12,6 +14,8 @@ import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.protocol as protocol
 import arduino_dbg.types as types
+
+PROMPT = "(adbg) "
 
 def _softint(intstr, base=10):
     """
@@ -323,14 +327,60 @@ class ReplAutoComplete(object):
                 traceback.print_tb(e.__traceback__)
             raise # rethrow
 
+class ConsolePrinter(object):
+    """
+    Monitor that creates a queue of things to print to the console.
+    Other threads may enqueue new text lines for printing.
+    Refreshes the readline prompt (if one is active) after each line is printed. 
+
+    The primary use-case is printing messages that come in asynchronously from a 
+    running connected device while the main thread is blocking on the readline
+    prompt.
+    """
+
+    TIMEOUT = 0.250 # Blink when reading the queue every 250ms.
+
+    def __init__(self):
+        self.print_q = queue.Queue(maxsize=16)
+        self._alive = True
+        self._readline_enabled = False
+        self._thread = threading.Thread(target=self.service)
+
+    def start(self):
+        self._thread.start()
+
+    def shutdown(self):
+        self._alive = False
+        self._thread.join()
+
+    def set_readline_enabled(self, rl_enabled):
+        self._readline_enabled = rl_enabled
+
+    def service(self):
+        while self._alive:
+            try:
+                textline = self.print_q.get(block=True, timeout=ConsolePrinter.TIMEOUT)
+            except queue.Empty:
+                continue
+
+            print(f'\r{textline}')
+            if self._readline_enabled:
+                # Refresh the visible console prompt
+                cur_input = readline.get_line_buffer()
+                print(f'{PROMPT}{cur_input}', end='', flush=True)
+
+            self.print_q.task_done()
+
+
 
 class Repl(object):
     """
     The interactive command-line the user interacts with directly.
     """
 
-    def __init__(self, debugger, hosted_dbg_service=None):
+    def __init__(self, debugger, console_printer, hosted_dbg_service=None):
         self._debugger = debugger
+        self._console_printer = console_printer
         self._hosted_dbg_service = hosted_dbg_service
 
         signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -347,6 +397,8 @@ class Repl(object):
         readline.set_completer_delims(" \t\r\n'\"") # We want chunkier tokens than RL default.
         readline.set_completer(self._completer.complete)
 
+        self._console_printer.set_readline_enabled(True)
+
     def close(self):
         if self._hosted_dbg_service:
             self._hosted_dbg_service.shutdown()
@@ -354,8 +406,11 @@ class Repl(object):
         if self._debugger:
             self._debugger.close()
 
-        self._debugger = None
+        self._console_printer.shutdown()
+
         self._hosted_dbg_service = None
+        self._debugger = None
+        self._console_printer = None
 
     @Command(keywords=['locals'])
     def _show_locals(self, argv):
@@ -1434,7 +1489,7 @@ class Repl(object):
 
         try:
             self._completer.clear_cache() # Don't accidentally use suggestions from last input line.
-            cmdline = input("(adbg) ")
+            cmdline = input(PROMPT)
         except KeyboardInterrupt:
             # Received '^C'; call the break function
             print('') # Terminate line after visible '^C' in input.
