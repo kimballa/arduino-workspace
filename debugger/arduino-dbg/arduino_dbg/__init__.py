@@ -5,6 +5,7 @@ import sys
 
 from .debugger import Debugger
 from .repl import Repl
+import arduino_dbg.io as io
 
 
 def _parseArgs():
@@ -16,7 +17,8 @@ def _parseArgs():
 
 def main(argv):
     args = _parseArgs()
-    debugger = Debugger(args.file, args.port)
+    connection = io.SerialConn(args.port, 57000, 1)
+    debugger = Debugger(args.file, connection)
     ret = 1
     try:
         repl = Repl(debugger)

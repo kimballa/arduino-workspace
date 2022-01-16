@@ -5,7 +5,6 @@ from elftools.dwarf.callframe import CIE
 
 import importlib.resources as resources
 import os
-import serial
 from sortedcontainers import SortedDict, SortedList
 import time
 
@@ -149,9 +148,8 @@ class Debugger(object):
         Main debugger state object.
     """
 
-    def __init__(self, elf_name, port, baud=57600, timeout=1):
-        self._conn = None
-        self.reopen(port, baud, timeout)
+    def __init__(self, elf_name, connection):
+        self._conn = connection
         self.elf_name = os.path.realpath(elf_name)
         self._sections = {}
         self._addr_to_symbol = SortedDict()
@@ -560,19 +558,8 @@ class Debugger(object):
         self._conn.close()
         self._conn = None
 
-
-    def reopen(self, port, baud, timeout):
-        """
-          (Re)establish serial connection.
-        """
-        if self._conn is not None:
-            self.close()
-
-        if port is not None and port != '':
-            self._conn = serial.Serial(port, baud, timeout=timeout)
-
     def is_open(self):
-        return self._conn is not None and self._conn.is_open
+        return self._conn is not None and self._conn.is_open()
 
     def wait_for_traces(self):
         """
@@ -625,7 +612,7 @@ class Debugger(object):
 
         # Before sending a command, make sure there is no pent-up data from the server.
         # Discard all service-level data in the buffer and echo any debug statemetns to the console.
-        while self._conn.in_waiting > 0:
+        while self._conn.available():
             line = self._conn.readline().decode("utf-8").strip()
             #print("<-- %s" % line.strip())
             if len(line) == 0:
