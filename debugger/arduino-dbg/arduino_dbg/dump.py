@@ -235,6 +235,8 @@ class HostedDebugService(object):
             elif cmd == protocol.DBG_OP_TIME:
                 # The 'time' is always 0.
                 self._send("0")
+            else:
+                self._send_comment(f"Unknown cmd symbol: '${cmd}'")
 
 
     # Private helper methods for the main service.

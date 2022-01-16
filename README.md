@@ -75,6 +75,5 @@ Using the debugger
 * Build the Arduino library with `cd debugger/dbglib && make install`
 * Follow instructions in `dbg.h` to include in your application.
 * Run `debugger/arduino-dbg/bin/arduino-dbg` to launch the debug console.
-* Use the `help` command (when in interactive mode at a breakpoint or after ^C) to see
-  available capabilities.
+* Use the `help` command at the prompt to see available capabilities.
 

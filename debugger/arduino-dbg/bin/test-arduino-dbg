@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# (c) Copyright 2022 Aaron Kimball
+#
+# test-arduino-dbg: Run tests for Arduino debug console client.
+#
+# Usage: test-arduino-dbg [<test-suite>]
+
+PY3=`which python3`
+PY3=`readlink -f "${PY3}"`
+
+dbgroot=`dirname $0`/../
+dbgroot=`readlink -f "${dbgroot}"`
+
+testroot="${dbgroot}/test"
+
+export PYTHONPATH="${dbgroot}":"${testroot}":"${PYTHONPATH}"
+
+# Always run from the 'test' directory as cwd
+cd "${testroot}"
+
+suite="$1"
+shift
+if [ -z "$suite" ]; then
+  suite=all
+fi
+
+echo "Running test suite: ${suite}"
+exec "${PY3}" -m "${suite}" "$@"
+
