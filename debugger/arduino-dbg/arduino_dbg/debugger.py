@@ -780,6 +780,12 @@ class Debugger(object):
             print("Error: No debug server connection open")
             return None
 
+        if self._process_state != PROCESS_STATE_BREAK and dbg_cmd != protocol.DBG_OP_BREAK:
+            # We need to be in the BREAK state to send any commands to the service
+            # besides the break command itself. Send that first..
+            if not self.send_break():
+                raise Exception("Could not pause device sketch to send command.")
+
         if type(dbg_cmd) == list:
             dbg_cmd = [str(x) for x in dbg_cmd]
             dbg_cmd = " ".join(dbg_cmd) + "\n"
@@ -827,9 +833,11 @@ class Debugger(object):
         if break_ok == protocol.DBG_PAUSE_MSG:
             self._process_state = PROCESS_STATE_BREAK
             print("Paused.")
+            return True
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
             print("Could not interrupt sketch.")
+            return False
 
 
     def send_continue(self):
