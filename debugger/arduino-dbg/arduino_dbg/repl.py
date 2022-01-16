@@ -1397,7 +1397,6 @@ class Repl(object):
             print("Syntax: dump <filename>")
             return
 
-        # TODO(aaron): Ensure we are in a paused/breakpoint state.
         filename = argv[0]
         print(f"Writing device state to file ({filename})...")
         dump.capture_dump(self._debugger, filename)
@@ -1421,7 +1420,7 @@ class Repl(object):
 
         filename = argv[0]
         print(f"Loading memory image from {filename}...")
-        (debugger, hosted_dbg_serv) = dump.load_dump(filename)
+        (debugger, hosted_dbg_serv) = dump.load_dump(filename, self._console_printer.print_q)
 
         # If we were already hosting a debug service for a dump file, remove it and
         # switch to the new one.

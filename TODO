@@ -9,15 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Use alternative readline interface (see readline manual sec 2.4.12 and .14) to enable
-    us to listen on serial connection as well as handle readline input simultaneously.
-
-    * Eliminate set_process_state() - only needed to bump offline debugger into break mode.
-    * Most debugger methods need a way to ensure process state is in BREAK before communicating cmds
-
-    * Make sure that when dump creates a new debugger, it properly attaches the print_q.
-
-
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
@@ -55,7 +46,7 @@ Client:
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
   * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
-  * Use image dumps for integration testing. 
+  * Use image dumps for integration testing.
     Set up BREAK() statements in various strategic places to set up different test cases.
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)

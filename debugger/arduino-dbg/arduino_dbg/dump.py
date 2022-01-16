@@ -98,7 +98,7 @@ def capture_dump(debugger, dump_filename):
 
     serialize.persist_config_file(dump_filename, SERIALIZED_STATE_KEY, out)
 
-def load_dump(filename):
+def load_dump(filename, print_q):
     """
     Load a dump file and initialize a debugger instance around it.
     Returns a pair containing (new_debugger, hosted_debug_service).
@@ -112,7 +112,7 @@ def load_dump(filename):
 
     # Create a new Debugger instance connected to the 'left' pipe.
     # Specify the ELF file associated with this dump and the relevant Arduino platform.
-    dbg = debugger.Debugger(dump_data['elf_file_name'], left)
+    dbg = debugger.Debugger(dump_data['elf_file_name'], left, print_q)
     dbg.set_conf("arduino.platform", dump_data['platform'])
     dbg.set_process_state(debugger.PROCESS_STATE_BREAK) # It's definitionally always paused.
 
