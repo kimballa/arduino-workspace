@@ -14,8 +14,8 @@ class DbgTestCase(unittest.TestCase):
     You must implement getDumpFilename() as a @classmethod to specify the
     dump file to load.
     - This filename should be relative to this 'test' directory, which is the cwd for the test.
-    - If this dump loads an ELF file, the elf_file_name parameter in the dump file should
-      also be relative to this 'test' directory.
+    - If this dump loads an ELF file, the elf_file_name parameter in the dump file should be
+      relative to the location of the dump file.
     """
 
     console_printer = None

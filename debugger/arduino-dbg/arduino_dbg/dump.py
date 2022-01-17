@@ -2,6 +2,7 @@
 #
 # Methods for capturing and reloading state from running Arduino.
 
+import os.path
 import threading
 import time
 
@@ -64,7 +65,7 @@ def capture_dump(debugger, dump_filename):
 
     if instruction_set == 'avr':
         # Prepend general-purpose register file data to the beginning of the RAM image.
-        reg_bytes = bytearray() 
+        reg_bytes = bytearray()
         for i in range(0, gen_reg_count):
             reg_bytes.append(regs[f'r{i}'])
         sram_byte_string[0:0] = reg_bytes
@@ -110,9 +111,23 @@ def load_dump(filename, print_q):
     # Make a pair of pipes that can communicate with one another.
     (left, right) = io.make_bidi_pipe()
 
+    # Make the ELF filename absolute. If the filename in the dump is relative,
+    # it is relative to the location of the dump file, not the cwd.
+    if os.path.isabs(filename):
+        canonical_dump_filename = os.path.normpath(filename)
+    else:
+        canonical_dump_filename = os.path.abspath(filename)
+    dump_dir = os.path.dirname(canonical_dump_filename)
+
+    elf_filename = dump_data['elf_file_name']
+    if not os.path.isabs(elf_filename):
+        # ELF filename is relative.
+        elf_filename = os.path.join(dump_dir, elf_filename)
+        elf_filename = os.path.normpath(elf_filename)
+
     # Create a new Debugger instance connected to the 'left' pipe.
     # Specify the ELF file associated with this dump and the relevant Arduino platform.
-    dbg = debugger.Debugger(dump_data['elf_file_name'], left, print_q)
+    dbg = debugger.Debugger(elf_filename, left, print_q)
     dbg.set_conf("arduino.platform", dump_data['platform'])
     dbg.set_process_state(debugger.PROCESS_STATE_BREAK) # It's definitionally always paused.
 
