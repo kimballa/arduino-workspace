@@ -187,6 +187,7 @@ class Debugger(object):
         # Load latest config from a dotfile in user's $HOME.
         self._init_config_from_file()
 
+        types.clear_type_state() # Reset global state left over from prior Debugger(s).
         self._read_elf()
 
         end_time = time.time()

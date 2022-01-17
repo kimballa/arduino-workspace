@@ -18,6 +18,19 @@ PUBLIC = dwarf_constants.DW_ACCESS_public
 PROTECTED = dwarf_constants.DW_ACCESS_protected
 PRIVATE = dwarf_constants.DW_ACCESS_private
 
+def clear_type_state():
+    """
+    Reset all global type state information; perform before loading a new Debugger
+    instance.
+
+    # TODO(aaron): Move global state into Debugger.
+    """
+    global _encodings, _cu_namespaces, _global_syms
+    _encodings = {}
+    _cu_namespaces = []
+    _global_syms = GlobalScope()
+
+
 class PCRange(object):
     """
     An interval of $PC values associated with a method implementation.
