@@ -446,6 +446,12 @@ class DWARFExprMachine(object):
             start_regs = self._frame.unwind_registers(self.regs)
             start_val = start_regs[unwind_location]
             self._debugger.verboseprint(f'Unwinding register {unwind_location} to value 0x{start_val:x}')
+            call_clobbers = self._debugger.get_arch_conf("call_clobbered_registers")
+            try:
+                call_clobbers.index(unwind_location)
+                print("(** Warning: Local relies on a call-clobbered register; next value is uncertain **)")
+            except ValueError:
+                pass # This is the happy path.
             self.push(start_val)
 
     def _call_frame_cfa(self, op):

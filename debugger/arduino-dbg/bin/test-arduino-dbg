@@ -25,6 +25,9 @@ if [ -z "$suite" ]; then
   suite=all
 fi
 
+# If suite is a .py filename, chop off the '.py' suffix to pass to python.
+suite=`echo "$suite" | sed -e 's/\.py$//'`
+
 echo "Running test suite: ${suite}"
 exec "${PY3}" -m "${suite}" "$@"
 
