@@ -2,6 +2,8 @@
 
 import functools
 import inspect
+import os
+import os.path
 import queue
 import readline
 import signal
@@ -43,6 +45,7 @@ class Completions(object):
     BINARY = 'binary'           # Values 0 and 1.
     BASE = 'base'               # integer base: 2, 8, 10, 16.
     CONF_KEY = 'conf_key'       # A configuration key.
+    PATH = 'path'               # A file path.
 
 
 
@@ -243,6 +246,45 @@ class ReplAutoComplete(object):
         conf_keys = self._debugger.get_conf_keys()
         return self.__filter(conf_keys, prefix)
 
+    def _complete_path(self, prefix):
+        if prefix is None or len(prefix) == 0:
+            searchdir = '.'
+            result_prepend = ''
+            file_prefix = ''
+        elif prefix.endswith(os.path.sep):
+            # Prefix as-is is the directory to list.
+            searchdir = prefix
+            result_prepend = ''
+            file_prefix = ''
+        else:
+            # Iterate over parent dir of the complete prefix
+            searchdir = os.path.dirname(prefix)
+            result_prepend = searchdir
+            if searchdir is None or len(searchdir) == 0:
+                searchdir='.'
+            file_prefix = os.path.basename(prefix)
+
+        # Iterate through everything in the search dir.
+        if not os.path.isabs(searchdir):
+            searchdir = os.path.abspath(searchdir)
+
+        contents = os.listdir(searchdir)
+        # But only keep the ones that start with the prefix.
+        contents = list(filter(lambda item: item.startswith(file_prefix), contents))
+        contents = [ os.path.join(result_prepend, elem) for elem in contents ]
+        # Append '/' to directory elements.
+        for i in range(0, len(contents)):
+            if os.path.isdir(contents[i]):
+                contents[i] = contents[i] + os.path.sep
+
+        return contents
+
+    def _space(self, suggestions):
+        """
+        Add a space after each suggestion to advance to the next token in the autocomplete sequence.
+        """
+        return [ item + ' ' for item in suggestions ]
+
     def _suggest(self, tokens, prefix):
         if len(tokens) == 0 or len(tokens) == 1:
             # We are trying to suggest the first token in the line, which is always a keyword.
@@ -264,24 +306,26 @@ class ReplAutoComplete(object):
         if completion_set == Completions.NONE:
             return [] # No suggestions
         elif completion_set == Completions.KW:
-            return self._complete_keyword(prefix)
+            return self._space(self._complete_keyword(prefix))
         elif completion_set == Completions.SYM:
-            return self._complete_symbol(prefix)
+            return self._space(self._complete_symbol(prefix))
         elif completion_set == Completions.TYPE:
-            return self._complete_type(prefix)
+            return self._space(self._complete_type(prefix))
         elif completion_set == Completions.SYM_OR_TYPE:
-            return self._complete_symbol_or_type(prefix)
+            return self._space(self._complete_symbol_or_type(prefix))
         elif completion_set == Completions.WORD_SIZE:
-            return self.__filter([ '1', '2', '4' ], prefix)
+            return self._space(self.__filter([ '1', '2', '4' ], prefix))
         elif completion_set == Completions.BINARY:
-            return self.__filter([ '0', '1' ], prefix)
+            return self._space(self.__filter([ '0', '1' ], prefix))
         elif completion_set == Completions.BASE:
-            return self.__filter([ '2', '8', '10', '16' ], prefix)
+            return self._space(self.__filter([ '2', '8', '10', '16' ], prefix))
         elif completion_set == Completions.CONF_KEY:
-            return self._complete_conf_key(prefix)
+            return self._space(self._complete_conf_key(prefix))
+        elif completion_set == Completions.PATH:
+            return self._complete_path(prefix)
         elif isinstance(completion_set, list):
             # Completion set is itself a set of explicit choices.
-            return list(filter(lambda choice: choice.startswith(prefix), completion_set))
+            return self._space(list(filter(lambda choice: choice.startswith(prefix), completion_set)))
 
         # Don't know what this completion set is supposed to be.
         raise Exception(f"Unknown completion set: '{completion_set}'")
@@ -307,8 +351,7 @@ class ReplAutoComplete(object):
                 self._cached_key = (prefix, line_buffer, state)
                 return self._cached_result[state]
 
-            raw_results = list(self._suggest(tokens, prefix))
-            results = [ rec + ' ' for rec in raw_results ]  # Add a space after each rec to advance token.
+            results = list(self._suggest(tokens, prefix))
             results.append(None) # Append a 'None' to the end to signal
                                  # stop-iteration condition to readline.
 
@@ -1380,7 +1423,7 @@ class Repl(object):
             # For variables, show the memory value at that address
             self._print(argv)
 
-    @Command(keywords=['dump'])
+    @Command(keywords=['dump'], completions=[Completions.PATH])
     def dump_image(self, argv):
         """
         Save running image state info to file
@@ -1403,7 +1446,7 @@ class Repl(object):
         print("Done.")
 
 
-    @Command(keywords=['load'])
+    @Command(keywords=['load'], completions=[Completions.PATH])
     def load_dump_image(self, argv):
         """
         Loads state of a connected device from a file for offline debugging
