@@ -611,6 +611,8 @@ class MethodInfo(PrgmType):
 class FormalArg(object):
     def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None):
         self.name = name
+        if arg_type is None:
+            arg_type = _VOID
         self.arg_type = arg_type
         self._cuns = cuns
         self._origin = origin
@@ -619,7 +621,10 @@ class FormalArg(object):
         self._scope = scope
 
     def __repr__(self):
-        return f'{self.arg_type.name} {self.name}'
+        if self.name is None:
+            return f'{self.arg_type.name}'
+        else:
+            return f'{self.arg_type.name} {self.name}'
 
     def setOrigin(self, origin):
         self._origin = origin
@@ -1326,17 +1331,6 @@ def parseTypesFromDIE(die, cuns, context={}):
         method = MethodInfo(name, return_type, cuns, enclosing_class, virtual, accessibility,
             is_decl, is_def, origin)
 
-        if die.offset - cu_offset == 222:
-            print(f'got the special one')
-            print(f'{method}')
-            print(f'{die.offset:x} {die}')
-
-
-        if name is None and origin is None:
-            print(f'{method}')
-            print(f'{die.offset:x} {die}')
-            raise Exception(f"Got method with name=None, origin=None startPC={dieattr('low_pc')}")
-
         if enclosing_class:
             enclosing_class.addMethod(method)
         else:
@@ -1450,6 +1444,7 @@ def parseTypesFromDIE(die, cuns, context={}):
         #    print(f"Location is {location}")
 
         formal = FormalArg(name, base, cuns, origin, location, const_val)
+
         _add_entry(formal, None, die.offset)
         if not artificial:
             context['method'].addFormal(formal)
@@ -1457,6 +1452,8 @@ def parseTypesFromDIE(die, cuns, context={}):
         origin = None
         if dieattr('abstract_origin'):
             origin = _resolve_abstract_origin()
+        elif dieattr('specification'):
+            origin = _resolve_abstract_origin('specification')
 
         name = dieattr('name')
         if name is None and origin is not None:

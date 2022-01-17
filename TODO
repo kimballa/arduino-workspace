@@ -9,6 +9,9 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * bug: MethodInfo seems to have all formals added twice?
+      load read_byte.dump; locals 3
+
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
     control/suppress existing ones.
     - Server could have a memory array for $PC values we /don't/ stop at. If $prevPC
@@ -18,14 +21,6 @@ Client:
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
-
-
-  * BUG: Some formal args don't have names and report "void foo(<sometype> None, ...)"
-    Get the name? At minimum, clean up the formatting?
-      load get_byte.dump; locals 5
-
-  * BUG: exception in `locals` (NoneType object has no attribute 'name')
-      load read_byte.dump; locals 5
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`

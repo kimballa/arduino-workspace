@@ -499,6 +499,8 @@ class Repl(object):
                 else:
                     inl_str = 'Method'
                 print(f'{nest_str}{inl_str} scope: {scope}')
+            elif isinstance(scope, types.LexicalScope):
+                print(f'{nest_str}{{')
 
             formals = scope.getFormals()
             if len(formals) > 0:
@@ -509,7 +511,12 @@ class Repl(object):
                         val_str = f' = {formal_val}'
                     else:
                         val_str = ''
-                    print(f'{nest_str}  {formal.name}: {formal.arg_type.name}{val_str}')
+                    if formal.name is not None:
+                        formal_name_type = f'{formal.name}: {formal.arg_type.name}'
+                    else:
+                        formal_name_type = f'({formal.arg_type.name})'
+
+                    print(f'{nest_str}  {formal_name_type}{val_str}')
 
 
             var_list = scope.getVariables()
@@ -524,6 +531,9 @@ class Repl(object):
                     else:
                         val_str = ''
                     print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str}')
+
+            if isinstance(scope, types.LexicalScope):
+                print(f'{nest_str}}}')
 
             nest += 2
 
