@@ -247,6 +247,7 @@ class ReplAutoComplete(object):
         return self.__filter(conf_keys, prefix)
 
     def _complete_path(self, prefix):
+        # See e.g. http://schdbr.de/python-readline-path-completion/
         if prefix is None or len(prefix) == 0:
             searchdir = '.'
             result_prepend = ''
@@ -275,7 +276,11 @@ class ReplAutoComplete(object):
         # Append '/' to directory elements.
         for i in range(0, len(contents)):
             if os.path.isdir(contents[i]):
+                # Completing to a directory should make next [tab] show items within that directory.
                 contents[i] = contents[i] + os.path.sep
+            else:
+                # files are complete items and should advance to next token
+                contents[i] = contents[i] + ' '
 
         return contents
 

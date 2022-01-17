@@ -3,6 +3,7 @@
 import arduino_dbg.debugger as debugger
 import arduino_dbg.dump as dump
 import arduino_dbg.repl as repl
+import arduino_dbg.types as types
 
 import unittest
 
@@ -22,8 +23,15 @@ class DbgTestCase(unittest.TestCase):
     debugger = None
     dbg_service = None
 
+    def __init__(self, methodName='runTest'):
+        super().__init__(methodName)
+
     @classmethod
-    def classSetUp(cls):
+    def get_debugger(cls):
+        return cls.debugger
+
+    @classmethod
+    def setUpClass(cls):
         filename = cls.getDumpFilename()
         if filename is None or len(filename) == 0:
             # No fixture setup required.
@@ -38,7 +46,7 @@ class DbgTestCase(unittest.TestCase):
 
 
     @classmethod
-    def classTearDown(cls):
+    def tearDownClass(cls):
         if cls.dbg_service:
             cls.dbg_service.shutdown()
 
@@ -48,4 +56,18 @@ class DbgTestCase(unittest.TestCase):
         if cls.console_printer:
             cls.console_printer.shutdown()
 
+
+    def _get_datatype_for(self, sym_or_type):
+        """
+        Helper method to access a datatype / debuginfo entry a la `type <foo>`
+
+        returns (kind, typ) where kind is a types.KIND_* enum and typ is the 
+        types.PrgmType, MethodInfo, or VariableInfo retrieved. 
+        """
+        registers = self.debugger.get_registers()
+        self.assertIsInstance(registers, dict)
+        pc = registers["PC"]
+        self.assertIsInstance(pc, int)
+        self.assertGreater(pc, 0)
+        return types.getNamedDebugInfoEntry(sym_or_type, pc)
 
