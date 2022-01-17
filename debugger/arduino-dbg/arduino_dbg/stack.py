@@ -49,6 +49,9 @@ class CallFrame(object):
         self._calculate_source_line(debugger.elf_name)
         self._demangle()
 
+        self._unwound_registers = None # Cached map of register values pre-call (unwound)
+        self._cfa = None               # Cached canonical frame address
+
     def __repr__(self):
         out = f"{self.addr:04x}: {self.demangled}"
 
@@ -83,6 +86,16 @@ class CallFrame(object):
         self.frame_size = stack_frame_size_for_method(self._debugger, self.addr, self.sym)
         return self.frame_size
 
+    def get_cfa(self, regs_in):
+        """
+        Return the canonical frame address as calculated through the .debug_frame instructions.
+        """
+        if self._cfa is not None:
+            return self._cfa
+
+        self.unwind_registers(regs_in) # CFA calculated thru unwind process.
+        return self._cfa # As saved by unwind_registers().
+
     def unwind_registers(self, regs_in):
         """
         Use the .debug_frame information in self.sym.frame_info to unwind the registers
@@ -95,6 +108,9 @@ class CallFrame(object):
         The return value is a 'regs' dict with the same format & keys, with register
         values as seen by the calling method at that point.
         """
+        if self._unwound_registers is not None:
+            # We've already cached this value; return immediately.
+            return self._unwound_registers
 
         # Get the architecture-specific register mapping from the configuration.
         stack_unwind_registers = self._debugger.get_arch_conf('stack_unwind_registers')
@@ -153,6 +169,7 @@ class CallFrame(object):
                                               # This is where SP would point if the entire
                                               # frame went away via the epilogue + 'ret'.
         self._debugger.verboseprint(f'Canonical frame addr (CFA) = {cfa_addr:04x}')
+        self._cfa = cfa_addr # Cache this for later.
 
         regs_out = regs_in.copy()
 
@@ -211,6 +228,7 @@ class CallFrame(object):
         # how to restore the prior version of it, if it was saved within the method. So the
         # regs_in.copy() will include the child frame's SREG as-is.
 
+        self._unwound_registers = regs_out # Cache for reuse if necessary.
         return regs_out
 
 def _patch_isr_debug_frames(debugger, sym, frame_info, pc):

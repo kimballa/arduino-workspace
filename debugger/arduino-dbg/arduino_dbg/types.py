@@ -297,8 +297,8 @@ class PrgmType(object):
     def __init__(self, name, size, parent_type=None):
         self.name = name
         self.size = size
-        if size == 'int':
-            raise Exception("wtf type")
+        if size is not None and not isinstance(size, int):
+            raise TypeError(f'PrgmType.size must be int or None; got type {size.__class__}')
         self._parent_type = parent_type
 
 
@@ -348,8 +348,8 @@ class PointerType(PrgmType):
     """
     def __init__(self, base_type):
         name = f'{base_type.name}*'
-        PrgmType.__init__(self, name, _encodings[_INT_ENCODING], base_type)
-        self.name = name
+        # nb.: Assumes that 'int' size on machine is equal to ptr/addr size.
+        PrgmType.__init__(self, name, _encodings[_INT_ENCODING].size, base_type)
 
     def __repr__(self):
         return f'{self.name}'
@@ -360,8 +360,8 @@ class ReferenceType(PrgmType):
     """
     def __init__(self, base_type):
         name = f'{base_type.name}&'
-        PrgmType.__init__(self, name, _encodings[_INT_ENCODING], base_type)
-        self.name = name
+        # nb.: Assumes that 'int' size on machine is equal to ptr/addr size.
+        PrgmType.__init__(self, name, _encodings[_INT_ENCODING].size, base_type)
 
     def __repr__(self):
         return f'{self.name}'
@@ -627,11 +627,12 @@ class FormalArg(object):
     def setScope(self, scope):
         self._scope = scope
 
-    def getAddress(self, regs):
+    def getAddress(self, regs, frame):
         """
         Evaluate the location info to get the memory address of this variable.
 
         @param regs the current register state for the frame.
+        @param frame the backtrace frame for this variable's scope.
         @return the memory and register location info for the variable (in the format
             returned by the DWARFExprMachine), or None if no such info is available.
         """
@@ -643,13 +644,15 @@ class FormalArg(object):
         if expr_machine is None:
             return None
         expr_machine.setScope(self._scope)
+        expr_machine.setFrame(frame)
         return expr_machine.eval()
 
-    def getValue(self, regs):
+    def getValue(self, regs, frame):
         """
         Evaluate the location info to get the current value of this variable.
 
         @param regs the current register state for the frame.
+        @param frame the backtrace frame for this variable's scope.
         @return the value of the variable, or None if no such info is available.
         """
         if self._const_val is not None:
@@ -660,10 +663,12 @@ class FormalArg(object):
         if loc is None:
             return None
 
+        self._cuns.getDebugger().verboseprint("Getting value for formal arg: ", self.name)
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
         expr_machine.setScope(self._scope)
+        expr_machine.setFrame(frame)
         return expr_machine.access(self.arg_type.size)
 
 
@@ -775,11 +780,12 @@ class VariableInfo(PrgmType):
     def getType(self):
         return self.var_type
 
-    def getAddress(self, regs):
+    def getAddress(self, regs, frame):
         """
         Evaluate the location info to get the memory address of this variable.
 
         @param regs the current register state for the frame.
+        @param frame the backtrace frame for this variable's scope.
         @return the memory and register location info for the variable (in the format
             returned by the DWARFExprMachine), or None if no such info is available.
         """
@@ -791,13 +797,15 @@ class VariableInfo(PrgmType):
         if expr_machine is None:
             return None
         expr_machine.setScope(self._scope)
+        expr_machine.setFrame(frame)
         return expr_machine.eval()
 
-    def getValue(self, regs):
+    def getValue(self, regs, frame):
         """
         Evaluate the location info to get the current value of this variable.
 
         @param regs the current register state for the frame.
+        @param frame the backtrace frame for this variable's scope.
         @return the value of the variable, or None if no such info is available.
         """
         if self._const_val is not None:
@@ -808,10 +816,12 @@ class VariableInfo(PrgmType):
         if loc is None:
             return None
 
+        self._cuns.getDebugger().verboseprint("Getting value for local var: ", self.name)
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
         expr_machine.setScope(self._scope)
+        expr_machine.setFrame(frame)
         return expr_machine.access(self.size)
 
     def setConstValue(self, val):

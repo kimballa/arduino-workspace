@@ -190,7 +190,10 @@ class Command(object):
         """
         Return a list of completion tokens accepted by each keyword
         """
-        return cls._cmd_syntax_completions[keyword]
+        try:
+            return cls._cmd_syntax_completions[keyword]
+        except KeyError:
+            return None
 
 
 class ReplAutoComplete(object):
@@ -293,7 +296,7 @@ class ReplAutoComplete(object):
     def _suggest(self, tokens, prefix):
         if len(tokens) == 0 or len(tokens) == 1:
             # We are trying to suggest the first token in the line, which is always a keyword.
-            return self._complete_keyword(prefix)
+            return self._space(self._complete_keyword(prefix))
 
         # Otherwise, we need to recommend a keyword-specific next token.
         keyword = tokens[0]
@@ -480,6 +483,7 @@ class Repl(object):
             return
 
         frameId = int(argv[0])
+        frame = self.__get_frame(frameId)
         frameScopes = self._debugger.get_frame_vars(frameId)
         frameRegs = self._debugger.get_frame_regs(frameId)
         if frameScopes is None:
@@ -500,7 +504,7 @@ class Repl(object):
             if len(formals) > 0:
                 print(f"{nest_str}  Formals:")
                 for formal in formals:
-                    formal_val = formal.getValue(frameRegs)
+                    formal_val = formal.getValue(frameRegs, frame)
                     if formal_val is not None:
                         val_str = f' = {formal_val}'
                     else:
@@ -514,7 +518,7 @@ class Repl(object):
                 for local_name, local_var in var_list:
                     if local_name is None:
                         continue
-                    local_val = local_var.getValue(frameRegs)
+                    local_val = local_var.getValue(frameRegs, frame)
                     if local_val is not None:
                         val_str = f' = {local_val}'
                     else:
@@ -1094,6 +1098,16 @@ class Repl(object):
             print(f"{v:08x}")
 
 
+    def __get_frame(self, frame_num):
+        """
+        Return the stack.CallFrame object for the specified frame of the backtrace.
+        """
+        frames = self._debugger.get_backtrace(limit=(frame_num + 1))
+        if len(frames) <= frame_num:
+            return None
+
+        return frames[frame_num]
+
     @Command(keywords=['frame', '\\f'])
     def _frame(self, argv):
         """
@@ -1110,12 +1124,11 @@ class Repl(object):
         else:
             frame_num = int(argv[0])
 
-        frames = self._debugger.get_backtrace(limit=(frame_num + 1))
-        if len(frames) <= frame_num:
+        frame = self.__get_frame(frame_num)
+        if frame is None:
             print(f"Error: could only identify {len(frames)} stack frames")
             return
 
-        frame = frames[frame_num]
         sp = frame.sp
         frame_size = frame.frame_size
         if frame_size < 0:

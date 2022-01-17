@@ -61,9 +61,13 @@ class DWARFExprMachine(object):
         self.stack = initial_stack or [] # Initial stack machine state.
         self._pieces = []
         self._scope = None               # Containing scope (used for frame base calc)
+        self._frame = None               # Backtrace frame for current scope's dynamic state.
 
     def setScope(self, scope):
         self._scope = scope
+
+    def setFrame(self, frame):
+        self._frame = frame
 
     def eval(self):
         """
@@ -72,18 +76,18 @@ class DWARFExprMachine(object):
         """
         self._pieces = []
         for op in self.opcodes:
-            #self._debugger.verboseprint('Processing opcode ', op.op_name)
+            self._debugger.verboseprint('Processing opcode ', op.op_name, '; args=', op.args)
             func = DWARFExprMachine.__dispatch[op.op]
             func(self, op)
 
         # What's the result address? If we got PIECE instructions, deliver a list of addrs and
         # sizes. Otherwise, return a singleton list with the address and DEM.ALL..
         if len(self._pieces):
-            #self._debugger.verboseprint(f'Resolved to pieces: {self._pieces}')
+            self._debugger.verboseprint(f'Resolved to set of pieces: {self._pieces}')
             return self._pieces
         else:
             out = self.top()
-            #self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
+            self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
             return [(out, DWARFExprMachine.ALL)]
 
     def __access_big_endian(self, size):
@@ -147,6 +151,7 @@ class DWARFExprMachine(object):
             new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
                                         # before slotting in
 
+        out &= existing_mask # Ensure we don't return data that's too wide for size.
         return out
 
     def access(self, size):
@@ -155,9 +160,12 @@ class DWARFExprMachine(object):
         Returns the value of size 'size' located at the address computed by the expression.
         """
         if self._debugger.get_arch_conf("endian") == "big":
-            return self.__access_big_endian(size)
+            out = self.__access_big_endian(size)
         else:
-            return self.__access_little_endian(size)
+            out = self.__access_little_endian(size)
+
+        self._debugger.verboseprint("Resolved value=0x", dbg.VHEX, out, " size=", size)
+        return out
 
 
     def reset(self, new_regs=None, new_opcodes=None, new_stack=None):
@@ -185,7 +193,7 @@ class DWARFExprMachine(object):
 
 
     def _unimplemented_op(self, op):
-        raise Exception(f"Unimplemented DWARF expr op='{op.op_name}' args={op.args}")
+        raise Exception(f"Unimplemented DWARF expr op='{op.op_name}' ({op.op:x}) args={op.args}")
 
     def _addr(self, op):
         self.push(op.args[0]) # Push address argument
@@ -406,6 +414,41 @@ class DWARFExprMachine(object):
         piece = (DWARFExprMachine.TOP, DWARFExprMachine.ALL)
         self._pieces.append(piece)
 
+    def _entry_value(self, op):
+        """
+        The op contains a location expr. Push onto the eval stack the value
+        held at that location when the current method *began* executing, regardless
+        of how far through the method the $PC has already advanced.
+
+        See DWARFv5 sec 2.5.1.7
+        """
+        sub_location = op.args[0] # sub_location is a list of DWARFExprOp's.
+        # It's either a single opcode identifying a register (DW_OP_regN)
+        # or a full expression computing a more complex location. We evaluate this
+        # location in a brand new dwarf expr machine.
+        sub_machine = DWARFExprMachine(sub_location, self.regs, self._debugger)
+        unwind_location_parts = sub_machine.eval()
+        if len(unwind_location_parts) != 1:
+            raise Exception(
+                f"Cannot unwind ENTRY_LOCATION in multiple parts; got len={len(unwind_location_parts)}")
+
+        (unwind_location, _) = unwind_location_parts[0]
+        if not isinstance(unwind_location, str):
+            raise Exception(f"Cannot unwind ENTRY_LOCATION in memory; got addr {unwind_location}")
+        elif self._frame is None:
+            # We have identified a specific value to grab from the frame's register unwind set but
+            # we don't have a backtrace frame to use for unwinding.
+            raise Exception(f'Cannot unwind register \'{unwind_location}\'; no backtrace frame set')
+        else:
+            # We have identified a specific register whose value at method-start we want to extract.
+            #  - unwind_location is a string holding an architectural register name.
+            #  - self._frame holds a backtrace stack.CallFrame we can use to unwind.
+            start_regs = self._frame.unwind_registers(self.regs)
+            start_val = start_regs[unwind_location]
+            self._debugger.verboseprint(f'Unwinding register {unwind_location} to value 0x{start_val:x}')
+            self.push(start_val)
+
+
     # Unimplemented opcodes; not specified in DWARF2; added in DWARF4.
     _deref_size = _unimplemented_op
     _xderef_size = _unimplemented_op
@@ -420,7 +463,6 @@ class DWARFExprMachine(object):
     _implicit_pointer = _unimplemented_op
     _addrx = _unimplemented_op
     _constx = _unimplemented_op
-    _entry_value = _unimplemented_op
     _const_type = _unimplemented_op
     _regval_type = _unimplemented_op
     _deref_type = _unimplemented_op
@@ -429,7 +471,6 @@ class DWARFExprMachine(object):
     _reinterpret = _unimplemented_op
     _push_tls_address = _unimplemented_op
     _implicit_pointer = _unimplemented_op
-    _entry_value = _unimplemented_op
     _const_type = _unimplemented_op
     _regval_type = _unimplemented_op
     _deref_type = _unimplemented_op

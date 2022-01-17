@@ -47,12 +47,12 @@ Client:
 			Error running 'locals': Unimplemented DWARF expr op='DW_OP_GNU_entry_value'
 					args=[[DWARFExprOp(op=102, op_name='DW_OP_reg22', args=[])]]
 
+
     * Parse DW_OP_GNU_entry_value
       load get_byte.dump; locals 2; locals 5
 
   * Bug causes exception in `locals` (NoneType object has no attribute 'name')
       load read_byte.dump; locals 5
-
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
