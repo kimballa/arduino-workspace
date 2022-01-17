@@ -6,6 +6,75 @@ import elftools.dwarf.dwarf_expr as dwarf_expr
 
 import arduino_dbg.debugger as dbg
 
+class ExprFlags(object):
+    """
+    Flags that provide info about the result returned by eval() or access().
+    """
+
+    # Top level messages.
+    OK                      =     0x1     # Successfully produced a value.
+    WARNED                  =     0x2     # Produced a value but with warnings.
+
+    # Error codes
+    ERR_NO_LOCATION         =    0x10     # No location data available.
+    ERR_PC_OUT_OF_BOUNDS    =    0x20     # Location data available but PC is not in a range
+                                          # where the location expr for this var is valid; 
+                                          # var is out of scope.
+
+    # Warning codes (set WARNED in addition to one or more of these)
+    WARN_CLOBBERED_REG      =   0x100     # Warning: in addition to stack-unwinding, we rely
+                                          # on the value of a caller-save register which may
+                                          # be clobbered by the time we read the value.
+
+    # Information
+    MULTIPART               =  0x1000     # The address is in multiple pieces
+    REGISTER_UNWIND         =  0x2000     # The result relies on processing the .debug_frame
+                                          # stack unwinding info
+    COMPILE_TIME_CONST      =  0x4000     # Value was embedded directly into the .debug_info
+                                          # as a compiler-deduced constant.
+
+
+    ERRORS_MASK             =    0xF0     # Errors fit under this mask
+    WARNINGS_MASK           =   0xF02     # Warnings fit under this mask
+
+    @staticmethod
+    def successful(flags):
+        """
+        Return True for any successful (fully-clean or with-warnings) response.
+        """
+        return flags & ExprFlags.OK
+
+    @staticmethod
+    def has_warnings(flags):
+        """
+        Return True if the warning bit is set.
+        """
+        return (flags & ExprFlags.WARNINGS_MASK) != 0
+
+    @staticmethod
+    def has_errors(flags):
+        """
+        Return True if any errors are noticed.
+        """
+        return (flags & ExprFlags.ERRORS_MASK) != 0
+
+    @staticmethod
+    def get_message(flags):
+        """
+        Return a formatted user-friendly message about errors or warnings encountered.
+        """
+        messages = ''
+        if ExprFlags.has_errors(flags):
+            if flags & ExprFlags.ERR_NO_LOCATION:
+                messages = '(No location data)'
+            elif flags  & ExprFlags.ERR_PC_OUT_OF_BOUNDS:
+                messages = '(Out of scope)'
+        elif ExprFlags.has_warnings(flags):
+            if flags & ExprFlags.WARN_CLOBBERED_REG:
+                messages = '(Warning: relies on call-clobbered register; data uncertain)'
+        return messages
+
+
 class DWARFExprMachine(object):
     """
     Stack machine to evaluate a DWARF expression to a location address.
@@ -62,6 +131,7 @@ class DWARFExprMachine(object):
         self._pieces = []
         self._scope = None               # Containing scope (used for frame base calc)
         self._frame = None               # Backtrace frame for current scope's dynamic state.
+        self._flags = 0                  # Flags built up during response evaluation.
 
     def setScope(self, scope):
         self._scope = scope
@@ -74,6 +144,7 @@ class DWARFExprMachine(object):
         Evaluate the bytecode program to resolve the location.
         Returns the address where the data is held.
         """
+        self._flags = 0
         self._pieces = []
         for op in self.opcodes:
             self._debugger.verboseprint('Processing opcode ', op.op_name, '; args=', op.args)
@@ -82,16 +153,19 @@ class DWARFExprMachine(object):
 
         # What's the result address? If we got PIECE instructions, deliver a list of addrs and
         # sizes. Otherwise, return a singleton list with the address and DEM.ALL..
+        self._flags |= ExprFlags.OK
         if len(self._pieces):
             self._debugger.verboseprint(f'Resolved to set of pieces: {self._pieces}')
-            return self._pieces
+            if len(self._pieces) > 1:
+                self._flags |= ExprFlags.MULTIPART
+            return self._pieces, self._flags
         else:
             out = self.top()
             self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
-            return [(out, DWARFExprMachine.ALL)]
+            return [(out, DWARFExprMachine.ALL)], self._flags
 
     def __access_big_endian(self, size):
-        addrs = self.eval()
+        (addrs, flags) = self.eval()
         out = 0
         for (addr, piece_size) in addrs:
             if piece_size == DWARFExprMachine.ALL:
@@ -119,10 +193,10 @@ class DWARFExprMachine(object):
             else:
                 raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
 
-        return out
+        return out, flags
 
     def __access_little_endian(self, size):
-        addrs = self.eval()
+        (addrs, flags) = self.eval()
         out = 0
         new_shift = 0
         existing_mask = 0
@@ -152,7 +226,7 @@ class DWARFExprMachine(object):
                                         # before slotting in
 
         out &= existing_mask # Ensure we don't return data that's too wide for size.
-        return out
+        return out, flags
 
     def access(self, size):
         """
@@ -160,12 +234,12 @@ class DWARFExprMachine(object):
         Returns the value of size 'size' located at the address computed by the expression.
         """
         if self._debugger.get_arch_conf("endian") == "big":
-            out = self.__access_big_endian(size)
+            (out, flags) = self.__access_big_endian(size)
         else:
-            out = self.__access_little_endian(size)
+            (out, flags) = self.__access_little_endian(size)
 
         self._debugger.verboseprint("Resolved value=0x", dbg.VHEX, out, " size=", size)
-        return out
+        return out, flags
 
 
     def reset(self, new_regs=None, new_opcodes=None, new_stack=None):
@@ -422,15 +496,20 @@ class DWARFExprMachine(object):
 
         See DWARFv5 sec 2.5.1.7
         """
+        self._flags |= ExprFlags.REGISTER_UNWIND            
         sub_location = op.args[0] # sub_location is a list of DWARFExprOp's.
         # It's either a single opcode identifying a register (DW_OP_regN)
         # or a full expression computing a more complex location. We evaluate this
         # location in a brand new dwarf expr machine.
         sub_machine = DWARFExprMachine(sub_location, self.regs, self._debugger)
-        unwind_location_parts = sub_machine.eval()
+        unwind_location_parts, sub_flags = sub_machine.eval()
+        self._flags |= (sub_flags & ~ExprFlags.OK) # Attach all subflags minus the final OK.
         if len(unwind_location_parts) != 1:
             raise Exception(
                 f"Cannot unwind ENTRY_LOCATION in multiple parts; got len={len(unwind_location_parts)}")
+        if ExprFlags.has_errors(sub_flags):
+            raise Exception(
+                f"Error getting entry location: {ExprFlags.get_message(sub_flags)}")
 
         (unwind_location, _) = unwind_location_parts[0]
         if not isinstance(unwind_location, str):
@@ -449,7 +528,7 @@ class DWARFExprMachine(object):
             call_clobbers = self._debugger.get_arch_conf("call_clobbered_registers")
             try:
                 call_clobbers.index(unwind_location)
-                print("(** Warning: Local relies on a call-clobbered register; next value is uncertain **)")
+                self._flags |= ExprFlags.WARN_CLOBBERED_REG | ExprFlags.WARNED
             except ValueError:
                 pass # This is the happy path.
             self.push(start_val)
@@ -461,6 +540,7 @@ class DWARFExprMachine(object):
         "The DW_OP_call_frame_cfa operation pushes the value of the CFA, obtained
         from the Call Frame Information"
         """
+        self._flags |= ExprFlags.REGISTER_UNWIND            
         if self._frame is None:
             # We cannot report the CFA because we don't have a backtrace frame to use for unwinding.
             raise Exception(f'Cannot push canonical frame address; no backtrace frame set')

@@ -5,6 +5,7 @@ import unittest
 
 import arduino_dbg.stack as stack
 import arduino_dbg.symbol as symbol
+import arduino_dbg.eval_location as el
 import arduino_dbg.types as types
 from dbg_testcase import *
 
@@ -40,13 +41,15 @@ class TestLocals(DbgTestCase):
         var_values = {}
         for scope in frame_scopes:
             for formal in scope.getFormals():
-                val = formal.getValue(frame_regs, frame)
+                val, flags = formal.getValue(frame_regs, frame)
                 if formal.name is not None and val is not None:
+                    self.assertFalse(el.ExprFlags.has_errors(flags))
                     var_values[formal.name] = val
 
             for (varname, variable) in scope.getVariables():
-                val = variable.getValue(frame_regs, frame)
+                val, flags = variable.getValue(frame_regs, frame)
                 if variable.name is not None and val is not None:
+                    self.assertFalse(el.ExprFlags.has_errors(flags))
                     var_values[variable.name] = val
 
         # We expect to produce values for: ctrlFlags, enFlag, send, __c

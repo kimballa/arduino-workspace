@@ -9,8 +9,15 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * bug: MethodInfo seems to have all formals added twice?
+  * Add termcap colors to output (e.g. for verboseprint statements; also distinguish
+    identifier/type/value? Make `Syntax` line in help be bold white?)
+  * bug: In some cases, MethodInfo seems to have all formals added twice?
       load read_byte.dump; locals 3
+
+  * dump / load should grab `MEMSTATS` and save `__malloc_heap_start` / `__malloc_heap_end`
+    to be able to reproduce them in offline mode.
+  * dump / load should grab the gpio values and mimic ability to set outputs / retrieve
+    gpio pin values.
 
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
     control/suppress existing ones.
@@ -30,7 +37,6 @@ Client:
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 
   * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
-  * Use image dumps for integration testing.
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 * Breakpoint unit support

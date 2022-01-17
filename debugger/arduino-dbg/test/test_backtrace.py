@@ -39,9 +39,14 @@ class TestBacktrace(DbgTestCase):
         self.assertIsInstance(frame, stack.CallFrame)
         self.assertEqual(frame.addr, 0x23f4)
         self.assertEqual(frame.demangled, 'main')
-        self.assertEqual(len(frame.demangled_inline_chain), 2)
-        self.assertEqual(len(frame.inline_chain), 2)
-        self.assertEqual(frame.demangled_inline_chain, ['void loop()', 'main'])
+        print(frame.demangled_inline_chain)
+        self.assertEqual(len(frame.demangled_inline_chain), 4)
+        self.assertEqual(len(frame.inline_chain), 4)
+        self.assertEqual(frame.demangled_inline_chain, [
+            'size_t class Print::write()',
+            'size_t class Print::print()',
+            'void loop()',
+            'main'])
 
     def test_method_type_in_backtrace(self):
         frames = self.debugger.get_backtrace()

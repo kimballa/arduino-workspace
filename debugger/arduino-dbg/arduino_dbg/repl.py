@@ -14,6 +14,7 @@ import traceback
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
+import arduino_dbg.eval_location as el
 import arduino_dbg.protocol as protocol
 import arduino_dbg.types as types
 
@@ -506,7 +507,7 @@ class Repl(object):
             if len(formals) > 0:
                 print(f"{nest_str}  Formals:")
                 for formal in formals:
-                    formal_val = formal.getValue(frameRegs, frame)
+                    formal_val, flags = formal.getValue(frameRegs, frame)
                     if formal_val is not None:
                         val_str = f' = {formal_val}'
                     else:
@@ -516,7 +517,8 @@ class Repl(object):
                     else:
                         formal_name_type = f'({formal.arg_type.name})'
 
-                    print(f'{nest_str}  {formal_name_type}{val_str}')
+                    warnings = el.ExprFlags.get_message(flags)
+                    print(f'{nest_str}  {formal_name_type}{val_str} {warnings}')
 
 
             var_list = scope.getVariables()
@@ -525,12 +527,14 @@ class Repl(object):
                 for local_name, local_var in var_list:
                     if local_name is None:
                         continue
-                    local_val = local_var.getValue(frameRegs, frame)
+                    local_val, flags = local_var.getValue(frameRegs, frame)
                     if local_val is not None:
                         val_str = f' = {local_val}'
                     else:
                         val_str = ''
-                    print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str}')
+
+                    warnings = el.ExprFlags.get_message(flags)
+                    print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str} {warnings}')
 
             if isinstance(scope, types.LexicalScope):
                 print(f'{nest_str}}}')

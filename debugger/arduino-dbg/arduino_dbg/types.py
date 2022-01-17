@@ -10,7 +10,7 @@ import elftools.dwarf.locationlists as locationlists
 from sortedcontainers import SortedDict, SortedList
 
 import arduino_dbg.binutils as binutils
-import arduino_dbg.eval_location as eval_location
+import arduino_dbg.eval_location as el
 
 _INT_ENCODING = dwarf_constants.DW_ATE_signed
 
@@ -160,7 +160,7 @@ class CompilationUnitNamespace(object):
             # No location entry info mapped to current $PC.
             return None
 
-        return eval_location.DWARFExprMachine(
+        return el.DWARFExprMachine(
             parser.parse_expr(location_expr_bytes),
             regs, self._debugger)
 
@@ -641,16 +641,18 @@ class FormalArg(object):
 
         @param regs the current register state for the frame.
         @param frame the backtrace frame for this variable's scope.
-        @return the memory and register location info for the variable (in the format
-            returned by the DWARFExprMachine), or None if no such info is available.
+        @return a tuple containing:
+            - the memory and register location info for the variable (in the format
+              returned by the DWARFExprMachine), or None if no such info is available.
+            - some ExprFlags OR'd together indicating info about the address. 
         """
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return None
+            return (None, el.ExprFlags.ERR_NO_LOCATION)
 
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return None
+            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.eval()
@@ -661,20 +663,22 @@ class FormalArg(object):
 
         @param regs the current register state for the frame.
         @param frame the backtrace frame for this variable's scope.
-        @return the value of the variable, or None if no such info is available.
+        @return a tuple containing:
+            - the value of the variable, or None if no such info is available
+            - some ExprFlags OR'd together indicating info about the value. 
         """
         if self._const_val is not None:
             # It got hardcoded in the end.
-            return self._const_val
+            return (self._const_val, el.ExprFlags.OK | el.ExprFlags.COMPILE_TIME_CONST)
 
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return None
+            return (None, el.ExprFlags.ERR_NO_LOCATION)
 
         self._cuns.getDebugger().verboseprint("Getting value for formal arg: ", self.name)
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return None
+            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.access(self.arg_type.size)
@@ -794,16 +798,18 @@ class VariableInfo(PrgmType):
 
         @param regs the current register state for the frame.
         @param frame the backtrace frame for this variable's scope.
-        @return the memory and register location info for the variable (in the format
-            returned by the DWARFExprMachine), or None if no such info is available.
+        @return a tuple containing:
+            - the memory and register location info for the variable (in the format
+              returned by the DWARFExprMachine), or None if no such info is available.
+            - some ExprFlags OR'd together indicating info about the address. 
         """
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return None
+            return (None, el.ExprFlags.ERR_NO_LOCATION)
 
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return None
+            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.eval()
@@ -814,20 +820,22 @@ class VariableInfo(PrgmType):
 
         @param regs the current register state for the frame.
         @param frame the backtrace frame for this variable's scope.
-        @return the value of the variable, or None if no such info is available.
+        @return a tuple containing:
+            - the value of the variable, or None if no such info is available
+            - some ExprFlags OR'd together indicating info about the value. 
         """
         if self._const_val is not None:
             # It got hardcoded in the end.
-            return self._const_val
+            return (self._const_val, el.ExprFlags.OK | el.ExprFlags.COMPILE_TIME_CONST)
 
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return None
+            return (None, el.ExprFlags.ERR_NO_LOCATION)
 
         self._cuns.getDebugger().verboseprint("Getting value for local var: ", self.name)
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return None
+            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.access(self.size)
@@ -1249,8 +1257,14 @@ def parseTypesFromDIE(die, cuns, context={}):
         expr_machine = cuns.getExprMachine(
             locationlists.LocationExpr(data_member_location), {})
         expr_machine.push(0)
-        offset_list = expr_machine.eval()
-        (offset, _) = offset_list[0]
+        offset_list, flags = expr_machine.eval()
+        if el.ExprFlags.successful(flags):
+            (offset, _) = offset_list[0]
+        else:
+            cuns.getDebugger.verboseprint("Error decoding data member location for field ",
+                context.get("class").class_name, "::", name, " - ",
+                el.ExprFlags.get_message(flags))
+            offset = None
 
         accessibility = dieattr('accessibility', 1)
         field = FieldType(name, context.get("class"), base, offset, accessibility)
