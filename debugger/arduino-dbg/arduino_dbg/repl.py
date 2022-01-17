@@ -16,6 +16,7 @@ import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
 import arduino_dbg.protocol as protocol
+import arduino_dbg.term as term
 import arduino_dbg.types as types
 
 PROMPT = "\r(adbg) "
@@ -1621,8 +1622,10 @@ class Repl(object):
             try:
                 cmd_obj = commandMap[cmd]
                 cmd_obj.invoke(self, tokens[1:])
+            except dbg.NoServerConnException as e:
+                print(term.fmt(self._debugger, term.ERR, f"Error running '{cmd}': {str(e)}"))
             except Exception as e:
-                print(f"Error running '{cmd}': {e}")
+                print(term.fmt(self._debugger, term.ERR, f"Error running '{cmd}': {e}"))
                 if self._debugger.get_conf("dbg.verbose"):
                     traceback.print_tb(e.__traceback__)
                 else:

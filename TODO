@@ -9,8 +9,10 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Add termcap colors to output (e.g. for verboseprint statements; also distinguish
-    identifier/type/value? Make `Syntax` line in help be bold white?)
+  * termcap colors:
+    * distinguish identifier/type/value? 
+    * Make `Syntax` line in help be bold white?
+
   * bug: In some cases, MethodInfo seems to have all formals added twice?
       load read_byte.dump; locals 3
 

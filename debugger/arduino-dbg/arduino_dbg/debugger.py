@@ -15,6 +15,7 @@ import arduino_dbg.protocol as protocol
 import arduino_dbg.serialize as serialize
 import arduino_dbg.stack as stack
 from arduino_dbg.symbol import Symbol
+import arduino_dbg.term as term
 import arduino_dbg.types as types
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
@@ -24,6 +25,7 @@ _dbg_conf_keys = [
     "arduino.arch",
     "dbg.conf.formatversion",
     "dbg.verbose",
+    "dbg.colors",
 ]
 
 # When we connect to the device, which state are we in?
@@ -49,6 +51,17 @@ VHEX = b'\x00\xFF\x10' # Print base 16
 VHEX2 = b'\x00\xFF\x10\x02' # Print base 16, 0-pad to 2 places
 VHEX4 = b'\x00\xFF\x10\x04' # Print base 16, 0-pad to 4 places
 VHEX8 = b'\x00\xFF\x10\x08' # Print base 16, 0-pad to 8 places
+
+def _verbose_print_all_colors(*args):
+    """
+    Wrapper for _verbose_print_all when terminal colors are enabled.
+    Wraps printed info in cyan fg color.
+    """
+    args = list(args)
+    args.insert(0, term.COLOR_CYAN)
+    args.append(term.COLOR_OFF)
+    _verbose_print_all(*args)
+
 
 def _verbose_print_all(*args):
     """
@@ -145,6 +158,9 @@ def _load_conf_module(module_name, resource_name):
     return conf
 
 
+class NoServerConnException(Exception):
+    pass
+
 class Debugger(object):
     """
         Main debugger state object.
@@ -227,6 +243,7 @@ class Debugger(object):
         # If we open a file it can overwrite this but we start with this non-None default val.
         conf_map["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
         conf_map["dbg.verbose"] = False
+        conf_map["dbg.colors"] = True
 
         return conf_map
 
@@ -313,7 +330,10 @@ class Debugger(object):
 
     def _config_verbose_print(self):
         if self._config['dbg.verbose']:
-            self.verboseprint = _verbose_print_all
+            if self._config['dbg.colors']:
+                self.verboseprint = _verbose_print_all_colors
+            else:
+                self.verboseprint = _verbose_print_all
         else:
             self.verboseprint = _silent
 
@@ -778,8 +798,7 @@ class Debugger(object):
         """
 
         if not self.is_open():
-            print("Error: No debug server connection open")
-            return None
+            raise NoServerConnException("Error: No debug server connection open")
 
         if self._process_state != PROCESS_STATE_BREAK and dbg_cmd != protocol.DBG_OP_BREAK:
             # We need to be in the BREAK state to send any commands to the service
@@ -837,7 +856,7 @@ class Debugger(object):
             return True
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
-            print("Could not interrupt sketch.")
+            print(term.fmt(self, term.WARN, "Could not interrupt sketch."))
             return False
 
 
@@ -849,8 +868,8 @@ class Debugger(object):
             print("Continuing...")
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
-            print("Could not continue sketch.")
-            print("Received unexpected response [%s]" % continue_ok)
+            print(term.fmt(self, term.WARN, "Could not continue sketch."))
+            print(term.fmt(self, term.WARN, "Received unexpected response [%s]" % continue_ok))
 
 
     def reset_sketch(self):
@@ -863,7 +882,8 @@ class Debugger(object):
             Get snapshot of system registers.
         """
         if len(self._arch) == 0:
-            print("Warning: No architecture specified; cannot assign specific registers")
+            print(term.fmt(self, term.WARN, 
+                "Warning: No architecture specified; cannot assign specific registers"))
             register_map = [ "general_regs" ]
             num_general_regs = -1
         else:
@@ -906,7 +926,7 @@ class Debugger(object):
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
         if size is None or size < 1:
-            print(f"Warning: cannot set memory poke size = {size}; using 1")
+            print(term.fmt(self, term.WARN, f"Warning: cannot set memory poke size = {size}; using 1"))
             size = 1
 
         self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], Debugger.RESULT_SILENT)
@@ -922,7 +942,7 @@ class Debugger(object):
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
         if size is None or size < 1:
-            print(f"Warning: cannot set memory fetch size = {size}; using 1")
+            print(term.fmt(self, term.WARN, f"Warning: cannot set memory fetch size = {size}; using 1"))
             size = 1
 
         result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], Debugger.RESULT_ONELINE)
@@ -989,7 +1009,8 @@ class Debugger(object):
         if len(lines) == 0:
             return None # Debugger server does not have memstats capability compiled in.
         elif len(lines) != len(mem_report_fmt):
-            print("Warning: got response inconsistent with expected report format for arch.")
+            print(term.fmt(self, term.WARN, 
+                "Warning: got response inconsistent with expected report format for arch."))
             return None # Debugger server didn't respond with the right mem_list_fmt..?!
 
         mem_map.update(list(zip(mem_report_fmt, lines)))
