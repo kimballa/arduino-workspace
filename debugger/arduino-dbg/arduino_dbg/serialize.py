@@ -50,6 +50,8 @@ def load_config_file(filename, map_name='config', defaults=None):
     return new_conf
 
 
+MAX_BYTES_PER_LINE = 40
+
 def __persist_conf_var(f, k, v):
     """
         Persist k=v in serialized form to the file handle 'f'.
@@ -63,7 +65,19 @@ def __persist_conf_var(f, k, v):
     if v is None or type(v) == str or type(v) == int or type(v) == float or type(v) == bool:
         f.write(repr(v))
     elif type(v) == bytes or type(v) == bytearray:
-        f.write(repr(bytes(v)))
+        vbytes = bytes(v)
+        length = len(vbytes)
+        if length > MAX_BYTES_PER_LINE:
+            # This is used for things like memory dumps; don't create a giant multi-KB line,
+            # it tends to be hard to work with if we need to inspect the file. Chop it up.
+            first = True
+            for offset in range(0, length, MAX_BYTES_PER_LINE):
+                if not first:
+                    f.write(' + \\\n    ')
+                f.write(repr(vbytes[offset: offset + MAX_BYTES_PER_LINE]))
+                first = False
+        else:
+            f.write(repr(bytes(v)))
     elif type(v) == list:
         f.write('[')
         for elem in v:
