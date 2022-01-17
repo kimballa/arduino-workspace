@@ -448,8 +448,19 @@ class DWARFExprMachine(object):
             self._debugger.verboseprint(f'Unwinding register {unwind_location} to value 0x{start_val:x}')
             self.push(start_val)
 
+    def _call_frame_cfa(self, op):
+        """
+        DWARFv5 extension (sec 2.5.1.3 #15)
 
-    # Unimplemented opcodes; not specified in DWARF2; added in DWARF4.
+        "The DW_OP_call_frame_cfa operation pushes the value of the CFA, obtained
+        from the Call Frame Information"
+        """
+        if self._frame is None:
+            # We cannot report the CFA because we don't have a backtrace frame to use for unwinding.
+            raise Exception(f'Cannot push canonical frame address; no backtrace frame set')
+        self.push(self._frame.get_cfa(self.regs))
+
+    # Unimplemented opcodes; not specified in DWARF2; added in DWARF4 or DWARF5..
     _deref_size = _unimplemented_op
     _xderef_size = _unimplemented_op
     _push_object_address = _unimplemented_op
@@ -457,7 +468,6 @@ class DWARFExprMachine(object):
     _call4 = _unimplemented_op
     _call_ref = _unimplemented_op
     _form_tls_address = _unimplemented_op
-    _call_frame_cfa = _unimplemented_op
     _bit_piece = _unimplemented_op
     _implicit_value = _unimplemented_op
     _implicit_pointer = _unimplemented_op
