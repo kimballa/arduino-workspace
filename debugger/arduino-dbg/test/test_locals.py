@@ -56,5 +56,26 @@ class TestLocals(DbgTestCase):
         self.assertEqual(var_values['send'], 191) # I believe this is a reliable local to test.
 
 
+    def test_local_method_name_from_specification(self):
+        """
+        Test that when reporting locals within a method which is partially declarated earlier,
+        and the relevant DW_TAG_subprogram for this $PC uses DW_AT_specification to refer to
+        the former DIE, we pick up the method name correctly.
+        """
+        frames = self.debugger.get_backtrace(limit=3)
+        self.assertTrue(len(frames) >= 3)
+        frame = frames[2]
+        self.assertIsInstance(frame, stack.CallFrame)
+
+        # Get the MethodInfo and LexicalScope entries surrounding $PC.
+        frame_scopes = self.debugger.get_frame_vars(2)
+        self.assertTrue(len(frame_scopes) > 0)
+        scope = frame_scopes[0]
+        self.assertIsInstance(scope, types.MethodInfo)
+
+        # Assert outermost method name properly incorporated as I2C4BitNhdByteSender::readByte().
+        self.assertEqual(scope.member_of.class_name, "I2C4BitNhdByteSender")
+        self.assertEqual(scope.method_name, "readByte")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

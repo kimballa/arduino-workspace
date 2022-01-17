@@ -20,24 +20,9 @@ Client:
       or where on the stack frame above the local the register got saved.
 
 
-  * BUG: Lots of methods named None. Data parse error? Or just need to clean up formatting?
-    Examples:
-
-			2. 149a: I2CParallel::getByte()  (twi.c:219)
-
-			I2CParallel::getByte() and a bunch of inlined TwoWire member methods have 'public void None'
-			signatures in `locals` -- failing to get type/name from abstract origin, maybe?
-
-
-
-			4. 0d4a: NewhavenLcd0440::_scrollScreen()  (NewhavenLcd0440.cpp:296)
-			(adbg) locals 4
-			Method scope: public void None()
-
-      load get_byte.dump; locals 3; locals 4
-
-		* Some formal args don't have names and report "void foo(<sometype> None, ...)"
+  * BUG: Some formal args don't have names and report "void foo(<sometype> None, ...)"
     Get the name? At minimum, clean up the formatting?
+      load get_byte.dump; locals 5
 
   * BUG: exception in `locals` (NoneType object has no attribute 'name')
       load read_byte.dump; locals 5

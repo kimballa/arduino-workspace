@@ -120,6 +120,9 @@ class CompilationUnitNamespace(object):
     def getCU(self):
         return self._cu
 
+    def getOffset(self):
+        return self._die_offset
+
     def getExprMachine(self, location_expr_data, regs):
         """
         Return an expression evaluation machine ready to process the specified location info.
@@ -1060,12 +1063,12 @@ def parseTypesFromDIE(die, cuns, context={}):
 
         return cuns.entry_by_addr(addr)
 
-    def _resolve_abstract_origin():
+    def _resolve_abstract_origin(attr='abstract_origin'):
         """
         Trace the abstract_origin property of this DIE back up to the root of the abstract_origin
         trail.
         """
-        typ = _lookup_type('abstract_origin')
+        typ = _lookup_type(attr)
         return typ.getOrigin()
 
     def _add_entry(typ, name, addr):
@@ -1082,6 +1085,17 @@ def parseTypesFromDIE(die, cuns, context={}):
             return val
         except KeyError:
             return default_value
+
+    def hasattr(name):
+        """
+            Return true if DIE has attribute 'name'.
+        """
+        try:
+            die.attributes['DW_AT_' + name]
+            return True
+        except KeyError:
+            return False
+
 
     def _get_locations(attr_name='location'):
         """
@@ -1288,8 +1302,40 @@ def parseTypesFromDIE(die, cuns, context={}):
             is_decl = origin is not None # If it has no abstract origin, it's also the declaration.
             is_def = True # It has a PC range... concrete method definition.
 
+        if hasattr('declaration'):
+            # If the DW_AT_declaration flag is provided, DWARFv5 says this is a declaration
+            # and *not* the definition, overriding prior heuristic flag values. (DWARFv5 2.13.1)
+            is_decl = True
+            is_def = False
+
+        if hasattr('specification') and origin is None:
+            # This incomplete entry has the DW_AT_specification field, which is an offset from
+            # cu_offset. The specification points to another incomplete declaration from
+            # which we can populate data we need. (DWARFv5 2.13.2)
+            origin = _resolve_abstract_origin('specification')
+
+        if origin is not None:
+            # The origin can populate fields we lack.
+            if name is None:
+                name = origin.method_name
+            if return_type is None:
+                return_type = origin.return_type
+            if enclosing_class is None:
+                enclosing_class = origin.member_of
+
         method = MethodInfo(name, return_type, cuns, enclosing_class, virtual, accessibility,
             is_decl, is_def, origin)
+
+        if die.offset - cu_offset == 222:
+            print(f'got the special one')
+            print(f'{method}')
+            print(f'{die.offset:x} {die}')
+
+
+        if name is None and origin is None:
+            print(f'{method}')
+            print(f'{die.offset:x} {die}')
+            raise Exception(f"Got method with name=None, origin=None startPC={dieattr('low_pc')}")
 
         if enclosing_class:
             enclosing_class.addMethod(method)
@@ -1385,6 +1431,7 @@ def parseTypesFromDIE(die, cuns, context={}):
         origin = None
         if dieattr('abstract_origin'):
             origin = _resolve_abstract_origin()
+
         name = dieattr('name')
         if name is None and origin is not None:
             name = origin.name
