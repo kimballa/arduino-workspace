@@ -365,7 +365,7 @@ class DWARFExprMachine(object):
 
     def _reg_lookup(self, op):
         """ breg0 .. breg31 op - look up data at the address stored in the register. """
-        reg_num = op.op - dwarf_expr.DW_OP_name2opcode['DW_OP_reg0']
+        reg_num = op.op - dwarf_expr.DW_OP_name2opcode['DW_OP_breg0']
         self._reg_lookup_internal(reg_num)
 
     def _bregx(self, op):

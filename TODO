@@ -9,6 +9,12 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
+    control/suppress existing ones.
+    - Server could have a memory array for $PC values we /don't/ stop at. If $prevPC
+      is on the list, don't actually go into the service.
+    - Could maybe also manage this client-side; higher-latency, but would have unlimited
+      memory for bp suppressions and possibly less brittle asm work.
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
@@ -47,7 +53,6 @@ Client:
 
   * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
   * Use image dumps for integration testing.
-    Set up BREAK() statements in various strategic places to set up different test cases.
 
 SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
 * Breakpoint unit support
