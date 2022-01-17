@@ -19,6 +19,7 @@ Client:
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
 
+
   * Lots of methods named None. Data parse error? Or just need to clean up formatting?
     Examples:
 
@@ -33,6 +34,8 @@ Client:
 			(adbg) locals 4
 			Method scope: public void None()
 
+      load get_byte.dump; locals 3; locals 4
+
 		* Some formal args don't have names and report "void foo(<sometype> None, ...)"
     Get the name? At minimum, clean up the formatting?
 
@@ -43,6 +46,13 @@ Client:
 
 			Error running 'locals': Unimplemented DWARF expr op='DW_OP_GNU_entry_value'
 					args=[[DWARFExprOp(op=102, op_name='DW_OP_reg22', args=[])]]
+
+    * Parse DW_OP_GNU_entry_value
+      load get_byte.dump; locals 2; locals 5
+
+  * Bug causes exception in `locals` (NoneType object has no attribute 'name')
+      load read_byte.dump; locals 5
+
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
