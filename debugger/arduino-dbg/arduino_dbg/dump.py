@@ -68,6 +68,11 @@ def capture_dump(debugger, dump_filename):
     del memstats['RAMEND']
     del memstats['FLASHEND']
 
+    num_gpio = debugger.get_platform_conf("gpio_pins")
+    gpio = []
+    for i in range(0, num_gpio):
+        gpio.append(debugger.get_gpio_value(i))
+
     if instruction_set == 'avr':
         # Prepend general-purpose register file data to the beginning of the RAM image.
         reg_bytes = bytearray()
@@ -101,6 +106,7 @@ def capture_dump(debugger, dump_filename):
     out['ram_image_start'] = sram_offset
     out['registers'] = regs
     out['memstats'] = memstats
+    out['gpio'] = gpio
     out[DUMP_SCHEMA_KEY] = DUMP_SCHEMA_VER
 
     serialize.persist_config_file(dump_filename, SERIALIZED_STATE_KEY, out)
@@ -162,6 +168,11 @@ class HostedDebugService(object):
         self._memstats = None
         if dump_data.get('memstats'):
             self._memstats = dump_data['memstats']
+
+        self._num_gpio = self._debugger.get_platform_conf("gpio_pins")
+        self._gpio = self._num_gpio * [0]
+        if dump_data.get('gpio'):
+            self._gpio = dump_data['gpio']
 
         self.platform = dump_data['platform']
         self.arch = dump_data['arch']
@@ -248,12 +259,21 @@ class HostedDebugService(object):
                             self._send('0') # e.g. unknown __malloc_heap_end
                 self._send('$')
             elif cmd == protocol.DBG_OP_PORT_IN:
-                # We silently ignore gpio input
-                pass
+                # Return a GPIO value to the user.
+                addr = args[0]
+                try:
+                    val = 1 * (self._gpio[addr] != 0)
+                except:
+                    val = 0 # Invalid GPIO port? Return LOW.
+                self._send(f'{int(val)&1:b}')
             elif cmd == protocol.DBG_OP_PORT_OUT:
-                # All GPIOs are low in our simulated world.
-                # TODO(aaron): We could strobe these during the 'dump' and keep a map of them here.
-                self._send("0")
+                # "Drive" a "pin" with the specified GPIO value.
+                addr = args[0]
+                val = int((args[1] != 0) * 1)
+                try:
+                    self._gpio[addr] = val
+                except:
+                    pass # Invalid GPIO port? Ignore...
             elif cmd == protocol.DBG_OP_RESET:
                 self._send_comment("Cannot reset in image debugger")
             elif cmd == protocol.DBG_OP_REGISTERS:

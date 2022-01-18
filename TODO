@@ -13,15 +13,9 @@ Client:
 
   * termcap colors:
     * distinguish identifier/type/value?
-    * Make `Syntax` line in help be bold white?
 
   * bug: In some cases, MethodInfo seems to have all formals added twice?
       load read_byte.dump; locals 3
-
-  * dump / load should grab `MEMSTATS` and save `__malloc_heap_start` / `__malloc_heap_end`
-    to be able to reproduce them in offline mode.
-  * dump / load should grab the gpio values and mimic ability to set outputs / retrieve
-    gpio pin values.
 
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
     control/suppress existing ones.
