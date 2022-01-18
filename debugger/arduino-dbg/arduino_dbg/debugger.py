@@ -128,15 +128,9 @@ class Debugger(object):
         if self.elf_name:
             self.elf_name = os.path.realpath(elf_name)
 
-        self._sections = {}
-        self._addr_to_symbol = SortedDict()
-        self._symbols = SortedDict()
-        self._demangled_to_symbol = SortedDict()
-        self._dwarf_info = None
-        self.elf = None
+        self._init_clear_elf_state()
         self._elf_file_handle = None
         self.verboseprint = _silent # verboseprint() method is either _silent() or _verbose_print_all()
-        self._cached_frames = None
 
         if not self._conn:
             # If we're not connected to anything, stay in 'BREAK' state.
@@ -148,17 +142,26 @@ class Debugger(object):
                 name='Debugger serial listener')
             self._listen_thread.start()
 
-        start_time = time.time()
-
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
         self._init_config_from_file()
 
-        types.clear_type_state() # Reset global state left over from prior Debugger(s).
+        # Load the real debug info from the ELF file.
+        self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
         self._read_elf()
 
-        end_time = time.time()
-        self.verboseprint(f'Loaded debugger information in {1000*(end_time - start_time):0.01f}ms.')
+    def _init_clear_elf_state(self):
+        self._sections = {}
+        self._addr_to_symbol = SortedDict()
+        self._symbols = SortedDict()
+        self._demangled_to_symbol = SortedDict()
+        self._dwarf_info = None
+        self.elf = None
+        self._cached_frames = None
+
+
+    def get_debug_info(self):
+        return self._debug_info_types
 
     def close(self):
         """
@@ -249,6 +252,13 @@ class Debugger(object):
         """
             If the arduino.arch key is set, use it to load the arch-specific config.
         """
+        if self._arch:
+            old_int_size = self.get_arch_conf("int_size")
+            old_addr_size = self.get_arch_conf("ret_addr_size")
+        else:
+            old_int_size = None
+            old_addr_size = None
+
         arch_name = self.get_conf("arduino.arch")
         if not arch_name:
             return
@@ -257,6 +267,18 @@ class Debugger(object):
             return # Nothing to load.
 
         self._arch = new_conf
+
+        if old_int_size is not None:
+            # If the width of 'int' or pointer addr changes by virtue of changing the architecture
+            # profile, the ELF file must be reloaded.
+            new_int_size = self.get_arch_conf("int_size")
+            new_addr_size = self.get_arch_conf("ret_addr_size")
+            if new_int_size != old_int_size or new_addr_size != old_addr_size:
+                self._print_q.put((
+                    f'Arch changed widths: int={new_int_size}, ptr={new_addr_size}. Reloading ELF...',
+                    MsgLevel.WARN))
+                self._print_q.join()
+                self._read_elf()
 
 
     def set_conf(self, key, val):
@@ -388,10 +410,22 @@ class Debugger(object):
         """
             Read the target ELF file to load debugging information.
         """
+        start_time = time.time()
+
         if self.elf_name is None:
             self._print_q.put(("No ELF file provided; cannot load symbols", MsgLevel.WARN))
             return
 
+        # If there's already an open ELF file, close it out.
+        if self._elf_file_handle:
+            # Close the ELF file we opened at the beginning.
+            self._elf_file_handle.close()
+        self._elf_file_handle = None
+
+        # Clear any existing ELF-populated state.
+        self._init_clear_elf_state()
+
+        # Now we're clear to load the new ELF.
         self._elf_file_handle = open(self.elf_name, 'rb')
         self.elf = ELFFile(self._elf_file_handle)
         self._print_q.put((f"Loading image and symbols from {self.elf_name}", MsgLevel.INFO))
@@ -431,7 +465,7 @@ class Debugger(object):
                 self._dwarf_info = None
                 self.verboseprint("Warning: empty debug info in program binary.")
             if self._dwarf_info:
-                types.parseTypeInfo(self._dwarf_info, self)
+                self._debug_info_types.parseTypeInfo(self._dwarf_info)
                 # TODO(aaron): Link the parsed .debug_info / type information to our symbol table.
 
                 # Link .debug_frame unwind info to symbols:
@@ -463,6 +497,9 @@ class Debugger(object):
 
         else:
             self.verboseprint("Warning: no debug info in program binary.")
+
+        end_time = time.time()
+        self.verboseprint(f'Loaded debug information in {1000*(end_time - start_time):0.01f}ms.')
 
 
     def get_frame_cie(self):
@@ -1130,7 +1167,7 @@ class Debugger(object):
             return None # No such frame.
 
         pc = frame_regs["PC"]
-        return types.getScopesForPC(pc, include_global=False)
+        return self._debug_info_types.getScopesForPC(pc, include_global=False)
 
 
     def get_return_addr_from_stack(self, stack_addr):

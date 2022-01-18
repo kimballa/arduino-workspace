@@ -39,7 +39,7 @@ class TestBacktrace(DbgTestCase):
         self.assertIsInstance(frame, stack.CallFrame)
         self.assertEqual(frame.addr, 0x23f4)
         self.assertEqual(frame.demangled, 'main')
-        print(frame.demangled_inline_chain)
+        #print(frame.demangled_inline_chain)
         self.assertEqual(len(frame.demangled_inline_chain), 4)
         self.assertEqual(len(frame.inline_chain), 4)
         self.assertEqual(frame.demangled_inline_chain, [
@@ -53,7 +53,7 @@ class TestBacktrace(DbgTestCase):
         frame = frames[6] # main()
 
         # Check that the symbol info is resolved correctly.
-        print(frame.sym.__class__)
+        #print(frame.sym.__class__)
         self.assertIsInstance(frame.sym, symbol.Symbol)
         self.assertEqual(frame.sym.name, 'main')
         self.assertEqual(frame.sym.demangled, 'main')

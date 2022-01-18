@@ -5,7 +5,6 @@
 import elftools.dwarf.callframe as callframe
 
 import arduino_dbg.binutils as binutils
-import arduino_dbg.types as types
 
 _debugger_methods = [
   "__vector_17",     # timer interrupt
@@ -43,7 +42,7 @@ class CallFrame(object):
 
         # Look up info about method inlining; the decoded name for $PC may logically
         # be within more methods.
-        self.inline_chain = types.getMethodsForPC(addr)
+        self.inline_chain = debugger.get_debug_info().getMethodsForPC(addr)
 
         self.frame_size = self._calculate_stack_frame_size()
         self._calculate_source_line(debugger.elf_name)

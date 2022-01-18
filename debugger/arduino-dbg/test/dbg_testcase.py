@@ -3,7 +3,6 @@
 import arduino_dbg.debugger as debugger
 import arduino_dbg.dump as dump
 import arduino_dbg.term as term
-import arduino_dbg.types as types
 
 import unittest
 
@@ -70,5 +69,5 @@ class DbgTestCase(unittest.TestCase):
         pc = registers["PC"]
         self.assertIsInstance(pc, int)
         self.assertGreater(pc, 0)
-        return types.getNamedDebugInfoEntry(sym_or_type, pc)
+        return self.debugger.get_debug_info().getNamedDebugInfoEntry(sym_or_type, pc)
 

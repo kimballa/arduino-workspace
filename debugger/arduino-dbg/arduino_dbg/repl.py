@@ -235,8 +235,8 @@ class ReplAutoComplete(object):
 
     def _complete_type(self, prefix):
         lst = SortedList()
-        # types.types() iteratively yields tuples of (typename, typedata). Just keep the name.
-        lst.update([elt[0] for elt in types.types(prefix)])
+        # ParsedDebugInfo.types() iteratively yields tuples of (typename, typedata). Just keep the name.
+        lst.update([elt[0] for elt in self._debugger.get_debug_info().types(prefix)])
         return lst
 
     def _complete_symbol_or_type(self, prefix):
@@ -1352,7 +1352,7 @@ class Repl(object):
         List all defined datatypes
         """
 
-        for (name, typ) in types.types():
+        for (name, typ) in self._debugger.get_debug_info().types():
             print(typ)
 
     @Command(keywords=['addr', '.'], completions=[Completions.SYM])
@@ -1393,7 +1393,7 @@ class Repl(object):
         registers = self._debugger.get_registers()
         pc = registers["PC"]
         sym = argv[0]
-        (kind, typ) = types.getNamedDebugInfoEntry(sym, pc)
+        (kind, typ) = self._debugger.get_debug_info().getNamedDebugInfoEntry(sym, pc)
         if kind is None:
             print(f'{sym}: <unknown type>')
         elif kind == types.KIND_TYPE or kind == types.KIND_METHOD:
