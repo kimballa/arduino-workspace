@@ -86,7 +86,7 @@ class SerialConn(DebugConn):
         self._conn = None
 
     def __repr__(self):
-        return f'SerialDebugConn(port={self.port}, baud={self.baud}, tm={self.timeout}, ' + \
+        return f'SerialDebugConn(port={self.port}, baud={self.baud}, timeout={self.timeout}, ' + \
             f'is_open={self.is_open()})'
 
 
@@ -201,7 +201,7 @@ class LocalBidiPipeConn(DebugConn):
 
 
     def __repr__(self):
-        return f"LocalBidiConn(r={self._read_fd}, w={self._write_fd})"
+        return f"LocalBidiConn(r={self._read_fd}, w={self._write_fd}, is_open={self.is_open()})"
 
 
 def make_bidi_pipe():

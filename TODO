@@ -9,8 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Add `open` command to open the serial connection.
-
   * termcap colors:
     * distinguish identifier/type/value?
 

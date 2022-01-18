@@ -70,6 +70,7 @@ class MsgLevel(object):
     WARN        = 2         # Warnings
     ERR         = 3         # Errors
     DEBUG       = 4         # verboseprint() info from Debugger.
+    SUCCESS     = 5         # Successful.
 
     @staticmethod
     def color_for_msg(msg_level):
@@ -89,6 +90,8 @@ class MsgLevel(object):
             return ERR
         elif msg_level == MsgLevel.DEBUG:
             return COLOR_GRAY
+        elif msg_level == MsgLevel.SUCCESS:
+            return SUCCESS
         else:
             return INFO
 

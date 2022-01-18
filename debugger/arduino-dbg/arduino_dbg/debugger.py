@@ -118,11 +118,15 @@ class Debugger(object):
     """
 
     def __init__(self, elf_name, connection, print_q, arduino_platform=None):
-        self._conn = connection
         self._print_q = print_q # Data from serial conn to print directly to console.
-        self._recv_q = queue.Queue(maxsize=16) # Data from serial conn for debug internal use.
-        self._send_q = queue.Queue(maxsize=1) # Data to send out on serial conn.
-        self._alive = True
+
+        self._recv_q = None
+        self._send_q = None
+        # Before we're connected to anything, stay in 'BREAK' state.
+        self._process_state = PROCESS_STATE_BREAK
+        self._listen_thread = None
+        self._alive = False
+        self._conn = None
 
         self.elf_name = elf_name
         if self.elf_name:
@@ -132,15 +136,7 @@ class Debugger(object):
         self._elf_file_handle = None
         self.verboseprint = _silent # verboseprint() method is either _silent() or _verbose_print_all()
 
-        if not self._conn:
-            # If we're not connected to anything, stay in 'BREAK' state.
-            self._process_state = PROCESS_STATE_BREAK
-            self._listen_thread = None
-        else:
-            self._process_state = PROCESS_STATE_UNKNOWN
-            self._listen_thread = threading.Thread(target=self._conn_listener,
-                name='Debugger serial listener')
-            self._listen_thread.start()
+        self.open(connection)
 
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
@@ -163,9 +159,32 @@ class Debugger(object):
     def get_debug_info(self):
         return self._debug_info_types
 
-    def close(self):
+    def open(self, connection):
         """
-            Clean up the debugger and release file resources.
+            Link to the provided connection.
+        """
+        if not connection:
+            return # Nothing to connect to.
+
+        if self._conn:
+            # Close existing conn before opening new one.
+            self._close_serial()
+
+        self._conn = connection
+        self._print_q.put((f"Opening connection to {connection}...", MsgLevel.INFO))
+        self._recv_q = queue.Queue(maxsize=16) # Data from serial conn for debug internal use.
+        self._send_q = queue.Queue(maxsize=1) # Data to send out on serial conn.
+        self._alive = True
+        self._process_state = PROCESS_STATE_UNKNOWN
+        self._listen_thread = threading.Thread(target=self._conn_listener,
+            name='Debugger serial listener')
+        self._listen_thread.start()
+        if self.is_open():
+            self._print_q.put(("Connected.", MsgLevel.SUCCESS))
+
+    def _close_serial(self):
+        """
+        Release serial connection resources.
         """
         self._alive = False
         if self._listen_thread:
@@ -176,6 +195,17 @@ class Debugger(object):
         if self._conn:
             self._conn.close()
         self._conn = None
+
+        self._recv_q = None
+        self._send_q = None
+
+        self._process_state = PROCESS_STATE_BREAK
+
+    def close(self):
+        """
+            Clean up the debugger and release file resources.
+        """
+        self._close_serial()
 
         if self._elf_file_handle:
             # Close the ELF file we opened at the beginning.

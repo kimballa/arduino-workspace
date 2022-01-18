@@ -13,6 +13,7 @@ import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
+import arduino_dbg.io as io
 import arduino_dbg.protocol as protocol
 import arduino_dbg.term as term
 import arduino_dbg.types as types
@@ -559,6 +560,28 @@ class Repl(object):
         Resumes execution after a breakpoint or interrupt.
         """
         self._debugger.send_continue()
+
+    @Command(keywords=['open'])
+    def _open(self, argv):
+        """
+        Open serial connection to a device to debug
+
+            Syntax: open </dev/ttyname> [<baud>]
+
+        If baud rate is not specified, attempts to use 57600
+        """
+        if len(argv) == 0:
+            print("Syntax: open </dev/ttyname> [<baud>]")
+            return
+
+        port = argv[0]
+        if len(argv) > 1:
+            baud = argv[1]
+        else:
+            baud = 57600
+
+        connection = io.SerialConn(port, baud, 0.1)
+        self._debugger.open(connection)
 
 
     @Command(keywords=['flash', 'xf'], completions=[Completions.WORD_SIZE])
