@@ -117,7 +117,7 @@ class Debugger(object):
         Main debugger state object.
     """
 
-    def __init__(self, elf_name, connection, print_q):
+    def __init__(self, elf_name, connection, print_q, arduino_platform=None):
         self._conn = connection
         self._print_q = print_q # Data from serial conn to print directly to console.
         self._recv_q = queue.Queue(maxsize=16) # Data from serial conn for debug internal use.
@@ -144,7 +144,7 @@ class Debugger(object):
 
         # General user-accessible config.
         # Load latest config from a dotfile in user's $HOME.
-        self._init_config_from_file()
+        self._init_config_from_file(arduino_platform)
 
         # Load the real debug info from the ELF file.
         self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
@@ -201,12 +201,14 @@ class Debugger(object):
 
         return conf_map
 
-    def _init_config_from_file(self):
+    def _init_config_from_file(self, arduino_platform=None):
         """
             If the user has a config file (see _LOCAL_CONF_FILENAME) then initialize self._config
             from that.
         """
         defaults = self._set_conf_defaults({})
+        if arduino_platform:
+            defaults['arduino.platform'] = arduino_platform
         config_key = 'config'
 
         if os.path.exists(_LOCAL_CONF_FILENAME):
@@ -219,7 +221,7 @@ class Debugger(object):
         self._arch = {} # CPU architecture-specific config (filled from conf file)
         self._config_verbose_print()
 
-        self._load_platform() # cascade platform def from config, arch def from platform.
+        self._load_platform(arduino_platform) # cascade platform def from config, arch def from platform.
 
     def _persist_config(self):
         """
@@ -233,11 +235,18 @@ class Debugger(object):
         serialize.persist_config_file(_LOCAL_CONF_FILENAME, config_key, self._config)
 
 
-    def _load_platform(self):
+    def _load_platform(self, arduino_platform=None):
         """
             If the arduino.platform key is set, use it to load the platform-specific config.
+            If not None, use the argument arduino_platform instead of the platform value.
         """
-        platform_name = self.get_conf("arduino.platform")
+        if arduino_platform is not None:
+            # Override config.
+            platform_name = arduino_platform
+            self._config['arduino.platform'] = arduino_platform
+        else:
+            platform_name = self.get_conf("arduino.platform")
+
         if not platform_name:
             return
         new_conf = _load_conf_module("arduino_dbg.platforms", platform_name, self._print_q)

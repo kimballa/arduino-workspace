@@ -127,8 +127,7 @@ def load_dump(filename, print_q):
 
     # Create a new Debugger instance connected to the 'left' pipe.
     # Specify the ELF file associated with this dump and the relevant Arduino platform.
-    dbg = debugger.Debugger(elf_filename, left, print_q)
-    dbg.set_conf("arduino.platform", dump_data['platform'])
+    dbg = debugger.Debugger(elf_filename, left, print_q, arduino_platform=dump_data['platform'])
     dbg.set_process_state(debugger.PROCESS_STATE_BREAK) # It's definitionally always paused.
 
     # Create a service that acts like the __dbg_service() in C.
