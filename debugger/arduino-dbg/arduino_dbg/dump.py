@@ -63,6 +63,11 @@ def capture_dump(debugger, dump_filename):
 
     regs = debugger.get_registers()
 
+    memstats = debugger.get_memstats()
+    del memstats['RAMSTART'] # Remove memstats components that are populated from _arch.
+    del memstats['RAMEND']
+    del memstats['FLASHEND']
+
     if instruction_set == 'avr':
         # Prepend general-purpose register file data to the beginning of the RAM image.
         reg_bytes = bytearray()
@@ -95,6 +100,7 @@ def capture_dump(debugger, dump_filename):
     out['ram_image'] = bytes(sram_byte_string)
     out['ram_image_start'] = sram_offset
     out['registers'] = regs
+    out['memstats'] = memstats
     out[DUMP_SCHEMA_KEY] = DUMP_SCHEMA_VER
 
     serialize.persist_config_file(dump_filename, SERIALIZED_STATE_KEY, out)
@@ -153,6 +159,10 @@ class HostedDebugService(object):
         self._memory = bytearray(dump_data['ram_image'])
         self._regs = dump_data['registers']
 
+        self._memstats = None
+        if dump_data.get('memstats'):
+            self._memstats = dump_data['memstats']
+
         self.platform = dump_data['platform']
         self.arch = dump_data['arch']
         self.elf_file_name = dump_data['elf_file_name']
@@ -180,6 +190,7 @@ class HostedDebugService(object):
 
         num_gen_registers = self._debugger.get_arch_conf("general_regs")
         endian = self._debugger.get_arch_conf("endian")
+        mem_list_fmt = self._debugger.get_arch_conf("mem_list_fmt")
 
         while self.stay_alive:
             while not self._conn.available():
@@ -224,9 +235,17 @@ class HostedDebugService(object):
                 for i in range(0, size):
                     self._memory[addr + i] = new_bytes[i]
             elif cmd == protocol.DBG_OP_MEMSTATS:
-                self._send(f'{self._regs["SP"]:x}')
-                self._send('0') # malloc_heap_end
-                self._send('0') # malloc_heap_start
+                if self._memstats is not None:
+                    # We memorized memstats during dump process.
+                    for key in mem_list_fmt:
+                        self._send(f'{self._memstats[key]:x}')
+                else:
+                    # Don't know the memstats; just send the correct number of 0's.
+                    for key in mem_list_fmt:
+                        if key == "SP":
+                            self._send(f'{self._regs["SP"]:x}')
+                        else:
+                            self._send('0') # e.g. unknown __malloc_heap_end
                 self._send('$')
             elif cmd == protocol.DBG_OP_PORT_IN:
                 # We silently ignore gpio input
