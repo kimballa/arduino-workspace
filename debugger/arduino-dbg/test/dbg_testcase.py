@@ -2,7 +2,7 @@
 
 import arduino_dbg.debugger as debugger
 import arduino_dbg.dump as dump
-import arduino_dbg.repl as repl
+import arduino_dbg.term as term
 import arduino_dbg.types as types
 
 import unittest
@@ -37,7 +37,8 @@ class DbgTestCase(unittest.TestCase):
             # No fixture setup required.
             return
 
-        cls.console_printer = repl.ConsolePrinter()
+        #cls.console_printer = term.ConsolePrinter()
+        cls.console_printer = term.NullPrinter()
         cls.console_printer.start()
 
         (debugger, dbg_service) = dump.load_dump(filename, cls.console_printer.print_q)

@@ -61,7 +61,7 @@ class TestLocals(DbgTestCase):
 
     def test_local_method_name_from_specification(self):
         """
-        Test that when reporting locals within a method which is partially declarated earlier,
+        Test that when reporting locals within a method which is partially declared earlier,
         and the relevant DW_TAG_subprogram for this $PC uses DW_AT_specification to refer to
         the former DIE, we pick up the method name correctly.
         """

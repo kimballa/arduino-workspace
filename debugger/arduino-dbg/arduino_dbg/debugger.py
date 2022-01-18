@@ -16,6 +16,7 @@ import arduino_dbg.serialize as serialize
 import arduino_dbg.stack as stack
 from arduino_dbg.symbol import Symbol
 import arduino_dbg.term as term
+from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
@@ -52,62 +53,11 @@ VHEX2 = b'\x00\xFF\x10\x02' # Print base 16, 0-pad to 2 places
 VHEX4 = b'\x00\xFF\x10\x04' # Print base 16, 0-pad to 4 places
 VHEX8 = b'\x00\xFF\x10\x08' # Print base 16, 0-pad to 8 places
 
-def _verbose_print_all_colors(*args):
-    """
-    Wrapper for _verbose_print_all when terminal colors are enabled.
-    Wraps printed info in cyan fg color.
-    """
-    args = list(args)
-    args.insert(0, term.COLOR_CYAN)
-    args.append(term.COLOR_OFF)
-    _verbose_print_all(*args)
-
-
-def _verbose_print_all(*args):
-    """
-    Verbose printing method that lazily concatenates its arguments rather than requiring
-    callers to compute an f'string that might get swallowed by _silent() if verbose printing is
-    disabled.
-    """
-
-    s = ''
-    next_ctrl = None
-    for arg in args:
-        if isinstance(arg, bytes):
-            if arg == VDEC or arg == VHEX or arg == VHEX2 or arg == VHEX4 or arg == VHEX8:
-                next_ctrl = arg
-                continue
-            else:
-                # Just a byte string to format.
-                s += repr(arg)
-        elif next_ctrl is not None and isinstance(arg, int):
-            if next_ctrl == VDEC:
-                s += f'{arg}'
-            elif next_ctrl == VHEX:
-                s += f'{arg:x}'
-            elif next_ctrl == VHEX2:
-                s += f'{arg:02x}'
-            elif next_ctrl == VHEX4:
-                s += f'{arg:04x}'
-            elif next_ctrl == VHEX8:
-                s += f'{arg:08x}'
-            else:
-                # Shouldn't get here with an invalid next_ctrl setting...
-                s += f'<???>{arg}<???>'
-        elif isinstance(arg, str):
-            s += arg
-        else:
-            s += repr(arg)
-
-        next_ctrl = None
-
-    print(s)
 
 
 
 
-
-def _load_conf_module(module_name, resource_name):
+def _load_conf_module(module_name, resource_name, print_q):
     """
         Open a resource (file) within a module with a '.conf' extension and treat it like python
         code; execute it in a sheltered environment and return the processed globals as a k-v map.
@@ -127,7 +77,7 @@ def _load_conf_module(module_name, resource_name):
             more .conf files. This is restricted to the same module_name as the exterior binding
             scope.
         """
-        included_map = _load_conf_module(module_name, extra_resource_name)
+        included_map = _load_conf_module(module_name, extra_resource_name, print_q)
         # Copy the items from the included map into the namespace of the including conf file
         for (k, v) in included_map.items():
             conf[k] = v
@@ -150,10 +100,11 @@ def _load_conf_module(module_name, resource_name):
 
     except:
         # Error parsing/executing conf; return empty result.
-        print("Error loading config profile: %s" % conf_resource_name)
+        print_q.put(("Error loading config profile: %s" % conf_resource_name, MsgLevel.ERR))
         return None
 
-    print("Loading config profile: %s; read %d keys" % (conf_resource_name, len(conf)))
+    print_q.put(("Loading config profile: %s; read %d keys" % (conf_resource_name, len(conf)),
+        MsgLevel.INFO))
     # conf is now populated with the globals from executing the conf file.
     return conf
 
@@ -286,7 +237,7 @@ class Debugger(object):
         platform_name = self.get_conf("arduino.platform")
         if not platform_name:
             return
-        new_conf = _load_conf_module("arduino_dbg.platforms", platform_name)
+        new_conf = _load_conf_module("arduino_dbg.platforms", platform_name, self._print_q)
         if not new_conf:
             return
 
@@ -301,7 +252,7 @@ class Debugger(object):
         arch_name = self.get_conf("arduino.arch")
         if not arch_name:
             return
-        new_conf = _load_conf_module("arduino_dbg.arch", arch_name)
+        new_conf = _load_conf_module("arduino_dbg.arch", arch_name, self._print_q)
         if not new_conf:
             return # Nothing to load.
 
@@ -328,12 +279,60 @@ class Debugger(object):
 
         self._persist_config() # Write changes to conf file.
 
+    def _make_verbose_print_fn(self):
+        """
+        Return a 'verboseprint()' method that curries the self._print_q field.
+        """
+
+        def _verbose_print_all(*args):
+            """
+            Verbose printing method that lazily concatenates its arguments rather than requiring
+            callers to compute an f'string that might get swallowed by _silent() if verbose printing is
+            disabled.
+            """
+
+            s = ''
+            next_ctrl = None
+            for arg in args:
+                if isinstance(arg, bytes):
+                    if arg == VDEC or arg == VHEX or arg == VHEX2 or arg == VHEX4 or arg == VHEX8:
+                        next_ctrl = arg
+                        continue
+                    else:
+                        # Just a byte string to format.
+                        s += repr(arg)
+                elif next_ctrl is not None and isinstance(arg, int):
+                    if next_ctrl == VDEC:
+                        s += f'{arg}'
+                    elif next_ctrl == VHEX:
+                        s += f'{arg:x}'
+                    elif next_ctrl == VHEX2:
+                        s += f'{arg:02x}'
+                    elif next_ctrl == VHEX4:
+                        s += f'{arg:04x}'
+                    elif next_ctrl == VHEX8:
+                        s += f'{arg:08x}'
+                    else:
+                        # Shouldn't get here with an invalid next_ctrl setting...
+                        s += f'<???>{arg}<???>'
+                elif isinstance(arg, str):
+                    s += arg
+                else:
+                    s += repr(arg)
+
+                next_ctrl = None
+
+            self._print_q.put((s, MsgLevel.DEBUG))
+            self._print_q.join() # Process DEBUG-level messages synchronously, so we can see
+                                 # them in proper serialized order w/ the output of the repl.
+
+        return _verbose_print_all
+
+
     def _config_verbose_print(self):
+        term.set_use_colors(self._config['dbg.colors'])
         if self._config['dbg.verbose']:
-            if self._config['dbg.colors']:
-                self.verboseprint = _verbose_print_all_colors
-            else:
-                self.verboseprint = _verbose_print_all
+            self.verboseprint = self._make_verbose_print_fn()
         else:
             self.verboseprint = _silent
 
@@ -390,12 +389,12 @@ class Debugger(object):
             Read the target ELF file to load debugging information.
         """
         if self.elf_name is None:
-            print("No ELF file provided; cannot load symbols")
+            self._print_q.put(("No ELF file provided; cannot load symbols", MsgLevel.WARN))
             return
 
         self._elf_file_handle = open(self.elf_name, 'rb')
         self.elf = ELFFile(self._elf_file_handle)
-        print(f"Loading image and symbols from {self.elf_name}")
+        self._print_q.put((f"Loading image and symbols from {self.elf_name}", MsgLevel.INFO))
 
         for elf_sect in self.elf.iter_sections():
             section = {}
@@ -451,7 +450,9 @@ class Debugger(object):
                     else:
                         # We have a CFI that claims to start at this $PC, but no method
                         # claims this address.
-                        print(f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}")
+                        self._print_q.put(
+                            (f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}",
+                            MsgLevel.WARN))
 
                     #for row in cfi_e.get_decoded().table:
                     #    row2 = row.copy()
@@ -635,7 +636,7 @@ class Debugger(object):
                     submitted = False
                     while self._alive and not submitted:
                         try:
-                            self._print_q.put(line[1:], timeout=Debugger.QUEUE_TIMEOUT)
+                            self._print_q.put((line[1:], MsgLevel.DEVICE), timeout=Debugger.QUEUE_TIMEOUT)
                             submitted = True
                         except queue.Full:
                             continue
@@ -661,7 +662,7 @@ class Debugger(object):
                     submitted = False
                     while self._alive and not submitted:
                         try:
-                            self._print_q.put(line[1:], timeout=Debugger.QUEUE_TIMEOUT)
+                            self._print_q.put((line[1:], MsgLevel.DEVICE), timeout=Debugger.QUEUE_TIMEOUT)
                             submitted = True
                         except queue.Full:
                             continue
@@ -685,7 +686,7 @@ class Debugger(object):
             # Nothing further to process in this thread; no response.
             pass
         else:
-            self._print_q.put(f'Error: unkonwn response_type {response_type}')
+            self._print_q.put((f'Error: unkonwn response_type {response_type}', MsgLevel.ERR))
 
     def __flush_recv_q(self):
         """
@@ -711,7 +712,7 @@ class Debugger(object):
         submitted = False
         while self._alive and not submitted:
             try:
-                self._print_q.put("Paused.", timeout=Debugger.QUEUE_TIMEOUT)
+                self._print_q.put(("Paused.", MsgLevel.INFO), timeout=Debugger.QUEUE_TIMEOUT)
                 submitted = True
             except queue.Full:
                 continue
@@ -768,7 +769,7 @@ class Debugger(object):
                     # forward it to the ConsolePrinter.
                     while self._alive and not submitted:
                         try:
-                            self._print_q.put(line[1:], timeout=Debugger.QUEUE_TIMEOUT)
+                            self._print_q.put((line[1:], MsgLevel.DEVICE), timeout=Debugger.QUEUE_TIMEOUT)
                             submitted = True
                         except queue.Full:
                             continue
@@ -784,7 +785,7 @@ class Debugger(object):
                     # receive a response to a command in this state.
                     while self._alive and not submitted:
                         try:
-                            self._print_q.put(line, timeout=Debugger.QUEUE_TIMEOUT)
+                            self._print_q.put((line, MsgLevel.DEVICE), timeout=Debugger.QUEUE_TIMEOUT)
                             submitted = True
                         except queue.Full:
                             continue
@@ -852,11 +853,11 @@ class Debugger(object):
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
         if break_ok == protocol.DBG_PAUSE_MSG:
             self._process_state = PROCESS_STATE_BREAK
-            print("Paused.")
+            self._print_q.put(("Paused.", MsgLevel.INFO))
             return True
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
-            print(term.fmt(self, term.WARN, "Could not interrupt sketch."))
+            self._print_q.put(("Could not interrupt sketch.", MsgLevel.WARN))
             return False
 
 
@@ -865,11 +866,11 @@ class Debugger(object):
         continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, Debugger.RESULT_ONELINE)
         if continue_ok == "Continuing":
             self._process_state = PROCESS_STATE_RUNNING
-            print("Continuing...")
+            self._print_q.put(("Continuing...", MsgLevel.INFO))
         else:
             self._process_state = PROCESS_STATE_UNKNOWN
-            print(term.fmt(self, term.WARN, "Could not continue sketch."))
-            print(term.fmt(self, term.WARN, "Received unexpected response [%s]" % continue_ok))
+            self._print_q.put(("Could not continue sketch.", MsgLevel.WARN))
+            self._print_q.put(("Received unexpected response [%s]" % continue_ok, MsgLevel.WARN))
 
 
     def reset_sketch(self):
@@ -882,8 +883,9 @@ class Debugger(object):
             Get snapshot of system registers.
         """
         if len(self._arch) == 0:
-            print(term.fmt(self, term.WARN, 
-                "Warning: No architecture specified; cannot assign specific registers"))
+            self._print_q.put((
+                "Warning: No architecture specified; cannot assign specific registers",
+                MsgLevel.WARN))
             register_map = [ "general_regs" ]
             num_general_regs = -1
         else:
@@ -926,7 +928,8 @@ class Debugger(object):
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
         if size is None or size < 1:
-            print(term.fmt(self, term.WARN, f"Warning: cannot set memory poke size = {size}; using 1"))
+            self._print_q.put((f"Warning: cannot set memory poke size = {size}; using 1",
+                MsgLevel.WARN))
             size = 1
 
         self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], Debugger.RESULT_SILENT)
@@ -942,7 +945,8 @@ class Debugger(object):
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
         if size is None or size < 1:
-            print(term.fmt(self, term.WARN, f"Warning: cannot set memory fetch size = {size}; using 1"))
+            self._print_q.put((f"Warning: cannot set memory fetch size = {size}; using 1",
+                MsgLevel.WARN))
             size = 1
 
         result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], Debugger.RESULT_ONELINE)
@@ -1009,8 +1013,9 @@ class Debugger(object):
         if len(lines) == 0:
             return None # Debugger server does not have memstats capability compiled in.
         elif len(lines) != len(mem_report_fmt):
-            print(term.fmt(self, term.WARN, 
-                "Warning: got response inconsistent with expected report format for arch."))
+            self._print_q.put((
+                "Warning: got response inconsistent with expected report format for arch.",
+                MsgLevel.WARN))
             return None # Debugger server didn't respond with the right mem_list_fmt..?!
 
         mem_map.update(list(zip(mem_report_fmt, lines)))

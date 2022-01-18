@@ -4,7 +4,8 @@ import argparse
 import sys
 
 from .debugger import Debugger
-from .repl import Repl, ConsolePrinter
+from .repl import Repl
+from .term import ConsolePrinter
 import arduino_dbg.io as io
 
 

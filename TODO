@@ -9,8 +9,12 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * Add `open` command to open the serial connection.
+
+  * Global state and methods in types package to TypeDebugInfo class, as member of Debugger.
+
   * termcap colors:
-    * distinguish identifier/type/value? 
+    * distinguish identifier/type/value?
     * Make `Syntax` line in help be bold white?
 
   * bug: In some cases, MethodInfo seems to have all formals added twice?

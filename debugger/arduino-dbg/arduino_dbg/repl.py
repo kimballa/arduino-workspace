@@ -4,11 +4,9 @@ import functools
 import inspect
 import os
 import os.path
-import queue
 import readline
 import signal
 from sortedcontainers import SortedDict, SortedList
-import threading
 import traceback
 
 import arduino_dbg.binutils as binutils
@@ -380,58 +378,6 @@ class ReplAutoComplete(object):
                 traceback.print_tb(e.__traceback__)
             raise # rethrow
 
-class ConsolePrinter(object):
-    """
-    Monitor that creates a queue of things to print to the console.
-    Other threads may enqueue new text lines for printing.
-    Refreshes the readline prompt (if one is active) after each line is printed.
-
-    The primary use-case is printing messages that come in asynchronously from a
-    running connected device while the main thread is blocking on the readline
-    prompt.
-    """
-
-    TIMEOUT = 0.250 # Blink when reading the queue every 250ms.
-
-    def __init__(self):
-        self.print_q = queue.Queue(maxsize=16)
-        self._alive = True
-        self._readline_enabled = False
-        self._thread = threading.Thread(target=self.service, name='Console print thread')
-
-    def start(self):
-        self._thread.start()
-
-    def shutdown(self):
-        self._alive = False
-        self._thread.join()
-
-    def set_readline_enabled(self, rl_enabled):
-        self._readline_enabled = rl_enabled
-
-    def service(self):
-        while self._alive:
-            try:
-                textline = self.print_q.get(block=True, timeout=ConsolePrinter.TIMEOUT)
-            except queue.Empty:
-                continue
-
-            if self._readline_enabled:
-                cur_input = readline.get_line_buffer()
-            else:
-                cur_input = ''
-
-            # Blank out the prompt / input line and print the received text.
-
-            print(f'\r{(len(PROMPT) + len(cur_input)) * " "}\r{textline}')
-
-            if self._readline_enabled:
-                # Refresh the visible console prompt
-                print(f'{PROMPT}{cur_input}', end='', flush=True)
-
-            self.print_q.task_done()
-
-
 
 class Repl(object):
     """
@@ -518,7 +464,20 @@ class Repl(object):
                     else:
                         formal_name_type = f'({formal.arg_type.name})'
 
+                    # Format any warning messages and colorize appropriately.
                     warnings = el.ExprFlags.get_message(flags)
+                    if el.ExprFlags.has_warnings(flags):
+                        warn_color = term.WARN
+                        val_color = term.WARN
+                    elif el.ExprFlags.has_errors(flags):
+                        warn_color = term.ERR
+                        val_color = term.ERR
+                    else:
+                        warn_color = term.INFO
+                        val_color = term.BOLD
+                    warnings = term.fmt(warnings, warn_color)
+                    val_str = term.fmt(val_str, val_color)
+
                     print(f'{nest_str}  {formal_name_type}{val_str} {warnings}')
 
 
@@ -534,7 +493,20 @@ class Repl(object):
                     else:
                         val_str = ''
 
+                    # Format any warning messages and colorize appropriately.
                     warnings = el.ExprFlags.get_message(flags)
+                    if el.ExprFlags.has_warnings(flags):
+                        warn_color = term.WARN
+                        val_color = term.WARN
+                    elif el.ExprFlags.has_errors(flags):
+                        warn_color = term.ERR
+                        val_color = term.ERR
+                    else:
+                        warn_color = term.INFO
+                        val_color = term.BOLD
+                    warnings = term.fmt(warnings, warn_color)
+                    val_str = term.fmt(f'{val_str}', val_color)
+
                     print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str} {warnings}')
 
             if isinstance(scope, types.LexicalScope):
@@ -1623,9 +1595,9 @@ class Repl(object):
                 cmd_obj = commandMap[cmd]
                 cmd_obj.invoke(self, tokens[1:])
             except dbg.NoServerConnException as e:
-                print(term.fmt(self._debugger, term.ERR, f"Error running '{cmd}': {str(e)}"))
+                term.write(f"Error running '{cmd}': {str(e)}", term.ERR)
             except Exception as e:
-                print(term.fmt(self._debugger, term.ERR, f"Error running '{cmd}': {e}"))
+                term.write(f"Error running '{cmd}': {e}", term.ERR)
                 if self._debugger.get_conf("dbg.verbose"):
                     traceback.print_tb(e.__traceback__)
                 else:
