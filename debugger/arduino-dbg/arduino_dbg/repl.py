@@ -17,7 +17,7 @@ import arduino_dbg.protocol as protocol
 import arduino_dbg.term as term
 import arduino_dbg.types as types
 
-PROMPT = "\r(adbg) "
+PROMPT = term.PROMPT
 
 def _softint(intstr, base=10):
     """
@@ -141,13 +141,22 @@ class Command(object):
         else:
             keywordsIntro = f"{all_keywords[0]}"
 
+        # Get the docstring and eliminate method-level indentation.
         docstring = inspect.cleandoc(fn.__doc__)
+        # Split into lines; if one line matches `Syntax: <foo>`, make that line bold.
+        docstr_lines = docstring.split("\n")
+        for i in range(0, len(docstr_lines)):
+            if docstr_lines[i].strip().startswith("Syntax:"):
+                # Replace this line with *bold*
+                docstr_lines[i] = term.fmt(docstr_lines[i], term.BOLD)
+                break # Only need to bold one syntax line.
+        docstring = "\n".join(docstr_lines)
+
         helptext = f"    {keywordsIntro}\n\n{docstring}"
         self.long_help = helptext
 
         # The short help (shown in the `help` summary) is the keyword list and
         # the first non-empty line of the docstring.
-        docstr_lines = docstring.split("\n")
         if len(docstr_lines) == 1:
             self.short_help = f'{keywordsIntro} -- {docstring.strip()}'
         else:

@@ -6,8 +6,6 @@ import queue
 import readline
 import threading
 
-from arduino_dbg.repl import PROMPT
-
 # Change this flag to enable/disable color formatting.
 enable_colors = True
 
@@ -33,6 +31,8 @@ ERR       = COLOR_RED
 
 COLOR_OFF = COLOR_WHITE # Normal white on black
 
+# Repl prompt.
+PROMPT = "\r(adbg) "
 
 def use_colors():
     """
