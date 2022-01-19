@@ -117,7 +117,17 @@ class Debugger(object):
         Main debugger state object.
     """
 
-    def __init__(self, elf_name, connection, print_q, arduino_platform=None):
+    def __init__(self, elf_name, connection, print_q, arduino_platform=None, force_config=None):
+        """
+        @param elf_name the name of the ELF file holding the binary to debug
+        @param connection the Serial connection to device (or pipe connection to local image host)
+        @param print_q the queue that connects us to stdout/ConsolePrinter
+        @param arduino_platform if not None, overrides config setting for device/arch. Used when
+            loading a dump in a debugger to provide same architecture as when dump was captured.
+        @param force_config if not None, provides config inputs and suppresses loading from
+            user config file. Also suppresses subsequent writes to user config file if settings
+            change.
+        """
         self._print_q = print_q # Data from serial conn to print directly to console.
 
         self._recv_q = None
@@ -138,11 +148,15 @@ class Debugger(object):
 
         self.open(connection)
 
-        # General user-accessible config.
-        # Load latest config from a dotfile in user's $HOME.
-        self._init_config_from_file(arduino_platform)
+        # Set up general user-accessible config.
 
-        # Load the real debug info from the ELF file.
+        # If true, save config changes to file. Generally we save-on-change unless we were given
+        # a canned config in our constructor. Then subsequent changes aren't persisted.
+        self._do_persist_config_changes = (force_config is None)
+        # Load latest config from a dotfile in user's $HOME (unless given a force_config).
+        self._init_config_from_file(force_config, arduino_platform)
+
+        # Finally, load the real debug info from the ELF file.
         self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
         self._read_elf()
 
@@ -231,17 +245,24 @@ class Debugger(object):
 
         return conf_map
 
-    def _init_config_from_file(self, arduino_platform=None):
+    def _init_config_from_file(self, force_config=None, arduino_platform=None):
         """
             If the user has a config file (see _LOCAL_CONF_FILENAME) then initialize self._config
             from that.
         """
-        defaults = self._set_conf_defaults({})
+        defaults = self._set_conf_defaults()
+        if force_config is not None:
+            # If given a forced input config, initialize our config from there.
+            for (key, val) in force_config.items():
+                defaults[key] = val
         if arduino_platform:
+            # arduino_platform overrides even the provided forced config.
             defaults['arduino.platform'] = arduino_platform
-        config_key = 'config'
 
-        if os.path.exists(_LOCAL_CONF_FILENAME):
+        if os.path.exists(_LOCAL_CONF_FILENAME) and force_config is None:
+            # If we have a config file to load, load it -- unless given a force_config,
+            # in which case we just stick wtih that.
+            config_key = 'config'
             new_conf = serialize.load_config_file(_LOCAL_CONF_FILENAME, config_key, defaults)
         else:
             new_conf = defaults
@@ -253,10 +274,23 @@ class Debugger(object):
 
         self._load_platform(arduino_platform) # cascade platform def from config, arch def from platform.
 
+        if force_config is None:
+            self.verboseprint("Loaded config from file: ", _LOCAL_CONF_FILENAME)
+        else:
+            self.verboseprint("Used programmatic configuration")
+        self.verboseprint("Loaded configuration: ", self._config)
+
+
+
     def _persist_config(self):
         """
             Write the current config out to a file to reload the next time we use the debugger.
         """
+
+        if not self._do_persist_config_changes:
+            # We actually do not want to persist changes to file. Do nothing.
+            return
+
         # Don't let user session change this value; we know what serialization version we're
         # writing.
         self._config["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION

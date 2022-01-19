@@ -465,6 +465,8 @@ class Repl(object):
                 print(f"{nest_str}  Formals:")
                 for formal in formals:
                     formal_val, flags = formal.getValue(frameRegs, frame)
+                    self._console_printer.join_q()
+
                     if formal_val is not None:
                         val_str = f' = {formal_val}'
                     else:
@@ -498,6 +500,7 @@ class Repl(object):
                     if local_name is None:
                         continue
                     local_val, flags = local_var.getValue(frameRegs, frame)
+
                     if local_val is not None:
                         val_str = f' = {local_val}'
                     else:
@@ -1573,7 +1576,7 @@ class Repl(object):
 
         try:
             self._completer.clear_cache() # Don't accidentally use suggestions from last input line.
-            cmdline = input(PROMPT)
+            cmdline = term.readline_input()
         except KeyboardInterrupt:
             # Received '^C'; call the break function
             print('') # Terminate line after visible '^C' in input.

@@ -123,16 +123,29 @@ class ConsolePrinter(object):
         self._thread.join()
 
     def set_readline_enabled(self, rl_enabled):
+        """
+        If readline is enabled, then printing from this async source will
+        re-print the console prompt.
+        """
         self._readline_enabled = rl_enabled
 
+    def join_q(self):
+        """
+        Wait for any pending items to be printed and drained from the queue.
+        """
+        self.print_q.join()
+
     def service(self):
+        """
+        Main service loop for thread. Receive lines to print and print them to stdout.
+        """
         while self._alive:
             try:
                 (textline, prio) = self.print_q.get(block=True, timeout=ConsolePrinter.TIMEOUT)
             except queue.Empty:
                 continue
 
-            if self._readline_enabled:
+            if self._readline_enabled and _readline_input_on:
                 cur_input = readline.get_line_buffer()
             else:
                 cur_input = ''
@@ -142,7 +155,7 @@ class ConsolePrinter(object):
             textline = fmt(textline, MsgLevel.color_for_msg(prio))
             print(f'\r{(len(PROMPT) + len(cur_input)) * " "}\r{textline}', flush=True)
 
-            if self._readline_enabled:
+            if self._readline_enabled and _readline_input_on:
                 # Refresh the visible console prompt
                 print(f'{PROMPT}{cur_input}', end='', flush=True)
 
@@ -166,5 +179,24 @@ class NullPrinter(ConsolePrinter):
             self.print_q.task_done()
 
 
+# Set to true only while the input() prompt is actually active.
+# Use term.readline_input() instead of just calling input() to
+# track this flag appropriately.
+_readline_input_on = False
+
+def readline_input():
+    """
+    Display readline-enabled prompt and return the input result.
+
+    Set guard flags appropriately as we enter and exit the prompt
+    to play nicely with the ConsolePrinter.
+    """
+    global _readline_input_on
+
+    _readline_input_on = True
+    try:
+        return input(PROMPT)
+    finally:
+        _readline_input_on = False
 
 

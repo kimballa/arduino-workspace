@@ -9,9 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * termcap colors:
-    * distinguish identifier/type/value?
-
   * bug: In some cases, MethodInfo seems to have all formals added twice?
       load read_byte.dump; locals 3
 

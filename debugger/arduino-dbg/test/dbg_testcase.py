@@ -25,9 +25,32 @@ class DbgTestCase(unittest.TestCase):
     def __init__(self, methodName='runTest'):
         super().__init__(methodName)
 
+    @staticmethod
+    def get_debug_config():
+        """
+        Return configuration settings to use for testing.
+        """
+        config = {
+            'dbg.verbose': False,  # Don't spam terminal with debug output.
+            'dbg.colors': False,   # Don't use VT100 colors on output
+        }
+
+        return config
+
+
     @classmethod
     def get_debugger(cls):
+        """
+        Return the initialized Debugger test fixture (with dump file loaded).
+        """
         return cls.debugger
+
+    @classmethod
+    def getDumpFilename(cls):
+        """
+        Return the filename of the test fixture image.
+        """
+        raise Exception("You must implement @classmethod getDumpFilename() to specify image to load")
 
     @classmethod
     def setUpClass(cls):
@@ -40,7 +63,8 @@ class DbgTestCase(unittest.TestCase):
         cls.console_printer = term.NullPrinter()
         cls.console_printer.start()
 
-        (debugger, dbg_service) = dump.load_dump(filename, cls.console_printer.print_q)
+        (debugger, dbg_service) = dump.load_dump(filename, cls.console_printer.print_q,
+            config=DbgTestCase.get_debug_config())
         cls.debugger = debugger
         cls.dbg_service = dbg_service
 
@@ -61,8 +85,8 @@ class DbgTestCase(unittest.TestCase):
         """
         Helper method to access a datatype / debuginfo entry a la `type <foo>`
 
-        returns (kind, typ) where kind is a types.KIND_* enum and typ is the 
-        types.PrgmType, MethodInfo, or VariableInfo retrieved. 
+        returns (kind, typ) where kind is a types.KIND_* enum and typ is the
+        types.PrgmType, MethodInfo, or VariableInfo retrieved.
         """
         registers = self.debugger.get_registers()
         self.assertIsInstance(registers, dict)
