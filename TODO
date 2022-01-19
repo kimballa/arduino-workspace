@@ -12,6 +12,21 @@ Client:
   * bug: In some cases, MethodInfo seems to have all formals added twice?
       load read_byte.dump; locals 3
 
+  * variables/formals/locals of ptr or ref type should be displayed as 0x{val:x} not decimal int.
+
+  * Link type information for methods & variables to Symbols in Debugger initialization
+    after parsing dwarf_info().
+  * add notion of "current frame" that can be adjusted rather than just as immediate arg
+    to `frame` / `\f`
+
+  --------
+
+  * In the case of e.g. NewhavenLcd0440::write(), we have an initial method declaration( #1),
+    then another subprogram (#2) references it with DW_AT_specification. A third subprogram of
+    the same name references #2 with DW_AT_abstract_origin. Both #2 and #3 set #1 as origin;
+    effectively #2 and 3 are "sibling" definitions in this pointer tree. Should 3 point to 2
+    points to 1? n.b. that we n
+
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
     control/suppress existing ones.
     - Server could have a memory array for $PC values we /don't/ stop at. If $prevPC
@@ -22,10 +37,6 @@ Client:
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
 
-  * add notion of "current frame" that can be adjusted rather than just as immediate arg
-    to `frame` / `\f`
-  * Link type information for methods & variables to Symbols in Debugger initialization
-    after parsing dwarf_info().
   * types.py should handle union type? bit fields?
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
 

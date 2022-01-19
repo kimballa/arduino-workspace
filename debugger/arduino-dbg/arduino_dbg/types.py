@@ -500,14 +500,14 @@ class MethodPtrType(PrgmType):
 
 class MethodInfo(PrgmType):
     def __init__(self, method_name, return_type, cuns, member_of=None, virtual=0,
-            accessibility=1, is_decl=False, is_def=False, origin=None):
+            accessibility=1, is_decl=False, is_def=False, origin=None, die=None):
 
         if method_name is None:
             name = None
         else:
             name = f'{return_type.name} '
             if member_of:
-                name += f'{member_of.name}::'
+                name += f'{member_of.class_name}::'
             name += f'{method_name}()'
 
         PrgmType.__init__(self, name, 0, None)
@@ -519,6 +519,7 @@ class MethodInfo(PrgmType):
         self.accessibility = accessibility
 
         self._cuns = cuns
+        self._die = die
 
         # Methods may appear multiple times throughout the .debug_info.
         # A forward-declared prototype signature will have is_decl=True.
@@ -558,6 +559,9 @@ class MethodInfo(PrgmType):
     def getOrigin(self):
         return self._origin or self
 
+    def getDIE(self):
+        return self._die # Get raw DebugInfoEntry.
+
     def setFrameBase(self, frame_base):
         """ Set the LocationExpr / LocationList for the frame pointer """
         self._frame_base = frame_base
@@ -580,7 +584,7 @@ class MethodInfo(PrgmType):
     def is_type(self):
         return False
 
-    def __repr__(self):
+    def make_signature(self, include_class=False, include_die_offset=False):
         s = ''
         if self.accessibility == PUBLIC:
             s += 'public '
@@ -591,16 +595,30 @@ class MethodInfo(PrgmType):
 
         if self.virtual:
             s += 'virtual '
-        s += f'{self.return_type.name} {self.method_name}('
-        s += ', '.join(map(lambda arg: f'{arg}', self.formal_args))
+
+        if include_class and self.member_of:
+            class_part = f'{self.member_of.class_name}::'
+        else:
+            class_part = ''
+
+        s += f'{self.return_type.name} {class_part}{self.method_name}('
+        formals = list(filter(lambda f: not f.artificial, self.formal_args))
+        s += ', '.join(map(lambda arg: f'{arg}', formals))
         s += ')'
         if self.virtual == dwarf_constants.DW_VIRTUALITY_pure_virtual:
             # pure virtual.
             s += ' = 0'
+
+        if include_die_offset and self._die:
+            s += f' @ {self._die.offset:x}'
         return s
 
+    def __repr__(self):
+        return self.make_signature(include_class=False, include_die_offset=False)
+
 class FormalArg(object):
-    def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None):
+    def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None,
+            artificial=False):
         self.name = name
         if arg_type is None:
             arg_type = _VOID
@@ -610,6 +628,7 @@ class FormalArg(object):
         self._location = location
         self._const_val = const_val
         self._scope = scope
+        self.artificial = artificial
 
     def __repr__(self):
         if self.name is None:
@@ -736,10 +755,11 @@ class ClassType(PrgmType):
         if self.parent_type():
             s += f' <subtype of {self.parent_type().name}>'
         s += ' {\n'
-        if len(self.methods) + len(self.fields) > 0:
+        decl_methods = list(filter(lambda m: m.is_decl, self.methods))
+        if len(decl_methods) + len(self.fields) > 0:
             s += '  '
-        s += ';\n  '.join(map(lambda m: f'{m}', self.methods + self.fields))
-        if len(self.methods) + len(self.fields) > 0:
+        s += ';\n  '.join(map(lambda m: f'{m}', decl_methods + self.fields))
+        if len(decl_methods) + len(self.fields) > 0:
             s += '\n'
         s += '}'
         return s
@@ -1307,45 +1327,72 @@ class ParsedDebugInfo(object):
             accessibility = dieattr('accessibility', dwarf_constants.DW_ACCESS_public)
 
             enclosing_class = context.get("class") or None
+            if enclosing_class is None and hasattr('containing_type'):
+                # A method body may be defined outside an enclosing DW_TAG_class_type,
+                # which already has a declaration for this method. Confusingly, it may
+                # lack an origin that points to that method declaration. Nonetheless, we
+                # can still set the member_of field for the MethodInfo correctly, via
+                # DW_AT_containing_type.
+                enclosing_class = _lookup_type('containing_type')
 
             origin = None
-            if dieattr('abstract_origin'):
+            if hasattr('abstract_origin'):
                 origin = _resolve_abstract_origin()
-
-            return_type = _lookup_type() or _VOID
-
-            if dieattr('low_pc') is None:
-                # abstract instance of the method. Just the method signature, or else the abstract
-                # instance of an inline method.
-                is_decl = True
-                is_def = False
-            else:
-                is_decl = origin is not None # If it has no abstract origin, it's also the declaration.
-                is_def = True # It has a PC range... concrete method definition.
-
-            if hasattr('declaration'):
-                # If the DW_AT_declaration flag is provided, DWARFv5 says this is a declaration
-                # and *not* the definition, overriding prior heuristic flag values. (DWARFv5 2.13.1)
-                is_decl = True
-                is_def = False
-
-            if hasattr('specification') and origin is None:
+            elif hasattr('specification'):
                 # This incomplete entry has the DW_AT_specification field, which is an offset from
                 # cu_offset. The specification points to another incomplete declaration from
                 # which we can populate data we need. (DWARFv5 2.13.2)
                 origin = _resolve_abstract_origin('specification')
 
+            return_type = _lookup_type() or _VOID
+
+            if hasattr('declaration'):
+                # If the DW_AT_declaration flag is provided, DWARFv5 says this is a declaration
+                # and *not* the definition; don't bother with heuristics to set flags. (DWARFv5 2.13.1)
+                is_decl = True
+                is_def = False
+            elif dieattr('low_pc') is None:
+                # abstract instance of the method. Just the method signature, or else the abstract
+                # instance of an inline method.
+                is_decl = False
+                is_def = False
+            else:
+                is_decl = origin is None # If it has no abstract origin, it's also the declaration.
+                is_def = True # It has a PC range... concrete method definition.
+
+            if hasattr('inline') and dieattr('inline') != dwarf_constants.DW_INL_inlined:
+                # DWARFv5 3.3.8.1: This is an inline function but not actually an inline instance.
+                # This is an 'abstract instance root' for the method.
+
+                # This overrides the null low_pc => !is_def rule from earlier, since actual
+                # DW_TAG_inlined_subroutines cannot be definitions.
+                is_def = True
+
             if origin is not None:
                 # The origin can populate fields we lack.
                 if name is None:
                     name = origin.method_name
-                if return_type is None:
+                if return_type is None or return_type == _VOID:
                     return_type = origin.return_type
                 if enclosing_class is None:
                     enclosing_class = origin.member_of
 
             method = MethodInfo(name, return_type, cuns, enclosing_class, virtual, accessibility,
-                is_decl, is_def, origin)
+                is_decl, is_def, origin, die)
+
+            if die.offset == 0x4843 or die.offset == 0x47dc or die.offset == 0x11b6:
+                print("***** THIS DIE ***")
+                print(f'{die.offset:x} (dec:{die.offset}) -- {name}')
+                print(die)
+                print(method.make_signature(True, True))
+                if origin:
+                    print("***** ORIGIN ***")
+                    print(origin.make_signature(True, True))
+                    if origin._origin:
+                        print("***** 2x ORIGIN ***")
+                        print(origin._origin.make_signature(True, True))
+
+
 
             if enclosing_class:
                 enclosing_class.addMethod(method)
@@ -1371,13 +1418,23 @@ class ParsedDebugInfo(object):
             ctxt['method'] = method
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
+
+            if die.offset == 0x4843 or die.offset == 0x47dc or die.offset == 0x11b6:
+                print("***** (After subchild processing) *****")
+                print(method.make_signature(True, True))
         elif die.tag == 'DW_TAG_inlined_subroutine':
             # Defines a PC range associated with a subroutine inlined within another one.
             definition = _resolve_abstract_origin()
+            if hasattr('specification') and definition is None:
+                # This incomplete entry has the DW_AT_specification field, which is an offset from
+                # cu_offset. The specification points to another incomplete declaration from
+                # which we can populate data we need. (DWARFv5 2.13.2)
+                definition = _resolve_abstract_origin('specification')
+
             name = definition.method_name or dieattr('name') # try demangled name from def'n first
             return_type = definition.return_type or _lookup_type() or _VOID
 
-            # inline instance of a method is niether declaration nor definition.
+            # inline instance of a method is neither declaration nor definition.
             is_decl = False
             is_def = False
 
@@ -1436,20 +1493,21 @@ class ParsedDebugInfo(object):
         elif die.tag == 'DW_TAG_formal_parameter':
             # type signature for a formal arg to a method.
             # artificial=1 if added by compiler (e.g., implicit 'this')
-            # TODO(aaron): Should we actually add artificials to the type? Needed for stack dissection,
-            # but needs to be suppressed for pretty-printing. (TODO - Add later)
             origin = None
             if dieattr('abstract_origin'):
                 origin = _resolve_abstract_origin()
 
             name = dieattr('name')
-            if name is None and origin is not None:
-                name = origin.name
             base = _lookup_type()
-            if base is None and origin is not None:
-                base = origin.arg_type
+            artificial = bool(dieattr('artificial', False))
 
-            artificial = dieattr('artificial', 0)
+            if origin is not None:
+                if name is None:
+                    name = origin.name
+                if base is None:
+                    base = origin.arg_type
+                if not artificial:
+                    artificial = origin.artificial
 
             location = _get_locations()
             const_val = dieattr('const_value')
@@ -1459,11 +1517,9 @@ class ParsedDebugInfo(object):
             #    print(die)
             #    print(f"Location is {location}")
 
-            formal = FormalArg(name, base, cuns, origin, location, const_val)
-
+            formal = FormalArg(name, base, cuns, origin, location, const_val, artificial)
+            context['method'].addFormal(formal)
             _add_entry(formal, None, die.offset)
-            if not artificial:
-                context['method'].addFormal(formal)
         elif die.tag == 'DW_TAG_variable':
             origin = None
             if dieattr('abstract_origin'):

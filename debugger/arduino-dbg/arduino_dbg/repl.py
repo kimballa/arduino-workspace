@@ -426,6 +426,49 @@ class Repl(object):
         self._debugger = None
         self._console_printer = None
 
+    def _format_local(self, frame, frameRegs, var_or_formal, is_formal):
+        """
+        Resolve and format a local variable or formal method arg for printing.
+        """
+        local_val, flags = var_or_formal.getValue(frameRegs, frame)
+        self._console_printer.join_q()
+
+        if local_val is not None:
+            val_str = f' = {local_val}'
+        else:
+            val_str = ''
+
+        if is_formal:
+            # FormalArg
+            type_name = f'{var_or_formal.arg_type.name}'
+        else:
+            # VariableInfo
+            type_name = f'{var_or_formal.var_type.name}'
+
+        if var_or_formal.name is not None:
+            name_and_type = f'{var_or_formal.name}: {type_name}'
+        else:
+            name_and_type = f'({type_name})'
+
+        # Format any warning messages and colorize appropriately.
+        warnings = el.ExprFlags.get_message(flags)
+        if el.ExprFlags.has_warnings(flags):
+            warn_color = term.WARN
+            val_color = term.WARN
+        elif el.ExprFlags.has_errors(flags):
+            warn_color = term.ERR
+            val_color = term.ERR
+        else:
+            warn_color = term.INFO
+            val_color = term.BOLD
+        warnings = term.fmt(warnings, warn_color)
+        val_str = term.fmt(val_str, val_color)
+
+        out_str = f'{name_and_type}{val_str} {warnings}'
+        return out_str
+
+
+
     @Command(keywords=['locals'])
     def _show_locals(self, argv):
         """
@@ -456,7 +499,9 @@ class Repl(object):
                     inl_str = 'Inlined method'
                 else:
                     inl_str = 'Method'
-                print(f'{nest_str}{inl_str} scope: {scope}')
+                print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
+                die = scope.getDIE()
+                print(f'@{die.offset:x}\n{die}')
             elif isinstance(scope, types.LexicalScope):
                 print(f'{nest_str}{{')
 
@@ -464,34 +509,8 @@ class Repl(object):
             if len(formals) > 0:
                 print(f"{nest_str}  Formals:")
                 for formal in formals:
-                    formal_val, flags = formal.getValue(frameRegs, frame)
-                    self._console_printer.join_q()
-
-                    if formal_val is not None:
-                        val_str = f' = {formal_val}'
-                    else:
-                        val_str = ''
-                    if formal.name is not None:
-                        formal_name_type = f'{formal.name}: {formal.arg_type.name}'
-                    else:
-                        formal_name_type = f'({formal.arg_type.name})'
-
-                    # Format any warning messages and colorize appropriately.
-                    warnings = el.ExprFlags.get_message(flags)
-                    if el.ExprFlags.has_warnings(flags):
-                        warn_color = term.WARN
-                        val_color = term.WARN
-                    elif el.ExprFlags.has_errors(flags):
-                        warn_color = term.ERR
-                        val_color = term.ERR
-                    else:
-                        warn_color = term.INFO
-                        val_color = term.BOLD
-                    warnings = term.fmt(warnings, warn_color)
-                    val_str = term.fmt(val_str, val_color)
-
-                    print(f'{nest_str}  {formal_name_type}{val_str} {warnings}')
-
+                    local_str = self._format_local(frame, frameRegs, formal, is_formal=True)
+                    print(f'{nest_str}  {local_str}')
 
             var_list = scope.getVariables()
             if len(var_list):
@@ -499,28 +518,8 @@ class Repl(object):
                 for local_name, local_var in var_list:
                     if local_name is None:
                         continue
-                    local_val, flags = local_var.getValue(frameRegs, frame)
-
-                    if local_val is not None:
-                        val_str = f' = {local_val}'
-                    else:
-                        val_str = ''
-
-                    # Format any warning messages and colorize appropriately.
-                    warnings = el.ExprFlags.get_message(flags)
-                    if el.ExprFlags.has_warnings(flags):
-                        warn_color = term.WARN
-                        val_color = term.WARN
-                    elif el.ExprFlags.has_errors(flags):
-                        warn_color = term.ERR
-                        val_color = term.ERR
-                    else:
-                        warn_color = term.INFO
-                        val_color = term.BOLD
-                    warnings = term.fmt(warnings, warn_color)
-                    val_str = term.fmt(f'{val_str}', val_color)
-
-                    print(f'{nest_str}  {local_name}: {local_var.var_type.name}{val_str} {warnings}')
+                    local_str = self._format_local(frame, frameRegs, local_var, is_formal=False)
+                    print(f'{nest_str}  {local_str}')
 
             if isinstance(scope, types.LexicalScope):
                 print(f'{nest_str}}}')
