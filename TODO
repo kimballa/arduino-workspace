@@ -9,6 +9,18 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * Bug: If we have redundant FormalArgs or local VariableInfos (either explicitly with
+    FormalArg.redundant=True, or implicitly w/ VariableInfo's w/ same name in nested
+    LexicalScopes being defined), we should only display at most one instance to the user.
+    (If one or more have valid location data, choose one of them.)
+
+    See read_byte.dump; `locals 3` -- redundant 'this' and 'chr' entries being resolved
+    and printed multiple times.
+
+    (When enumerating locals, flatten out LexicalScopes into the parent MethodInfo, sort,
+    and dedup. For paranoia, maybe check that at most 1 has valid location info, or if 2+ do,
+    they all resolve to the same value.)
+
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
