@@ -9,8 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * bug with read_byte.dump; locals 5 - NoneType has no attribute offset
-
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
@@ -22,7 +20,12 @@ Client:
     then another subprogram (#2) references it with DW_AT_specification. A third subprogram of
     the same name references #2 with DW_AT_abstract_origin. Both #2 and #3 set #1 as origin;
     effectively #2 and 3 are "sibling" definitions in this pointer tree. Should 3 point to 2
-    points to 1? n.b. that we n
+    points to 1?
+
+    If we are doing a `locals` within #3, and #3 copied in or referred to all the variables
+    defined in #2, we may have more thorough enumeration of all local variables (some are
+    present in #2 and not #3) but they may have location eval instructions not valid for
+    the $PC..
 
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
     control/suppress existing ones.

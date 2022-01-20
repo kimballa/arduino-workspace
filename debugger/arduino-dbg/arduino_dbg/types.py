@@ -1497,7 +1497,7 @@ class ParsedDebugInfo(object):
             is_def = False
 
             method = MethodInfo(name, return_type, cuns, definition.member_of, definition.virtual,
-                definition.accessibility, is_decl, is_def, definition)
+                definition.accessibility, is_decl, is_def, definition, die)
 
             if dieattr('low_pc') and dieattr('high_pc'):
                 cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, definition.name)

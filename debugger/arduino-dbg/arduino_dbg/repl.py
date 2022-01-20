@@ -513,7 +513,7 @@ class Repl(object):
                     inl_str = 'Method'
                 print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
                 die = scope.getDIE()
-                self._debugger.verboseprint('Method DIE at offset 0x', dbg.VHEX4, die.offset)
+                self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x', dbg.VHEX4, die.offset)
             elif isinstance(scope, types.LexicalScope):
                 print(f'{nest_str}{{')
 
