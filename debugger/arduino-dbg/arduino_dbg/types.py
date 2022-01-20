@@ -1573,12 +1573,7 @@ class ParsedDebugInfo(object):
             location = _get_locations()
             const_val = dieattr('const_value')
 
-            #if location is not None and isinstance(location, list):
-            #    print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
-            #    print(die)
-            #    print(f"Location is {location}")
-
-            formal = FormalArg(name, base, cuns, origin, location, const_val, artificial)
+            formal = FormalArg(name, base, cuns, origin, location, const_val, None, artificial)
             context['method'].addFormal(formal)
             _add_entry(formal, None, die.offset)
         elif die.tag == 'DW_TAG_variable':

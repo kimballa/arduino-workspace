@@ -1053,7 +1053,7 @@ class Repl(object):
             elif isinstance(v, str) and v == str(_softint(v)) and v != "None":
                 v = int(v)
             elif isinstance(v, str) and v.startswith("0x") and len(v) > 2 and \
-                    v == "0x" + str(_softint(v[2:], base=16)) and v != "0xNone":
+                    v != "0xNone" and v == f'0x{_softint(v[2:], base=16):x}':
                 v = int(v[2:], base=16)
             elif isinstance(v, str) and len(v) == 0:
                 v = None

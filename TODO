@@ -14,14 +14,6 @@ Client:
     in `locals`. See get_byte.dump, `locals 2` and look at `this`.
       * Needs an isPointerType() method that looks through wrapped types.
 
-  * Bug: method signature should probably not show explicit `this`... isn't it marked artificial?
-      Method scope: public uint8_t I2C4BitNhdByteSender::readByte(const class I2C4BitNhdByteSender* this,
-      uint8_t ctrlFlags, uint8_t enFlag)
-
-      Method DIE at offset 0x6113
-
-      (get_byte.dump; `locals 2`)
-
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
