@@ -433,17 +433,29 @@ class Repl(object):
         local_val, flags = var_or_formal.getValue(frameRegs, frame)
         self._console_printer.join_q()
 
+        if is_formal:
+            # FormalArg
+            local_type = var_or_formal.arg_type
+        else:
+            # VariableInfo
+            local_type = var_or_formal.var_type
+
         if local_val is not None:
-            val_str = f' = {local_val}'
+            if local_type is not None and \
+                    (isinstance(local_type, types.PointerType) or \
+                    isinstance(local_type, types.MethodPtrType) or \
+                    isinstance(local_type, ReferenceType)):
+                # Pointers/references should be formatted as addresses in hex.
+                # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
+                # be able to find the associated MethodInfo and print the method name.
+                val_str = f' = 0x{local_val:x}'
+            else:
+                # Just use the default repr() for the value.
+                val_str = f' = {local_val}'
         else:
             val_str = ''
 
-        if is_formal:
-            # FormalArg
-            type_name = f'{var_or_formal.arg_type.name}'
-        else:
-            # VariableInfo
-            type_name = f'{var_or_formal.var_type.name}'
+        type_name = f'{local_type.name}'
 
         if var_or_formal.name is not None:
             name_and_type = f'{var_or_formal.name}: {type_name}'
@@ -501,7 +513,7 @@ class Repl(object):
                     inl_str = 'Method'
                 print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
                 die = scope.getDIE()
-                print(f'@{die.offset:x}\n{die}')
+                self._debugger.verboseprint('Method DIE at offset 0x', dbg.VHEX4, die.offset)
             elif isinstance(scope, types.LexicalScope):
                 print(f'{nest_str}{{')
 

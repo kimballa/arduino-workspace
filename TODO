@@ -9,10 +9,7 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * bug: In some cases, MethodInfo seems to have all formals added twice?
-      load read_byte.dump; locals 3
-
-  * variables/formals/locals of ptr or ref type should be displayed as 0x{val:x} not decimal int.
+  * bug with read_byte.dump; locals 5 - NoneType has no attribute offset
 
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().

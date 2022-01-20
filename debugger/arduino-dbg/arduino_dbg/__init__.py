@@ -27,6 +27,7 @@ def main(argv):
     console_printer = ConsolePrinter()
     console_printer.start()
     debugger = Debugger(args.file, connection, console_printer.print_q)
+    console_printer.join_q()
     ret = 1
     repl = Repl(debugger, console_printer)
 

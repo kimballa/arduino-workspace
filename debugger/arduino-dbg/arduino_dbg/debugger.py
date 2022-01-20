@@ -27,6 +27,7 @@ _dbg_conf_keys = [
     "dbg.conf.formatversion",
     "dbg.verbose",
     "dbg.colors",
+    'dbg.print_die.offset',
 ]
 
 # When we connect to the device, which state are we in?
@@ -52,9 +53,6 @@ VHEX = b'\x00\xFF\x10' # Print base 16
 VHEX2 = b'\x00\xFF\x10\x02' # Print base 16, 0-pad to 2 places
 VHEX4 = b'\x00\xFF\x10\x04' # Print base 16, 0-pad to 4 places
 VHEX8 = b'\x00\xFF\x10\x08' # Print base 16, 0-pad to 8 places
-
-
-
 
 
 def _load_conf_module(module_name, resource_name, print_q):

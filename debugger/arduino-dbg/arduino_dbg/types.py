@@ -10,6 +10,7 @@ import elftools.dwarf.locationlists as locationlists
 from sortedcontainers import SortedDict, SortedList
 
 import arduino_dbg.binutils as binutils
+import arduino_dbg.debugger as dbg
 import arduino_dbg.eval_location as el
 
 _INT_ENCODING = dwarf_constants.DW_ATE_signed
@@ -438,6 +439,7 @@ class LexicalScope(object):
         self._origin = origin
         self._containingScope = containingScope
         self._variables = {}
+        self.name = '<LexicalScope>'
 
     def addVariable(self, var):
         self._variables[var.name] = var
@@ -488,9 +490,10 @@ class MethodPtrType(PrgmType):
         self.formal_args.append(arg)
 
     def __repr__(self):
-        formals = ', '.join(map(lambda arg: f'{arg}', self.formal_args))
+        formals = FormalArg.filter_signature_args(self.formal_args)
+        formals = ', '.join(map(lambda arg: f'{arg}', formals))
         if self.member_of:
-            member = self.member_of.name + '::'
+            member = self.member_of.class_name + '::'
         else:
             member = ''
         return f'{self.return_type.name}({member}*{self.name})({formals})'
@@ -539,6 +542,13 @@ class MethodInfo(PrgmType):
         if arg is None:
             arg = FormalArg('', _VOID, None)
         arg.setScope(self)
+        if arg.name is not None and len(arg.name):
+            # If there is already a formal arg with this name in the method args list,
+            # this is a redundant arg definition and should be flagged as such.
+            # (See comments in FormalArg.__init__() for definition of 'redundant')
+            existing = list(filter(lambda nm: nm == arg.name, map(lambda f: f.name, self.formal_args)))
+            arg.redundant = (len(existing) > 0) # set redundant flag if we found arg w/ same name.
+
         self.formal_args.append(arg)
 
     def getFormals(self):
@@ -602,8 +612,7 @@ class MethodInfo(PrgmType):
             class_part = ''
 
         s += f'{self.return_type.name} {class_part}{self.method_name}('
-        formals = list(filter(lambda f: not f.artificial, self.formal_args))
-        s += ', '.join(map(lambda arg: f'{arg}', formals))
+        s += ', '.join(map(lambda arg: f'{arg}', FormalArg.filter_signature_args(self.formal_args)))
         s += ')'
         if self.virtual == dwarf_constants.DW_VIRTUALITY_pure_virtual:
             # pure virtual.
@@ -617,8 +626,18 @@ class MethodInfo(PrgmType):
         return self.make_signature(include_class=False, include_die_offset=False)
 
 class FormalArg(object):
+
+    @staticmethod
+    def filter_signature_args(args_list):
+        """
+        Return only the arguments that should appear in the method signature. We discard
+        any args flagged as 'artificial' or 'redundant'.
+        """
+        return list(filter(lambda f: not f.artificial and not f.redundant, args_list))
+
+
     def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None,
-            artificial=False):
+            artificial=False, redundant=False):
         self.name = name
         if arg_type is None:
             arg_type = _VOID
@@ -628,7 +647,16 @@ class FormalArg(object):
         self._location = location
         self._const_val = const_val
         self._scope = scope
-        self.artificial = artificial
+
+        self.artificial = artificial # arg is declared 'artificial' in debug info; created by the
+                                     # compiler, not the programmer. e.g. 'this' ptr in C++ member
+                                     # methods. Do not show in method signature.
+
+        self.redundant = redundant   # this is a redundant DIE for an argument of the same name.
+                                     # in foo(int bar) {... } there may be multiple DIEs for 'bar',
+                                     # each with different $PC-location-specific instructions for
+                                     # finding the arg's value. Do not format in formals list.
+
 
     def __repr__(self):
         if self.name is None:
@@ -869,7 +897,8 @@ class ParsedDebugInfo(object):
 
     # List of 'context' keys for .debug_info DIE parsing that should always be in the `context`
     # map. Keep this in sync with the fields populated in context in parseTypeInfo()
-    _default_context_keys = [ 'debugger', 'int_size', 'range_lists', 'loc_lists', 'dwarf_ver' ]
+    _default_context_keys = [ 'debugger', 'int_size', 'range_lists', 'loc_lists', 'dwarf_ver',
+        'nesting', 'print_full_die' ]
 
     def __init__(self, debugger):
         self._debugger = debugger
@@ -1062,6 +1091,28 @@ class ParsedDebugInfo(object):
         """
         cu = cuns.getCU()
         cu_offset = cu.cu_offset
+        debugger = context['debugger']
+        nesting = context['nesting']
+
+        if context['print_full_die'] is not None and context['print_full_die'] >= nesting:
+            # If full DIE dumping was enabled, and we're at the same (or further-out) nesting
+            # level as when we enabled dumping, turn it off. We've stopped recursing into subtrees
+            # of the chosen DIE, and we're now at its next sibling (or parent).
+            context['print_full_die'] = None
+
+        # Hack for debugging the debugger: if the die.offset is in this list, then verboseprint()
+        # the entire DIE data structure, as well as that of any child DIEs, recursively.
+        # e.g.: PRINT_DIE_TREE_OFFSETS = [ 0x11b6, 0x47dc, 0x4843 ]
+        PRINT_DIE_TREE_OFFSETS = [ ]
+        # You can also field-configure a specific DIE offset to dump it + its subtree.
+        PRINT_DIE_TREE_OFFSETS.append(debugger.get_conf('dbg.print_die.offset'))
+        try:
+            PRINT_DIE_TREE_OFFSETS.index(die.offset)
+            context['print_full_die'] = nesting # Enable super-verbose DIE debugging.
+        except:
+            pass # We don't need to print the entire DIE tree below here.
+
+        # Declare various helper methods needed internally within DIE-parsing process.
 
         def _fresh_context():
             """
@@ -1071,6 +1122,9 @@ class ParsedDebugInfo(object):
             ctxt = {}
             for key in ParsedDebugInfo._default_context_keys:
                 ctxt[key] = context[key]
+
+            ctxt['nesting'] = 0             # wipe/reset nesting level back to 0 for a jump to DIE.
+            ctxt['print_full_die'] = None   # Don't recursively print entire DIE for seek'd DIEs.
 
             return ctxt
 
@@ -1094,7 +1148,10 @@ class ParsedDebugInfo(object):
                 # We haven't processed this address yet; it's e.g. a forward reference.
                 # We need to process that entry before returning a type to the caller of this method.
                 sub_die = cu.get_DIE_from_refaddr(addr)
+                debugger.verboseprint(f'** Seeking forward to process DIE at addr {sub_die.offset:04x}')
                 self.parseTypesFromDIE(sub_die, cuns, _fresh_context())
+                debugger.verboseprint('** End forward-seek process.')
+
 
             return cuns.entry_by_addr(addr)
 
@@ -1149,17 +1206,31 @@ class ParsedDebugInfo(object):
         elif cuns.has_addr_entry(die.offset):
             return # Our seek-driven parsing has already parsed this entry, don't double-process.
 
-        total_off = die.offset + cu_offset
-        #print(f"Loading DIE {die.tag} {dieattr('name')} at offset {die.offset:x} (CU offset {cu_offset:x})")
-        #print(die)
+        ### In verbose mode, print the DIE tree as we parse it.
+        if debugger.get_conf('dbg.verbose'):
+            abs_origin = None
+            if hasattr('abstract_origin'):
+                abs_origin = _resolve_abstract_origin()
+            if not abs_origin and hasattr('specification'):
+                abs_origin = _resolve_abstract_origin('specification')
+            debugger.verboseprint(dbg.VHEX4, die.offset, ':  ', nesting, '  ', nesting * '  ',
+                die.tag, ': ', dieattr('name', None) or (abs_origin and abs_origin.name))
+
+            if context['print_full_die'] is not None:
+                # Dump the _entire_ DIE to stdout.
+                debugger.verboseprint('')
+                debugger.verboseprint(die)
+
 
         if dieattr('name') and cuns.entry_by_name(dieattr('name')):
             # We're redefining a type name that already exists.
             # Just copy the existing definition into this address.
+            debugger.verboseprint('(Redefining existing ', dieattr("name"), '); copying existing')
             _add_entry(cuns.entry_by_name(dieattr('name')), None, die.offset)
             return
 
 
+        ### Main switch-case for DW_TAG-specific parsing and interpretation.
         if die.tag == 'DW_TAG_base_type':
             # name, byte_size, encoding
             # This could be a true base/primitive type, or a typedef of a primitive type.
@@ -1209,6 +1280,7 @@ class ParsedDebugInfo(object):
             arr = ArrayType(base)
             _add_entry(arr, arr.name, die.offset) # TODO: if this causes collision problems, remove arr.name.
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['array'] = arr
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
@@ -1225,6 +1297,7 @@ class ParsedDebugInfo(object):
             enum = EnumType(name, base)
             _add_entry(enum, enum.name, die.offset)
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['enum'] = enum
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
@@ -1253,6 +1326,7 @@ class ParsedDebugInfo(object):
             class_type = ClassType(name, size, parent_type)
             _add_entry(class_type, name, die.offset)
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['class'] = class_type
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
@@ -1380,20 +1454,6 @@ class ParsedDebugInfo(object):
             method = MethodInfo(name, return_type, cuns, enclosing_class, virtual, accessibility,
                 is_decl, is_def, origin, die)
 
-            if die.offset == 0x4843 or die.offset == 0x47dc or die.offset == 0x11b6:
-                print("***** THIS DIE ***")
-                print(f'{die.offset:x} (dec:{die.offset}) -- {name}')
-                print(die)
-                print(method.make_signature(True, True))
-                if origin:
-                    print("***** ORIGIN ***")
-                    print(origin.make_signature(True, True))
-                    if origin._origin:
-                        print("***** 2x ORIGIN ***")
-                        print(origin._origin.make_signature(True, True))
-
-
-
             if enclosing_class:
                 enclosing_class.addMethod(method)
             else:
@@ -1415,13 +1475,11 @@ class ParsedDebugInfo(object):
                 method.setFrameBase(frame_base_loc)
 
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['method'] = method
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
 
-            if die.offset == 0x4843 or die.offset == 0x47dc or die.offset == 0x11b6:
-                print("***** (After subchild processing) *****")
-                print(method.make_signature(True, True))
         elif die.tag == 'DW_TAG_inlined_subroutine':
             # Defines a PC range associated with a subroutine inlined within another one.
             definition = _resolve_abstract_origin()
@@ -1459,6 +1517,7 @@ class ParsedDebugInfo(object):
             _add_entry(method, None, die.offset)
 
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['method'] = method
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
@@ -1474,6 +1533,7 @@ class ParsedDebugInfo(object):
                 cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), lexical_scope, None)
 
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['method'] = lexical_scope
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
@@ -1487,6 +1547,7 @@ class ParsedDebugInfo(object):
             method_type = MethodPtrType(name, return_type, enclosing_class)
             _add_entry(method_type, name, die.offset)
             ctxt = context.copy()
+            ctxt['nesting'] += 1
             ctxt['method'] = method_type
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
@@ -1578,10 +1639,13 @@ class ParsedDebugInfo(object):
         context['int_size'] = self.int_size
         context['range_lists'] = range_lists
         context['loc_lists'] = dwarf_info.location_lists()
+        context['nesting'] = 0
+        context['print_full_die'] = None
         # TODO(aaron): If you add entries to context here, add to _default_context_keys.
 
         for compile_unit in dwarf_info.iter_CUs():
             context['dwarf_ver'] = compile_unit.header['version']
+            self._debugger.verboseprint(f'Parsing compile unit (0x{compile_unit.cu_offset:04x})')
 
             cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit, range_lists,
                 self._debugger)
