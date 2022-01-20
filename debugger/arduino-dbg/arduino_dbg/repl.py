@@ -441,10 +441,7 @@ class Repl(object):
             local_type = var_or_formal.var_type
 
         if local_val is not None:
-            if local_type is not None and \
-                    (isinstance(local_type, types.PointerType) or \
-                    isinstance(local_type, types.MethodPtrType) or \
-                    isinstance(local_type, types.ReferenceType)):
+            if local_type is not None and local_type.is_pointer():
                 # Pointers/references should be formatted as addresses in hex.
                 # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
                 # be able to find the associated MethodInfo and print the method name.

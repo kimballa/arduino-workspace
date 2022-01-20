@@ -311,6 +311,12 @@ class PrgmType(object):
         """
         return True
 
+    def is_pointer(self):
+        """
+        Return True if this is a pointer type.
+        """
+        return False
+
     def __repr__(self):
         return f'{self.name}'
 
@@ -336,6 +342,9 @@ class ConstType(PrgmType):
         PrgmType.__init__(self, name, base_type.size, base_type)
         self.name = name
 
+    def is_pointer(self):
+        return self.parent_type().is_pointer()
+
     def __repr__(self):
         return self.name
 
@@ -347,6 +356,9 @@ class PointerType(PrgmType):
         name = f'{base_type.name}*'
         PrgmType.__init__(self, name, addr_size, base_type)
 
+    def is_pointer(self):
+        return True
+
     def __repr__(self):
         return f'{self.name}'
 
@@ -357,6 +369,9 @@ class ReferenceType(PrgmType):
     def __init__(self, base_type, addr_size):
         name = f'{base_type.name}&'
         PrgmType.__init__(self, name, addr_size, base_type)
+
+    def is_pointer(self):
+        return True
 
     def __repr__(self):
         return f'{self.name}'
@@ -409,6 +424,9 @@ class ArrayType(PrgmType):
         PrgmType.__init__(self, f'{base_type.name}[]', base_type.size, base_type)
         self.length = length
 
+    def is_pointer(self):
+        return True
+
     def setLength(self, len):
         self.length = len
 
@@ -421,6 +439,9 @@ class AliasType(PrgmType):
     """
     def __init__(self, alias, base_type):
         PrgmType.__init__(self, alias, base_type.size, base_type)
+
+    def is_pointer(self):
+        return self.parent_type().is_pointer()
 
     def __repr__(self):
         return f'typedef {self.parent_type().name} {self.name}'
@@ -488,6 +509,9 @@ class MethodPtrType(PrgmType):
         if arg is None:
             arg = FormalArg('', _VOID, None)
         self.formal_args.append(arg)
+
+    def is_pointer(self):
+        return True
 
     def __repr__(self):
         formals = FormalArg.filter_signature_args(self.formal_args)

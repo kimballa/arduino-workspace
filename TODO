@@ -9,11 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Bug: Pointer type cannot be established just by using isinstance(PointerType/ReferenceType);
-    e.g. Const(Pointer(some_base)) is still a ptr, and should still be printed by repl as 0xHHHH
-    in `locals`. See get_byte.dump, `locals 2` and look at `this`.
-      * Needs an isPointerType() method that looks through wrapped types.
-
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
