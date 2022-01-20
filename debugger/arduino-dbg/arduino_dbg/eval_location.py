@@ -161,7 +161,10 @@ class DWARFExprMachine(object):
             return self._pieces, self._flags
         else:
             out = self.top()
-            self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
+            if isinstance(out, str):
+                self._debugger.verboseprint('Resolved address: register ', out)
+            else:
+                self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
             return [(out, DWARFExprMachine.ALL)], self._flags
 
     def __access_big_endian(self, size):

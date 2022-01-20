@@ -52,10 +52,10 @@ class TestLocals(DbgTestCase):
                     self.assertFalse(el.ExprFlags.has_errors(flags))
                     var_values[variable.name] = val
 
-        # We expect to produce values for: ctrlFlags, enFlag, send, __c
+        # We expect to produce values for: this, ctrlFlags, enFlag, send, __c
         # Note that values for ctrlFlags & enFlag are unreliable due to call-clobbered regs.
-        # We are currently unable to access values for: scan, v, this
-        self.assertEqual(len(var_values), 4)
+        # We are currently unable to access values for: scan, v
+        self.assertEqual(len(var_values), 5)
         self.assertEqual(var_values['send'], 191) # I believe this is a reliable local to test.
 
 

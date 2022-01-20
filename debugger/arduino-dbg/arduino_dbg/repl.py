@@ -444,7 +444,7 @@ class Repl(object):
             if local_type is not None and \
                     (isinstance(local_type, types.PointerType) or \
                     isinstance(local_type, types.MethodPtrType) or \
-                    isinstance(local_type, ReferenceType)):
+                    isinstance(local_type, types.ReferenceType)):
                 # Pointers/references should be formatted as addresses in hex.
                 # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
                 # be able to find the associated MethodInfo and print the method name.
@@ -513,7 +513,9 @@ class Repl(object):
                     inl_str = 'Method'
                 print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
                 die = scope.getDIE()
-                self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x', dbg.VHEX4, die.offset)
+                if die is not None:
+                    self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x',
+                        dbg.VHEX4, die.offset)
             elif isinstance(scope, types.LexicalScope):
                 print(f'{nest_str}{{')
 

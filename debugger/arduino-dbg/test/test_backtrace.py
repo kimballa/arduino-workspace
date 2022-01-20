@@ -43,8 +43,8 @@ class TestBacktrace(DbgTestCase):
         self.assertEqual(len(frame.demangled_inline_chain), 4)
         self.assertEqual(len(frame.inline_chain), 4)
         self.assertEqual(frame.demangled_inline_chain, [
-            'size_t class Print::write()',
-            'size_t class Print::print()',
+            'size_t Print::write()',
+            'size_t Print::print()',
             'void loop()',
             'main'])
 
