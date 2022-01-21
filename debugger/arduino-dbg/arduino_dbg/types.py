@@ -1048,13 +1048,16 @@ class ParsedDebugInfo(object):
     def getScopesForPC(self, pc, include_global=False):
         """
         Return a list of methods, inlined methods, and lexical scopes that enclose the specified PC.
-        This output list is in no particular order.
 
         @param pc the current program counter value for the frame.
         @param include_global if true includes a GlobalScope object showing what globals can be
             accessed from the $PC.
+
+        @return the enclosing scopes, sorted from widest to tightest.
         """
-        out = {}
+        out = []
+        used_set = {}
+
         pc_ranges = SortedList()
 
         for cuns in self._cu_namespaces:
@@ -1073,15 +1076,22 @@ class ParsedDebugInfo(object):
 
         for pcr in pc_ranges:
             if pcr.variable_scope:
-                # Save variable scopes as dict keys to get the unique set,
-                # as a lexical scope's variable_scope may just point to the enclosing method.
-                out[pcr.variable_scope] = True
+                try:
+                    used_set[pcr.variable_scope]
+                    # We *have* seen this variable scope already; ignore it.
+                except KeyError:
+                    # We have not yet seen this variable scope. Add to output.
+                    out.append(pcr.variable_scope)
+
+                    # Save variable scopes as dict keys to get the unique set,
+                    # as a lexical scope's variable_scope may just point to the enclosing method.
+                    used_set[pcr.variable_scope] = True
 
         if include_global:
             # if include_globals, include the GlobalScope object too.
-            out[self._global_syms] = True
+            out.insert(0, self._global_syms)
 
-        return list(out.keys())
+        return out
 
     def _populateEncodings(self):
         """

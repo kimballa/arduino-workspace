@@ -426,45 +426,98 @@ class Repl(object):
         self._debugger = None
         self._console_printer = None
 
-    def _format_local(self, frame, frameRegs, var_or_formal, is_formal):
+    def _format_local(self, frame, frameRegs, var_or_formal_lst, is_formal):
         """
         Resolve and format a local variable or formal method arg for printing.
+
+        @param frame relevant stack.CallFrame
+        @param frameRegs register values within the CallFrame
+        @param var_or_formal_lst a non-empty list of VariableInfo or FormalArg elements with the
+            same name; we try these in order and print the value of the first we can locate.
+        @param is_formal true if the list is FormalArgs; false for VariableInfos.
         """
-        local_val, flags = var_or_formal.getValue(frameRegs, frame)
-        self._console_printer.join_q()
+        assert isinstance(var_or_formal_lst, list)
+        assert len(var_or_formal_lst) > 0
+
+        best_flags = None
+        best_val = None
+        best_var = None
+        for var_or_formal in var_or_formal_lst:
+            local_val, flags = var_or_formal.getValue(frameRegs, frame)
+            if el.ExprFlags.successful(flags):
+                if best_flags is None:
+                    # Hooray! We converged on a value.
+                    best_val = local_val
+                    best_flags = flags
+                    best_var = var_or_formal
+                elif el.ExprFlags.has_warnings(best_flags) and not el.ExprFlags.has_warnings(flags):
+                    # We converged on a value calculated w/o any warnings. Supercedes prior result.
+                    best_val = local_val
+                    best_flags = flags
+                    best_var = var_or_formal
+                else:
+                    # We got a value w/ warnings, but we already had one of those.
+                    # Not necessarily any better.
+                    pass
+
+                if not el.ExprFlags.has_warnings(flags):
+                    # There's no reason to keep calculating any further; we got a successful
+                    # no-warning result, so that's what we'll use.
+                    break
+
+            elif flags & el.ExprFlags.ERR_PC_OUT_OF_BOUNDS:
+                best_flags = flags # We'd rather report PC_OUT_OF_BOUNDS than NO_LOCATION.
+                                   # The former simply means "not valid at this breakpoint" vs
+                                   # "this VariableInfo is useless".
+                best_val = None
+                best_var = var_or_formal
+            elif best_flags is None:
+                best_flags = flags # Whatever error we got, let's track that.
+                best_val = None
+                best_var = var_or_formal
+
+        # At this point either we hit a 'break' and have a successful value and flags,
+        # or we have a value and warning flags, or no value and error flags.
+        # Whatever that outcome is, it's in best_val / best_flags and the associated FormalArg or
+        # VariableInfo is in best_var.
+        assert best_var is not None
+        assert best_flags is not None
+        self._console_printer.join_q() # sync printer after doing all the eval_location work.
 
         if is_formal:
-            # FormalArg
-            local_type = var_or_formal.arg_type
+            assert isinstance(best_var, types.FormalArg)
+            local_type = best_var.arg_type
         else:
-            # VariableInfo
-            local_type = var_or_formal.var_type
+            assert isinstance(best_var, types.VariableInfo)
+            local_type = best_var.var_type
 
-        if local_val is not None:
-            if local_type is not None and local_type.is_pointer():
+        assert local_type is not None
+
+        if best_val is not None:
+            if local_type.is_pointer():
                 # Pointers/references should be formatted as addresses in hex.
                 # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
                 # be able to find the associated MethodInfo and print the method name.
-                val_str = f' = 0x{local_val:x}'
+                val_str = f' = 0x{best_val:x}'
             else:
                 # Just use the default repr() for the value.
-                val_str = f' = {local_val}'
+                val_str = f' = {best_val}'
         else:
             val_str = ''
 
         type_name = f'{local_type.name}'
 
-        if var_or_formal.name is not None:
-            name_and_type = f'{var_or_formal.name}: {type_name}'
+        if best_var.name is not None:
+            name_and_type = f'{best_var.name}: {type_name}'
         else:
             name_and_type = f'({type_name})'
 
         # Format any warning messages and colorize appropriately.
-        warnings = el.ExprFlags.get_message(flags)
-        if el.ExprFlags.has_warnings(flags):
+        warnings = el.ExprFlags.get_message(best_flags)
+        if el.ExprFlags.has_warnings(best_flags):
             warn_color = term.WARN
             val_color = term.WARN
-        elif el.ExprFlags.has_errors(flags):
+        elif el.ExprFlags.has_errors(best_flags):
             warn_color = term.ERR
             val_color = term.ERR
         else:
@@ -500,41 +553,124 @@ class Repl(object):
             print(f'No such stack frame {frameId}')
             return
 
-        nest = 0
+        # Walk through nested frameScopes and gather formals and variables from the current
+        # method as well as any LexicalScope descendants that aren't part of a further nested
+        # (inlined) method.
+        nested_methods = { 'next': None } # Create a linked list of containers for vars/formals.
+        cur = None
+
+        def __add_to_locals(locals_list, var, var_name):
+            # Helper method for use in the loop below.
+            #
+            # locals_list is one of cur['formals'] or cur['locals'] - a list of lists of
+            # identically-named vars.
+            #
+            # 'var' is the formal/local to either add as a new list entry, or
+            # append to a sublist of other identically-named entries.
+            found_idx = None
+            for cur_idx in range(0, len(locals_list)):
+                item_list = locals_list[cur_idx]
+                if len(item_list) and item_list[0].name == var_name:
+                    found_idx = cur_idx # We found a list of formals/locals w/ the same name
+                    break
+
+            if found_idx is not None:
+                locals_list[found_idx].append(var) # append to identically-named list.
+            else:
+                locals_list.append([var]) # Start a new list
+
         for scope in frameScopes:
-            nest_str = nest * ' '
             if isinstance(scope, types.MethodInfo):
-                if not scope.is_decl and not scope.is_def:
-                    inl_str = 'Inlined method'
+                if cur is None:
+                    cur = nested_methods # Use first scope
                 else:
-                    inl_str = 'Method'
-                print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
-                die = scope.getDIE()
-                if die is not None:
-                    self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x',
-                        dbg.VHEX4, die.offset)
+                    # New nested inline method. Create a new nested scope.
+                    new_method = { 'next': None }
+                    cur['next'] = new_method
+                    cur = new_method
+
+                # Initialize the new scope.
+                cur['formals'] = [] # Each of these lists contains *lists* of FormalArgs or
+                                    # VariableInfos. All args/infos with the same `name` field are
+                                    # in the same list. They are ordered widest-scope to narrowest.
+                                    # Only one arg/info per list will be presented to the user; we
+                                    # choose the narrowest-scope definition with a valid location,
+                                    # or if none have a valid location, report that fact once.
+                cur['locals'] = []
+                cur['scope'] = scope
             elif isinstance(scope, types.LexicalScope):
-                print(f'{nest_str}{{')
+                # Stay within current nested_method. Add formals/locals to the 'cur' that represents
+                # the containing method.
+                if cur is None:
+                    raise Exception("Unexpected: LexicalScope w/o containing MethodInfo")
 
-            formals = scope.getFormals()
+
+            for formal in scope.getFormals():
+                name = formal.name
+                if name is None:
+                    cur['formals'].append([formal]) # type-only formals are always singleton lists
+                                                    # that honor arg order position.
+                else:
+                    # Check if any other formals encountered thus far in the method scope
+                    # have the same name as the current one.
+                    __add_to_locals(cur['formals'], formal, name)
+
+            for name, local_var in scope.getVariables():
+                if name is None:
+                    continue # We don't bother with anonymous local vars; (phantom entries?)
+                __add_to_locals(cur['locals'], local_var, name)
+
+            # Sort the locals by alphabetical order of names.
+            # Each sublist is guaranteed by the code above to be non-empty. Locals in the list are
+            # guaranteed to have non-empty names.
+            # (We do not sort formals; we rely on their initial ordering to present them to the user
+            # in method signature order.)
+            cur['locals'].sort(key=lambda var_list: var_list[0].name)
+
+
+        # nested_methods now contains a linked list of formal/local lists and corresponding
+        # MethodInfo entries. Each formal/local is represented by a list of one or more FormalArg
+        # or VariableInfo entries encountered w/ the same name.
+        # (TODO(aaron): Do we ever encounter globals in here, that alias a local?)
+        nest = 0
+        cur = nested_methods
+        while cur is not None:
+            nest_str = nest * ' '
+            scope = cur['scope'] # Relevant MethodInfo
+            printed_formals = False
+            if not scope.is_decl and not scope.is_def:
+                inl_str = 'Inlined method'
+            else:
+                inl_str = 'Method'
+            print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
+            die = scope.getDIE()
+            if die is not None:
+                self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x',
+                    dbg.VHEX4, die.offset)
+
+            formals = cur['formals']
             if len(formals) > 0:
+                printed_formals = True
                 print(f"{nest_str}  Formals:")
-                for formal in formals:
-                    local_str = self._format_local(frame, frameRegs, formal, is_formal=True)
+                for formal_lst in formals:
+                    # formal_lst contains a list of FormalArg entries w/ the same name.
+                    formal_lst.reverse() # re-sort so its narrowest scope def first.
+                    local_str = self._format_local(frame, frameRegs, formal_lst, is_formal=True)
                     print(f'{nest_str}  {local_str}')
 
-            var_list = scope.getVariables()
-            if len(var_list):
+            locals_list = cur['locals']
+            if len(locals_list) > 0:
+                if printed_formals:
+                    print('')
+
                 print(f"{nest_str}  Locals:")
-                for local_name, local_var in var_list:
-                    if local_name is None:
-                        continue
-                    local_str = self._format_local(frame, frameRegs, local_var, is_formal=False)
+                for local_var_lst in locals_list:
+                    # local_var_lst contains a list of VariableInfo entries w/ the same name
+                    local_var_lst.reverse() # re-sort so its narrowest scope def first.
+                    local_str = self._format_local(frame, frameRegs, local_var_lst, is_formal=False)
                     print(f'{nest_str}  {local_str}')
 
-            if isinstance(scope, types.LexicalScope):
-                print(f'{nest_str}}}')
-
+            cur = cur['next'] # advance linked list ptr.
             nest += 2
 
 

@@ -9,17 +9,15 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Bug: If we have redundant FormalArgs or local VariableInfos (either explicitly with
-    FormalArg.redundant=True, or implicitly w/ VariableInfo's w/ same name in nested
-    LexicalScopes being defined), we should only display at most one instance to the user.
-    (If one or more have valid location data, choose one of them.)
+  * read_byte.dump, `locals 1` -- __c is const const char[]; is_pointer() is true but size=1,
+    which seems more like *elem* size than the size of the addr itself? what exactly does DW_OP_addr
+    mean w.r.t. array-typed entities? (is_pointer() is true because we declare that to be the
+    case for all ArrayType items... correct?)
 
-    See read_byte.dump; `locals 3` -- redundant 'this' and 'chr' entries being resolved
-    and printed multiple times.
+  * Save history to file and restore it.
 
-    (When enumerating locals, flatten out LexicalScopes into the parent MethodInfo, sort,
-    and dedup. For paranoia, maybe check that at most 1 has valid location info, or if 2+ do,
-    they all resolve to the same value.)
+  * Some sort of weird off-by-one when restoring prompt after verboseprint()'ing leaves
+    a character of the (prior?) input stuck in the prompt but not actually in the current input.
 
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().
