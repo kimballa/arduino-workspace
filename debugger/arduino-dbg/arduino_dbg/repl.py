@@ -413,6 +413,11 @@ class Repl(object):
         readline.set_completer_delims(" \t\r\n'\"") # We want chunkier tokens than RL default.
         readline.set_completer(self._completer.complete)
 
+        # load history from file as indicated in debugger conf and monitor debugger conf for changes
+        # to user-configured filename.
+        self._history_filename = None
+        debugger.set_history_change_hook(self._history_change_callback)
+
     def close(self):
         if self._hosted_dbg_service:
             self._hosted_dbg_service.shutdown()
@@ -425,6 +430,37 @@ class Repl(object):
         self._hosted_dbg_service = None
         self._debugger = None
         self._console_printer = None
+
+    def _history_change_callback(self, filename):
+        """
+        Callback method for Debugger to invoke if the config'd history filename changes.
+        """
+        filename = os.path.normpath(filename)
+
+        if filename == self._history_filename and (filename is None or os.path.exists(filename)):
+            # We got a redundant update; filename hasn't changed, and we have no work to do
+            # in the form of ensuring the history file exists for appending-to. Debounce signal.
+            return
+
+        self._history_filename = filename
+        if os.path.exists(filename):
+            readline.read_history_file(filename)
+            self._debugger.verboseprint(f"Loaded history from file: {filename}")
+        else:
+            self._debugger.verboseprint(f"Creating new history file: {filename}")
+            f = open(filename, 'w')
+            f.close()
+
+    def _append_history(self):
+        if self._history_filename is not None:
+            try:
+                readline.append_history_file(1, self._history_filename)
+            except e:
+                term.write(f'Error writing to history file: {e}. Disabling history file recording.',
+                    term.WARN)
+                term.write(f'You can try a new file with: set dbg.historyfile = <filename>',
+                    term.WARN)
+                self._history_filename = None
 
     def _format_local(self, frame, frameRegs, var_or_formal_lst, is_formal):
         """
@@ -1043,8 +1079,10 @@ class Repl(object):
 
         * If called with no arguments, this prints the entire config to stdout.
         * If called with just a setting name ("set foo"), print the setting value.
-        * If called with "set keyname val", "set keyname = val", or "set keyname=val" then it updates
-          the configuration with that value. If numeric, 'val' is assumed to be in base 10.
+        * If called with "set keyname val", "set keyname = val", or "set keyname=val" then it
+          updates the configuration with that value. If numeric, 'val' is assumed to be in
+          base 10 unless it is prefixed with "0x".
+        * If called with "set keyname =", will unset the setting (set it to None).
 
         Successful updates to the config are performed silently.
         Attempting to set a config key that does not exist will print an error message.
@@ -1649,7 +1687,8 @@ class Repl(object):
 
         filename = argv[0]
         print(f"Loading memory image from {filename}...")
-        (debugger, hosted_dbg_serv) = dump.load_dump(filename, self._console_printer.print_q)
+        (debugger, hosted_dbg_serv) = dump.load_dump(filename, self._console_printer.print_q,
+            history_change_hook=self._history_change_callback)
 
         # If we were already hosting a debug service for a dump file, remove it and
         # switch to the new one.
@@ -1741,6 +1780,9 @@ class Repl(object):
             return True
 
         self._break_count = 0 # User typed a real non-^C command.
+
+        if len(cmdline) > 0:
+            self._append_history()
 
         raw_tokens = cmdline.split(" ")
         tokens = []

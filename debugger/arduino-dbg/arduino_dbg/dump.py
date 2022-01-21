@@ -111,7 +111,7 @@ def capture_dump(debugger, dump_filename):
 
     serialize.persist_config_file(dump_filename, SERIALIZED_STATE_KEY, out)
 
-def load_dump(filename, print_q, config=None):
+def load_dump(filename, print_q, config=None, history_change_hook=None):
     """
     Load a dump file and initialize a debugger instance around it.
     Returns a pair containing (new_debugger, hosted_debug_service).
@@ -120,6 +120,7 @@ def load_dump(filename, print_q, config=None):
     @param print_q the queue to connect the new Debugger to stdout/ConsolePrinter.
     @param config optional debugger config to override defaults & saved cfg file settings.
         If non-None, also prevents Debugger from persisting config changes via `set` kwd.
+    @param history_change_hook a callback fn to install in the new Debugger for history filename.
     """
 
     # Load the data out of the file...
@@ -145,7 +146,8 @@ def load_dump(filename, print_q, config=None):
     # Create a new Debugger instance connected to the 'left' pipe.
     # Specify the ELF file associated with this dump and the relevant Arduino platform.
     dbg = debugger.Debugger(elf_filename, left, print_q,
-        arduino_platform=dump_data['platform'], force_config=config)
+        arduino_platform=dump_data['platform'], force_config=config,
+        history_change_hook=history_change_hook)
     dbg.set_process_state(debugger.PROCESS_STATE_BREAK) # It's definitionally always paused.
 
     # Create a service that acts like the __dbg_service() in C.

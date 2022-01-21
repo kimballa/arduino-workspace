@@ -5,6 +5,7 @@ from elftools.dwarf.callframe import CIE
 
 import importlib.resources as resources
 import os
+import os.path
 import queue
 from sortedcontainers import SortedDict, SortedList
 import threading
@@ -20,14 +21,16 @@ from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
+_DEFAULT_HISTORY_FILENAME = os.path.expanduser("~/.arduino_dbg_history")
 
 _dbg_conf_keys = [
     "arduino.platform",
     "arduino.arch",
     "dbg.conf.formatversion",
-    "dbg.verbose",
     "dbg.colors",
+    "dbg.historyfile",
     'dbg.print_die.offset',
+    "dbg.verbose",
 ]
 
 # When we connect to the device, which state are we in?
@@ -115,7 +118,8 @@ class Debugger(object):
         Main debugger state object.
     """
 
-    def __init__(self, elf_name, connection, print_q, arduino_platform=None, force_config=None):
+    def __init__(self, elf_name, connection, print_q, arduino_platform=None, force_config=None,
+            history_change_hook=None):
         """
         @param elf_name the name of the ELF file holding the binary to debug
         @param connection the Serial connection to device (or pipe connection to local image host)
@@ -125,8 +129,10 @@ class Debugger(object):
         @param force_config if not None, provides config inputs and suppresses loading from
             user config file. Also suppresses subsequent writes to user config file if settings
             change.
+        @param history_change_hook a function to call when the history filename is changed.
         """
         self._print_q = print_q # Data from serial conn to print directly to console.
+        self._history_change_hook = history_change_hook
 
         self._recv_q = None
         self._send_q = None
@@ -166,7 +172,6 @@ class Debugger(object):
         self._dwarf_info = None
         self.elf = None
         self._cached_frames = None
-
 
     def get_debug_info(self):
         return self._debug_info_types
@@ -240,6 +245,7 @@ class Debugger(object):
         conf_map["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
         conf_map["dbg.verbose"] = False
         conf_map["dbg.colors"] = True
+        conf_map["dbg.historyfile"] = _DEFAULT_HISTORY_FILENAME
 
         return conf_map
 
@@ -268,8 +274,11 @@ class Debugger(object):
         self._config = new_conf
         self._platform = {} # Arduino platform-specific config (filled from conf file)
         self._arch = {} # CPU architecture-specific config (filled from conf file)
-        self._config_verbose_print()
 
+        # Process all key triggers (except _load_arch(), which will be triggered by
+        # _load_platform()).
+        self._config_verbose_print()
+        self._config_history_file()
         self._load_platform(arduino_platform) # cascade platform def from config, arch def from platform.
 
         if force_config is None:
@@ -369,6 +378,8 @@ class Debugger(object):
             self._load_arch()
         if key == "dbg.verbose":
             self._config_verbose_print()
+        if key == "dbg.historyfile":
+            self._config_history_file()
 
         self._persist_config() # Write changes to conf file.
 
@@ -428,6 +439,29 @@ class Debugger(object):
             self.verboseprint = self._make_verbose_print_fn()
         else:
             self.verboseprint = _silent
+
+    def _config_history_file(self):
+        history_filename = self._config['dbg.historyfile']
+
+        if history_filename is not None:
+            # Canonicalize path before storing in conf/file.
+            history_filename = os.path.abspath(os.path.expanduser(history_filename))
+            self._config['dbg.historyfile'] = history_filename
+
+        if self._history_change_hook is not None:
+            # Invoke installed callback (likely installed by repl)
+            self._history_change_hook(history_filename)
+
+    def set_history_change_hook(self, history_hook):
+        """
+        Set a function to invoke whenever the active readline history filename is changed.
+        This function will be invoked immediately with the current history filename.
+        """
+        self._history_change_hook = history_hook
+        history_hook(self.get_conf('dbg.historyfile'))
+
+    def get_history_change_hook(self):
+        return self._history_change_hook
 
     def get_conf(self, key):
         if key not in _dbg_conf_keys:

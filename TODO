@@ -14,8 +14,6 @@ Client:
     mean w.r.t. array-typed entities? (is_pointer() is true because we declare that to be the
     case for all ArrayType items... correct?)
 
-  * Save history to file and restore it.
-
   * Some sort of weird off-by-one when restoring prompt after verboseprint()'ing leaves
     a character of the (prior?) input stuck in the prompt but not actually in the current input.
 
