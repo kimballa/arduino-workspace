@@ -9,8 +9,15 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * read_byte.dump, `locals 1` -- __c is const const char[]; size=25, but it prints value as '0'.
-    Are we reading the entire array or just the first byte?
+  * read_byte.dump, `locals 1` -- __c is const const char[] with addr= 0x1b7.
+    This is _ZZN20I2C4BitNhdByteSender8readByteEhhE3__c in .text (flash) segment.
+    How do we correctly figure that we should read the flash segment, not sram?
+
+  * 'print'/'info' commands should be size- and array-aware like `locals` is.
+
+  * locals/print should recognize char[] as a string and fmt it as such.
+  * locals/print should recognize ptr types and auto-deref non-null ptrs.
+  * locals/print should recognize char* types, auto-deref non-null, fmt as string.
 
   * If there's an exception thrown during .debug_info parsing / in the Debugger c'tor, we
     go back to the REPL but the subsequent `\q` will hang until you ^C to kill adbg..

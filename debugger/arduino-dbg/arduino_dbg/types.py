@@ -401,6 +401,24 @@ class PrgmType(DieBase):
         """
         return False
 
+    def is_array(self):
+        """
+        Return True if this is an array type.
+        """
+        return False
+
+    def get_array_len(self):
+        """
+        If is_array() is true, return the element count.
+        """
+        return None
+
+    def get_array_elem_size(self):
+        """
+        If is_array() is true, return the element size in bytes.
+        """
+        return None
+
     def __repr__(self):
         return f'{self.name}'
 
@@ -429,6 +447,15 @@ class ConstType(PrgmType):
     def is_pointer(self):
         return self.parent_type().is_pointer()
 
+    def is_array(self):
+        return self.parent_type().is_array()
+
+    def get_array_len(self):
+        return self.parent_type().get_array_len()
+
+    def get_array_elem_size(self):
+        return self.parent_type().get_array_elem_size()
+
     def __repr__(self):
         return self.name
 
@@ -443,6 +470,10 @@ class PointerType(PrgmType):
     def is_pointer(self):
         return True
 
+    # currently using default of 'is_array()' looking at parent_type, which will
+    # then be true only if we have an array of pointers. pointer to array will
+    # return pointer=True, array=False.
+
     def __repr__(self):
         return f'{self.name}'
 
@@ -456,6 +487,10 @@ class ReferenceType(PrgmType):
 
     def is_pointer(self):
         return True
+
+    # currently using default of 'is_array()' looking at parent_type, which will
+    # then be true only if we have an array of pointers. pointer to array will
+    # return pointer=True, array=False.
 
     def __repr__(self):
         return f'{self.name}'
@@ -512,6 +547,21 @@ class ArrayType(PrgmType):
         self.length = _len
         self.size = self.get_type().size * self.length
         # TODO(aaron): if DW_AT_byte_size specified, that overrides the above calculation.
+
+    def is_array(self):
+        return True
+
+    def get_array_len(self):
+        """
+        If is_array() is true, return the element count.
+        """
+        return self.length
+
+    def get_array_elem_size(self):
+        """
+        If is_array() is true, return the element size in bytes.
+        """
+        return self.get_type().size
 
     def __repr__(self):
         return f'{self.parent_type()}[{self.length}]'
@@ -694,7 +744,7 @@ class MethodInfo(PrgmType):
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
             return None
-        return expr_machine.access(self.size)
+        return expr_machine.access(size=self.cuns.getDebugger().get_arch_conf('ret_addr_size'))
 
     def is_type(self):
         return False
@@ -829,7 +879,7 @@ class FormalArg(DieBase):
             return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
-        return expr_machine.access(self.arg_type.size)
+        return expr_machine.access(self.arg_type)
 
     def get_type(self):
         # Implement DieBase method.
@@ -988,7 +1038,7 @@ class VariableInfo(PrgmType):
             return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
-        return expr_machine.access(self.size)
+        return expr_machine.access(self.var_type)
 
     def setConstValue(self, val):
         """

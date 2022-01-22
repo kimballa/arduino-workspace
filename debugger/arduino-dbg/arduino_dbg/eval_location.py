@@ -18,7 +18,7 @@ class ExprFlags(object):
     # Error codes
     ERR_NO_LOCATION         =    0x10     # No location data available.
     ERR_PC_OUT_OF_BOUNDS    =    0x20     # Location data available but PC is not in a range
-                                          # where the location expr for this var is valid; 
+                                          # where the location expr for this var is valid;
                                           # var is out of scope.
 
     # Warning codes (set WARNED in addition to one or more of these)
@@ -167,81 +167,132 @@ class DWARFExprMachine(object):
                 self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
             return [(out, DWARFExprMachine.ALL)], self._flags
 
-    def __access_big_endian(self, size):
+    def __access_big_endian(self, size, count=1):
         (addrs, flags) = self.eval()
-        out = 0
-        for (addr, piece_size) in addrs:
-            if piece_size == DWARFExprMachine.ALL:
-                piece_size = size # There is only one piece, and it is the caller-decl'd size
+        outlist=[] # for array-based results
 
-            if isinstance(addr, int):
-                out = (out << (8 * piece_size)) | self.mem(addr, piece_size)
-            elif isinstance(addr, str):
-                if addr == DWARFExprMachine.TOP:
-                    regval = self.top()
+        for i in range(0, count):
+            out = 0 # scalar result
+            for (addr, piece_size) in addrs:
+                if piece_size == DWARFExprMachine.ALL:
+                    piece_size = size # There is only one piece, and it is the caller-decl'd size
+                elif count != 1:
+                    raise Exception("Cannot access array with addr in multiple pieces")
+
+                if isinstance(addr, int):
+                    out = (out << (8 * piece_size)) | self.mem(addr + (i * piece_size), piece_size)
+                elif isinstance(addr, str):
+                    if count != 1:
+                        raise Exception("Cannot access array with non-memory address")
+                    elif addr == DWARFExprMachine.TOP:
+                        regval = self.top()
+                    else:
+                        regval = self.regs[addr]
+
+                    if piece_size == 1:
+                        regval = regval & 0xFF
+                    elif piece_size == 2:
+                        regval = regval & 0xFFFF
+                    elif piece_size == 4:
+                        regval = regval & 0xFFFFFFFF
+                    elif piece_size == 8:
+                        regval = regval & 0xFFFFFFFFFFFFFFFF
+                    else:
+                        raise Exception(f'Unknown piece size arg {piece_size}')
+                    out = (out << (8 * piece_size)) | regval
                 else:
-                    regval = self.regs[addr]
+                    raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
 
-                if piece_size == 1:
-                    regval = regval & 0xFF
-                elif piece_size == 2:
-                    regval = regval & 0xFFFF
-                elif piece_size == 4:
-                    regval = regval & 0xFFFFFFFF
-                elif piece_size == 8:
-                    regval = regval & 0xFFFFFFFFFFFFFFFF
-                else:
-                    raise Exception(f'Unknown piece size arg {piece_size}')
-                out = (out << (8 * piece_size)) | regval
-            else:
-                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+            outlist.append(out)
 
-        return out, flags
+        if count == 1:
+            return out, flags
+        else:
+            return outlist, flags
 
-    def __access_little_endian(self, size):
+    def __access_little_endian(self, size, count=1):
         (addrs, flags) = self.eval()
-        out = 0
+        out = 0 # for scalar result
         new_shift = 0
         existing_mask = 0
+        outlist = [] # for array-based result
 
-        for (addr, piece_size) in addrs:
-            if piece_size == DWARFExprMachine.ALL:
-                piece_size = size # There is only one piece, and it is the caller-decl'd size
+        for i in range(0, count):
+            for (addr, piece_size) in addrs:
+                if piece_size == DWARFExprMachine.ALL:
+                    piece_size = size # There is only one piece, and it is the caller-decl'd size
+                elif count != 1:
+                    raise Exception("Cannot access array with addr in multiple pieces")
 
-            if isinstance(addr, int):
-                out = (self.mem(addr, piece_size) << new_shift) | (out & existing_mask)
-            elif isinstance(addr, str):
-                if addr == DWARFExprMachine.TOP:
-                    regval = self.top()
+                if isinstance(addr, int):
+                    out = (self.mem(addr + (i * piece_size), piece_size) << new_shift) | \
+                        (out & existing_mask)
+                elif isinstance(addr, str):
+                    if count != 1:
+                        raise Exception("Cannot access array with addr in multiple pieces")
+                    elif addr == DWARFExprMachine.TOP:
+                        regval = self.top()
+                    else:
+                        regval = self.regs[addr]
+                    out = (regval << new_shift) | (out & existing_mask)
                 else:
-                    regval = self.regs[addr]
-                out = (regval << new_shift) | (out & existing_mask)
-            else:
-                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+                    raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
 
-            # Account for bit width of result built-so-far growing by piece_size bytes.
-            for i in range(0, piece_size):
-                # mask off `piece_size` more bytes on lsb-side of result as present.
-                existing_mask <<= 8
-                existing_mask |= 0xFF
+                # Account for bit width of result built-so-far growing by piece_size bytes.
+                for i in range(0, piece_size):
+                    # mask off `piece_size` more bytes on lsb-side of result as present.
+                    existing_mask <<= 8
+                    existing_mask |= 0xFF
 
-            new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
-                                        # before slotting in
+                new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
+                                            # before slotting in
 
-        out &= existing_mask # Ensure we don't return data that's too wide for size.
-        return out, flags
+            out &= existing_mask # Ensure we don't return data that's too wide for size.
+            outlist.append(out)
 
-    def access(self, size):
+        if count == 1:
+            return out, flags
+        else:
+            return outlist, flags
+
+    def access(self, typ=None, size=None):
         """
         Evaluate the bytecode program to resolve the location. Then get the result at that location.
         Returns the value of size 'size' located at the address computed by the expression.
         """
-        if self._debugger.get_arch_conf("endian") == "big":
-            (out, flags) = self.__access_big_endian(size)
+        access_size = None
+        access_count = 1
+        if size is not None:
+            # Fetch exactly as many bytes as requested.
+            access_size = size
+            if typ and typ.size != size:
+                self._debugger.verboseprint('Warning: both type and size specified in access(); ',
+                    'size=', size, ' but type width is ', typ.size, '. ',
+                    'Using explicit size=', size, '.')
+        elif typ and typ.is_array():
+            access_count = typ.get_array_len()
+            access_size = typ.get_array_elem_size()
+        elif typ:
+            access_size = typ.size
         else:
-            (out, flags) = self.__access_little_endian(size)
+            # Didn't get enough parameters to know what type to fetch?
+            access_size = self._debugger.get_arch_conf('push_word_len')
+            self._debugger.verboseprint(
+                'Warning: No type or size specified to DWARFExprMachine.access(); ',
+                'defaulting to CPU word size of ', access_size)
 
-        self._debugger.verboseprint("Resolved value=0x", dbg.VHEX, out, " size=", size)
+        if self._debugger.get_arch_conf("endian") == "big":
+            (out, flags) = self.__access_big_endian(access_size, access_count)
+        else:
+            (out, flags) = self.__access_little_endian(access_size, access_count)
+
+        if access_count == 1:
+            self._debugger.verboseprint("Resolved value=0x", dbg.VHEX, out, " size=", access_size)
+        elif self._debugger.get_conf('dbg.verbose'):
+            # access_count > 1; format array.
+            self._debugger.verboseprint(f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} ' +
+                f'elem_size={access_size}, cnt={access_count}')
+
         return out, flags
 
 
@@ -499,7 +550,7 @@ class DWARFExprMachine(object):
 
         See DWARFv5 sec 2.5.1.7
         """
-        self._flags |= ExprFlags.REGISTER_UNWIND            
+        self._flags |= ExprFlags.REGISTER_UNWIND
         sub_location = op.args[0] # sub_location is a list of DWARFExprOp's.
         # It's either a single opcode identifying a register (DW_OP_regN)
         # or a full expression computing a more complex location. We evaluate this
@@ -543,7 +594,7 @@ class DWARFExprMachine(object):
         "The DW_OP_call_frame_cfa operation pushes the value of the CFA, obtained
         from the Call Frame Information"
         """
-        self._flags |= ExprFlags.REGISTER_UNWIND            
+        self._flags |= ExprFlags.REGISTER_UNWIND
         if self._frame is None:
             # We cannot report the CFA because we don't have a backtrace frame to use for unwinding.
             raise Exception(f'Cannot push canonical frame address; no backtrace frame set')
