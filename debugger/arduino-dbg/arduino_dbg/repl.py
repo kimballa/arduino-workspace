@@ -679,7 +679,7 @@ class Repl(object):
             else:
                 inl_str = 'Method'
             print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
-            die = scope.getDIE()
+            die = scope.get_die()
             if die is not None:
                 self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x',
                     dbg.VHEX4, die.offset)
@@ -1624,6 +1624,66 @@ class Repl(object):
             print(f'{typ.var_name}: {typ.var_type.name}')
 
         return kind
+
+    @Command(keywords=['die'], completions=[Completions.SYM_OR_TYPE])
+    def _print_die(self, argv):
+        """
+        Show the DIE for a symbol
+
+            Syntax: die [-r[d]] [-ro] [-rt] <symbol_name>
+
+        Shows the raw debug info entry.
+          -r, -rd:  Recurse into child DIEs.
+          -ro:      Recurse into DIEs for abstract_origin/specifications.
+          -rt:      Recurse into DIEs for symbol's type / base_type(s).
+        """
+        # TODO(aaron): Also allow 'locals' in completions, and what we search thru, if we have a
+        # frame number..
+        recurse_die_children = False
+        recurse_origin = False
+        recurse_types = False
+
+        while len(argv) and argv[0].startswith('-'):
+            if argv[0] == '-rd' or argv[0] == '-r':
+                recurse_die_children = True
+                del argv[0]
+            elif argv[0] == '-ro':
+                recurse_origin = True
+                del argv[0]
+            elif argv[0] == '-rt':
+                recurse_types = True
+                del argv[0]
+
+        if not len(argv):
+            # Whether or not we parsed some flags, we don't have a symbol name
+            # to work with.
+            print("Syntax: die [-r[d]] [-ro] [-rt] <symbol_name>")
+            return
+
+        sym_name = argv[0]
+        sym_addr = None
+
+        if sym_name.startswith('0x'):
+            try:
+                sym_addr = int(sym_name[2:], base=16)
+            except ValueError:
+                term.write("Cannot parse integer value: {sym_name}", term.WARN)
+                return
+
+        if sym_addr is not None:
+            typ = self._debugger.get_debug_info().getDebugInfoEntryByOffset(sym_addr)
+        else:
+            # Use symbol-name-based lookup.
+            registers = self._debugger.get_registers()
+            pc = registers["PC"]
+            (_, typ) = self._debugger.get_debug_info().getNamedDebugInfoEntry(sym_name, pc)
+
+        if typ is None:
+            print(f'{sym_name}: <unknown>')
+            return
+
+        print(typ.die_to_str(recurse_die_children, recurse_origin, recurse_types))
+
 
     @Command(keywords=['info', '\\i'], completions=[Completions.SYM])
     def _sym_info(self, argv):

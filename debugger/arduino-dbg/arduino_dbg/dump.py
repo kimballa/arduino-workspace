@@ -244,7 +244,7 @@ class HostedDebugService(object):
             elif cmd == protocol.DBG_OP_FLASHADDR:
                 size = args[0]
                 addr = args[1]
-                data = int.from_bytes(self._debugger.get_image_bytes(addr, size))
+                data = int.from_bytes(self._debugger.get_image_bytes(addr, size), byteorder=endian)
                 self._send(f'{data:x}')
             elif cmd == protocol.DBG_OP_POKE:
                 size = args[0]

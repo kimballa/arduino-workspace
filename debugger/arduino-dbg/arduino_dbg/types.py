@@ -12,6 +12,7 @@ from sortedcontainers import SortedDict, SortedList
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
 import arduino_dbg.eval_location as el
+import arduino_dbg.term as term
 
 _INT_ENCODING = dwarf_constants.DW_ATE_signed
 
@@ -106,7 +107,6 @@ class CompilationUnitNamespace(object):
                     #debugger.verboseprint(f'Extracted range for CU: {r.begin_offset:04x}' +
                     #    f' -- {r.end_offset:04x}')
                     self._cu_ranges.add(PCRange(r.begin_offset, r.end_offset, self))
-
 
         self.expr_parser = dwarf_expr.DWARFExprParser(cu.structs)
         self._debugger = debugger
@@ -249,7 +249,87 @@ class CompilationUnitNamespace(object):
     def __repr__(self):
         return f'Compilation unit (@offset {self._die_offset:x})'
 
-class GlobalScope(object):
+
+class DieBase(object):
+    """
+    Basic root object for anything we pull out of a DIE.
+    """
+    def __init__(self):
+        self.die = None
+
+    def get_die(self):
+        """
+        Retrieve debug info entry for this object.
+        """
+        return self.die
+
+    def set_die(self, new_die):
+        self.die = new_die
+
+    def get_type(self):
+        """
+        Return underlying type for this object, if any (or None).
+        """
+        return None
+
+    @staticmethod
+    def __die_to_str_inner(die, recursive=False, origin_die=None, typ=None):
+        lines = []
+        lines.append(term.fmt(f'DIE offset=0x{die.offset:04x} tag={die.tag}', term.COLOR_CYAN))
+        s = str(die)
+        lines.extend(s.split('\n'))
+
+        if recursive:
+            for child in die.iter_children():
+                lines.extend(DieBase.__die_to_str_inner(child, recursive))
+
+        if typ and typ.get_die():
+            typ_die = typ.get_die()
+            lines.append('')
+            lines.append(term.fmt(f'Type for 0x{die.offset:04x} at 0x{typ_die.offset:04x}:',
+                term.COLOR_CYAN))
+            lines.append(term.fmt(f'{typ}', term.COLOR_GRAY))
+            lines.extend(DieBase.__die_to_str_inner(typ_die, recursive, None, typ.get_type()))
+
+
+        if origin_die:
+            lines.append('')
+            lines.append(term.fmt(f'Origin for 0x{die.offset:04x} at 0x{origin_die.offset:04x}:',
+                term.COLOR_CYAN))
+            lines.extend(DieBase.__die_to_str_inner(origin_die, recursive))
+
+        # Handle identation.
+        # nb, combined with the recursion, this is O(n^2). Should be fine for reasonable
+        # DIE trees, but reimplement this as O(n) if it gets out of hand.
+        return list(map(lambda ln: '  ' + ln, lines))
+
+    def die_to_str(self, recursive=False, show_origin=False, show_type=False):
+        """
+        Return a stringified version of the DIE.
+
+        @param recursive - if True, also format the tree of child DIEs.
+        @param show_origin - if True, also format the DIE for the origin, if any.
+        """
+        if self.die is None:
+            return ''
+        else:
+            typ = None
+            if show_type:
+                typ = self.get_type()
+
+            origin_die = None
+            if show_origin:
+                try:
+                    origin_elem = self.__dict__['_origin']
+                    if origin_elem and origin_elem != self and origin_elem.die is not None:
+                        origin_die = origin_elem.die
+                except KeyError:
+                    pass # No origin available.
+
+            return '\n'.join(DieBase.__die_to_str_inner(self.die, recursive, origin_die, typ))
+
+
+class GlobalScope(DieBase):
     """
         Container for the globally-accessible names (types, vars, methods, etc.)
         Each of these elements formally sits within some CompilationUnit but is
@@ -285,13 +365,13 @@ class GlobalScope(object):
         return 'GlobalScope'
 
 
-
-class PrgmType(object):
+class PrgmType(DieBase):
     """
     Basic root object for a datatype or other DIE within the debugged program.
     """
 
     def __init__(self, name, size, parent_type=None):
+        super().__init__()
         self.name = name
         self.size = size
         if size is not None and not isinstance(size, int):
@@ -310,6 +390,10 @@ class PrgmType(object):
         Return True if this is actually a true type definition; not a var/method decl
         """
         return True
+
+    def get_type(self):
+        # Implement DieBase method.
+        return self._parent_type
 
     def is_pointer(self):
         """
@@ -447,7 +531,7 @@ class AliasType(PrgmType):
         return f'typedef {self.parent_type().name} {self.name}'
 
 
-class LexicalScope(object):
+class LexicalScope(DieBase):
     """
         A lexical scope (bound to a PCRange) - container for Variable definitions in a method.
     """
@@ -457,6 +541,7 @@ class LexicalScope(object):
             * origin is the resolved abstract_origin object for this scope.
             * containingScope is a LexicalScope or Method that encloses this one, if any.
         """
+        super().__init__()
         self._origin = origin
         self._containingScope = containingScope
         self._variables = {}
@@ -546,7 +631,7 @@ class MethodInfo(PrgmType):
         self.accessibility = accessibility
 
         self._cuns = cuns
-        self._die = die
+        self.die = die
 
         # Methods may appear multiple times throughout the .debug_info.
         # A forward-declared prototype signature will have is_decl=True.
@@ -593,9 +678,6 @@ class MethodInfo(PrgmType):
     def getOrigin(self):
         return self._origin or self
 
-    def getDIE(self):
-        return self._die # Get raw DebugInfoEntry.
-
     def setFrameBase(self, frame_base):
         """ Set the LocationExpr / LocationList for the frame pointer """
         self._frame_base = frame_base
@@ -617,6 +699,10 @@ class MethodInfo(PrgmType):
 
     def is_type(self):
         return False
+
+    def get_type(self):
+        # Implement DieBase method.
+        return self._return_type
 
     def make_signature(self, include_class=False, include_die_offset=False):
         s = ''
@@ -642,14 +728,14 @@ class MethodInfo(PrgmType):
             # pure virtual.
             s += ' = 0'
 
-        if include_die_offset and self._die:
-            s += f' @ {self._die.offset:x}'
+        if include_die_offset and self.die:
+            s += f' @ {self.die.offset:x}'
         return s
 
     def __repr__(self):
         return self.make_signature(include_class=False, include_die_offset=False)
 
-class FormalArg(object):
+class FormalArg(DieBase):
 
     @staticmethod
     def filter_signature_args(args_list):
@@ -662,6 +748,7 @@ class FormalArg(object):
 
     def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None,
             artificial=False, redundant=False):
+        super().__init__()
         self.name = name
         if arg_type is None:
             arg_type = _VOID
@@ -745,6 +832,9 @@ class FormalArg(object):
         expr_machine.setFrame(frame)
         return expr_machine.access(self.arg_type.size)
 
+    def get_type(self):
+        # Implement DieBase method.
+        return self.arg_type
 
 
 class FieldType(PrgmType):
@@ -770,6 +860,7 @@ class FieldType(PrgmType):
 
         return f'{acc} {self.parent_type().name} {self.field_name} ' + \
             f'[size={self.parent_type().size}, offset={self.offset:#x}]'
+
 
 class ClassType(PrgmType):
     """
@@ -852,9 +943,6 @@ class VariableInfo(PrgmType):
         # TODO(aaron): Should this be recursive?
         return self._origin or self
 
-    def getType(self):
-        return self.var_type
-
     def getAddress(self, regs, frame):
         """
         Evaluate the location info to get the memory address of this variable.
@@ -912,6 +1000,10 @@ class VariableInfo(PrgmType):
     def is_type(self):
         return False
 
+    def get_type(self):
+        # Implement DieBase method.
+        return self.var_type
+
 
 
 class ParsedDebugInfo(object):
@@ -961,6 +1053,17 @@ class ParsedDebugInfo(object):
                 typ = cuns._named_entries[name]
                 if typ.is_type():
                     yield (name, typ)
+
+    def getDebugInfoEntryByOffset(self, offset):
+        """
+        Return the DIE at the specified offset into the .debug_info section, or None
+        if there is not one available.
+        """
+        for cuns in self._cu_namespaces:
+            if cuns.has_addr_entry(offset):
+                return cuns.entry_by_addr(offset)
+        return None
+
 
     def getNamedDebugInfoEntry(self, name, pc):
         """
@@ -1198,6 +1301,7 @@ class ParsedDebugInfo(object):
             return typ.getOrigin()
 
         def _add_entry(typ, name, addr):
+            typ.set_die(die)
             cuns.add_entry(typ, name, addr)
 
         def dieattr(name, default_value=None):
@@ -1345,12 +1449,6 @@ class ParsedDebugInfo(object):
             # TODO: can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
             name = dieattr('name')
             size = dieattr('byte_size')
-
-            if name and cuns.entry_by_name(name) is not None:
-                # This is a redefinition of a type that already exists. Just install it here.
-                # TODO: Do we need to recurse and handle the redundant 'member', vtbl_ptr, etc.s?
-                _add_entry(getType(name), None, die.offset)
-                return
 
             parent_type_offset = dieattr("containing_type", None)
             if parent_type_offset is None:

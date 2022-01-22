@@ -9,11 +9,7 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * die command:
-      - parse recursiveness flags
-      - if sym is actually a hex addr, grab it direct.
-      - if given a frame number, search for locals and formals instead of globals.
-
+  * die command: if given a frame number, search for locals and formals instead of globals.
 
   * read_byte.dump, `locals 1` -- __c is const const char[]; is_pointer() is true but size=1,
     which seems more like *elem* size than the size of the addr itself? what exactly does DW_OP_addr
