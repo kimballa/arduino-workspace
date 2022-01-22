@@ -6,6 +6,7 @@ import os
 import os.path
 import readline
 import signal
+import shlex
 from sortedcontainers import SortedDict, SortedList
 import traceback
 
@@ -306,10 +307,10 @@ class ReplAutoComplete(object):
     def _suggest(self, tokens, prefix):
         if len(tokens) == 0 or len(tokens) == 1:
             # We are trying to suggest the first token in the line, which is always a keyword.
-            return self._space(self._complete_keyword(prefix))
+            return self._space(self._complete_keyword(prefix.strip()))
 
         # Otherwise, we need to recommend a keyword-specific next token.
-        keyword = tokens[0]
+        keyword = tokens[0].strip()
         arg_tokens = tokens[1:]
         # Get a list of the form [ clsA, clsB, clsC ] where clsA..C are strings in the
         # 'Completions' string enumeration. Each of these defines the set of things that
@@ -357,7 +358,13 @@ class ReplAutoComplete(object):
         """
         try:
             line_buffer = readline.get_line_buffer()
-            tokens = line_buffer.split()
+            try:
+                tokens = Repl.split(line_buffer, incomplete_ok=True)
+            except ValueError:
+                # Even with quote-fixing, couldn't actually figure out what to do.
+                # Don't suggest anything.
+                return None
+
             if not tokens or line_buffer[-1] == ' ':
                 tokens.append('')
 
@@ -1929,6 +1936,65 @@ class Repl(object):
         # `help quit`.
         pass
 
+    @staticmethod
+    def split(cmdline, incomplete_ok=False):
+        """
+        Split a commandline into tokens. We allow 'single quotes' or "double quotes" to preserve
+        whitespace within a token. There is no escape character; shortcuts like '\q' are returned
+        as-is. Unlike shlex in its posix=False settinsg, we strip '"containing quotes"' from token
+        responses.
+
+        @param cmdline the line to tokenize
+        @param incomplete_ok - if True, don't freak out at unclosed quote marks; attempt to
+            complete the quotes and try again. If False, unclosed quotes raise ValueError.
+        @return a list of whitespace-separated tokens from cmdline.
+        """
+        try:
+            tokens = shlex.split(cmdline, posix=False)
+        except ValueError:
+            if not incomplete_ok:
+                # Got incomplete quotation marks.
+                raise # re-throw
+            else:
+                single_q = None
+                double_q = None
+                try:
+                    single_q = cmdline.rindex("'")
+                except ValueError:
+                    # no single quote at all. That's fine.
+                    pass
+
+                try:
+                    double_q = cmdline.rindex('"')
+                except ValueError:
+                    # no double quote at all. That's fine.
+                    pass
+
+                if double_q is None and single_q is None:
+                    raise # No idea how to process a ValueError w/o any open-quote issues.
+                elif double_q is None and single_q is not None:
+                    # Try again with closed single-quote.
+                    return Repl.split(cmdline.rstrip() + "'", False)
+                elif double_q is not None and single_q is None:
+                    # Try again with closed double-quote.
+                    return Repl.split(cmdline.rstrip() + '"', False)
+                elif double_q > single_q:
+                    # A double-quote was likely left hanging open.
+                    return Repl.split(cmdline.rstrip() + '"', False)
+                else:
+                    # A single-quote was likely left hanging open.
+                    return Repl.split(cmdline.rstrip() + "'", False)
+
+        def __strip_quotes(token):
+            if len(token) >= 2 and token.startswith("'") and token.endswith("'"):
+                return token[1:-1]
+            elif len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+                return token[1:-1]
+            else:
+                return token
+
+        return list(map(__strip_quotes, tokens))
+
     def loop_input_body(self):
         """
             Primary function to call inside a loop; executes one flow of Read-eval-print.
@@ -1942,7 +2008,10 @@ class Repl(object):
         except KeyboardInterrupt:
             # Received '^C'; call the break function
             print('') # Terminate line after visible '^C' in input.
-            self._break()
+            try:
+                self._break()
+            except dbg.NoServerConnException:
+                pass # Just go to a clean new line
             self._break_count += 1
             if self._break_count >= 3:
                 # User's mashed ^C a lot... try to help them out?
@@ -1961,7 +2030,11 @@ class Repl(object):
         if len(cmdline) > 0:
             self._append_history()
 
-        raw_tokens = cmdline.split(" ")
+        try:
+            raw_tokens = Repl.split(cmdline, incomplete_ok=False)
+        except ValueError:
+            print("Error: Unclosed quoted string")
+
         tokens = []
         for t in raw_tokens: # Filter extra empty-whitespace tokens
             if t == "$":
@@ -1986,7 +2059,7 @@ class Repl(object):
         if len(tokens) == 0:
             return False
 
-        cmd = tokens[0]
+        cmd = tokens[0].strip()
 
         if cmd == "quit" or cmd == "exit" or cmd == "\\q":
             return True # Actually quit.
