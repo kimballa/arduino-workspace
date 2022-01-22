@@ -508,11 +508,10 @@ class ArrayType(PrgmType):
         PrgmType.__init__(self, f'{base_type.name}[]', base_type.size, base_type)
         self.length = length
 
-    def is_pointer(self):
-        return True
-
-    def setLength(self, len):
-        self.length = len
+    def setLength(self, _len):
+        self.length = _len
+        self.size = self.get_type().size * self.length
+        # TODO(aaron): if DW_AT_byte_size specified, that overrides the above calculation.
 
     def __repr__(self):
         return f'{self.parent_type()}[{self.length}]'
@@ -1730,8 +1729,11 @@ class ParsedDebugInfo(object):
             else:
                 enclosing_scope = None
 
+            # TODO(aaron): Check for DW_AT_data_location. And implement DW_OP_push_object_address.
+
             if name is None:
                 # Nothing to actually define here... degenerate variable entry.
+                # TODO(aaron): *why* do we see nameless variables? What attrs might give a clue?
                 return
 
             var = VariableInfo(name, base, cuns, location, is_decl, is_def, origin, enclosing_scope)

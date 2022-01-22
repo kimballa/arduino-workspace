@@ -9,12 +9,11 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * die command: if given a frame number, search for locals and formals instead of globals.
+  * read_byte.dump, `locals 1` -- __c is const const char[]; size=25, but it prints value as '0'.
+    Are we reading the entire array or just the first byte?
 
-  * read_byte.dump, `locals 1` -- __c is const const char[]; is_pointer() is true but size=1,
-    which seems more like *elem* size than the size of the addr itself? what exactly does DW_OP_addr
-    mean w.r.t. array-typed entities? (is_pointer() is true because we declare that to be the
-    case for all ArrayType items... correct?)
+  * If there's an exception thrown during .debug_info parsing / in the Debugger c'tor, we
+    go back to the REPL but the subsequent `\q` will hang until you ^C to kill adbg..
 
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().

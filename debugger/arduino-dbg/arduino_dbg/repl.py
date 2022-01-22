@@ -566,32 +566,27 @@ class Repl(object):
         return out_str
 
 
-
-    @Command(keywords=['locals'])
-    def _show_locals(self, argv):
+    def __get_scoped_locals(self, frameScopes):
         """
-        Show info about local variables in a stack frame
+        Walk through nested frameScopes and gather formals and variables from the current
+        method as well as any LexicalScope descendants that aren't part of a further nested
+        (inlined) method.
 
-            Syntax: locals <frame>
+        Return a dict that contains 'locals', 'formals', 'scope' and 'next' - a linked-list ptr to the
+        next nested dict.
+        * locals is a list of lists; each sub-list is VariableInfos with the same name. The outer
+          list is sorted in alpha order. Inner lists are sorted by increasing $PC - earlier
+          definitions come first.
+        * formals is a list of lists; each sub-list is FormalArgs with the same name. The outer list
+          is sorted in method call order. Inner lists are soretd by increasing $PC like locals.
+        * scope is the MethodInfo.
 
-        Given a frame number (from a `backtrace` command), show info about local variables
-        within the method scope at the current $PC.
+        Returns None if frameScopes is None or an empty list.
         """
-        if len(argv) == 0:
-            print("Syntax: locals <frame>")
-            return
 
-        frameId = int(argv[0])
-        frame = self.__get_frame(frameId)
-        frameScopes = self._debugger.get_frame_vars(frameId)
-        frameRegs = self._debugger.get_frame_regs(frameId)
-        if frameScopes is None:
-            print(f'No such stack frame {frameId}')
-            return
+        if frameScopes is None or len(frameScopes) == 0:
+            return None
 
-        # Walk through nested frameScopes and gather formals and variables from the current
-        # method as well as any LexicalScope descendants that aren't part of a further nested
-        # (inlined) method.
         nested_methods = { 'next': None } # Create a linked list of containers for vars/formals.
         cur = None
 
@@ -663,6 +658,34 @@ class Repl(object):
             # in method signature order.)
             cur['locals'].sort(key=lambda var_list: var_list[0].name)
 
+        return nested_methods
+
+    @Command(keywords=['locals'])
+    def _show_locals(self, argv):
+        """
+        Show info about local variables in a stack frame
+
+            Syntax: locals <frame>
+
+        Given a frame number (from a `backtrace` command), show info about local variables
+        within the method scope at the current $PC.
+        """
+        if len(argv) == 0:
+            print("Syntax: locals <frame>")
+            return
+
+        frameId = int(argv[0])
+        frame = self.__get_frame(frameId)
+        frameScopes = self._debugger.get_frame_vars(frameId)
+        frameRegs = self._debugger.get_frame_regs(frameId)
+        if frameScopes is None:
+            print(f'No such stack frame {frameId}')
+            return
+
+        nested_methods = self.__get_scoped_locals(frameScopes)
+        if nested_methods is None:
+            print(f'Empty stack frame?')
+            return
 
         # nested_methods now contains a linked list of formal/local lists and corresponding
         # MethodInfo entries. Each formal/local is represented by a list of one or more FormalArg
@@ -1630,9 +1653,16 @@ class Repl(object):
         """
         Show the DIE for a symbol
 
-            Syntax: die [-r[d]] [-ro] [-rt] <symbol_name>
+            Syntax: die [-r[d]] [-ro] [-rt] [frameId] {<symbol_name> | <DIE_offset>}
 
-        Shows the raw debug info entry.
+        Shows a raw debug info entry, with linked or child entries as requested.
+        - If a symbol name is given, looks up a global symbol.
+        - If a hex value is given, looks up the DIE at the specified offset into .debug_info.
+        - If a frame id is specified (from the `backtrace` command) then symbol_name is
+          treated as a local. If multiple DW_TAG_variable or DW_TAG_formal_parameter DIEs
+          are present in the frame with the same name, all are printed.
+
+        Arguments:
           -r, -rd:  Recurse into child DIEs.
           -ro:      Recurse into DIEs for abstract_origin/specifications.
           -rt:      Recurse into DIEs for symbol's type / base_type(s).
@@ -1657,11 +1687,12 @@ class Repl(object):
         if not len(argv):
             # Whether or not we parsed some flags, we don't have a symbol name
             # to work with.
-            print("Syntax: die [-r[d]] [-ro] [-rt] <symbol_name>")
+            print("Syntax: die [-r[d]] [-ro] [-rt] [frameId] {<symbol_name> | <DIE_offset>}")
             return
 
         sym_name = argv[0]
         sym_addr = None
+        frame_id = None
 
         if sym_name.startswith('0x'):
             try:
@@ -1669,20 +1700,106 @@ class Repl(object):
             except ValueError:
                 term.write("Cannot parse integer value: {sym_name}", term.WARN)
                 return
+        elif len(sym_name) and sym_name[0] >= '0' and sym_name[0] <= '9' and len(argv) > 1:
+            # May be a number indicating a frame id.
+            try:
+                frame_id = int(sym_name)
+                sym_name = argv[1]
+            except ValueError:
+                # It's not a frame id.
+                pass
 
-        if sym_addr is not None:
-            typ = self._debugger.get_debug_info().getDebugInfoEntryByOffset(sym_addr)
+        if frame_id is not None:
+            # Get local variable(s) with the specified name.
+            frameScopes = self._debugger.get_frame_vars(frame_id)
+            if frameScopes is None:
+                print(f'No such stack frame {frameId}')
+                return
+
+            nested_methods = self.__get_scoped_locals(frameScopes)
+
+            # Walk through nested methods and filter down to locals / args with the specified name.
+            cur = nested_methods
+            last_found_scope = None # How far thru the nested scopes should we print method sigs
+                                    # and look for a formal/local with the target name?
+            target_name_filter = lambda arglist: arglist[0].name == sym_name
+            i = 0
+            while cur is not None:
+                cur['formals'] = list(filter(target_name_filter, cur['formals']))
+                cur['locals'] = list(filter(target_name_filter, cur['locals']))
+
+                if len(cur['formals']) or len(cur['locals']):
+                    # This frame does contain locals or formals w/ the specified name.
+                    last_found_scope = i
+
+                cur = cur['next']
+                i += 1
+
+            if last_found_scope is None:
+                print(f'No such local variable: {sym_name}')
+                return
+
+            # At least one nested method scope contains a symbol with the specified name.
+            cur = nested_methods
+            printed_formals = False
+            printed_locals = False
+            i = 0
+            while cur is not None and i <= last_found_scope:
+                if printed_formals or printed_locals:
+                    print('')
+
+                scope = cur['scope'] # Relevant MethodInfo
+                printed_formals = False
+                printed_locals = False
+                if not scope.is_decl and not scope.is_def:
+                    inl_str = 'Inlined method'
+                else:
+                    inl_str = 'Method'
+                term.write(f'{inl_str} scope: {scope.make_signature(include_class=True)}',
+                    term.COLOR_GRAY)
+                method_die = scope.get_die()
+                if method_die is not None:
+                    term.write(f'Method DIE at offset 0x{method_die.offset:x}', term.COLOR_GRAY)
+
+                formals = cur['formals']
+                if len(formals) > 0:
+                    printed_formals = True
+                    print(f"  Formals:")
+                    for formal_lst in formals:
+                        # formal_lst contains a list of FormalArg entries w/ the same name.
+                        for formal in formal_lst:
+                            print(formal.die_to_str(recurse_die_children, recurse_origin,
+                                recurse_types))
+
+                locals_list = cur['locals']
+                if len(locals_list) > 0:
+                    printed_locals = True
+                    if printed_formals:
+                        print('')
+
+                    print(f"  Locals:")
+                    for local_var_lst in locals_list:
+                        for local in local_var_lst:
+                            print(local.die_to_str(recurse_die_children, recurse_origin,
+                                recurse_types))
+
+                cur = cur['next'] # advance linked list ptr.
+                i += 1
         else:
-            # Use symbol-name-based lookup.
-            registers = self._debugger.get_registers()
-            pc = registers["PC"]
-            (_, typ) = self._debugger.get_debug_info().getNamedDebugInfoEntry(sym_name, pc)
+            # Look up a global symbol and print its DIE.
+            if sym_addr is not None:
+                typ = self._debugger.get_debug_info().getDebugInfoEntryByOffset(sym_addr)
+            else:
+                # Use symbol-name-based lookup.
+                registers = self._debugger.get_registers()
+                pc = registers["PC"]
+                (_, typ) = self._debugger.get_debug_info().getNamedDebugInfoEntry(sym_name, pc)
 
-        if typ is None:
-            print(f'{sym_name}: <unknown>')
-            return
+            if typ is None:
+                print(f'{sym_name}: <unknown>')
+                return
 
-        print(typ.die_to_str(recurse_die_children, recurse_origin, recurse_types))
+            print(typ.die_to_str(recurse_die_children, recurse_origin, recurse_types))
 
 
     @Command(keywords=['info', '\\i'], completions=[Completions.SYM])
