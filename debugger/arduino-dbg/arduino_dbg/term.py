@@ -32,7 +32,15 @@ ERR       = COLOR_RED
 COLOR_OFF = COLOR_WHITE # Normal white on black
 
 # Repl prompt.
-PROMPT = "\r(adbg) "
+#
+# Start with a CR (\r) to force reset to beginning of line in case async printing from the
+# ConsolePrinter advances the cursor. Wrap that in \001..\002 to tell readline to
+# disregard the \r in character counting; otherwise it sometimes continues to display a
+# character of old input in place right after the prompt and before the real user input.
+#
+# see e.g.:
+# https://stackoverflow.com/questions/8806643/colorized-output-breaks-linewrapping-with-readline/8916332#8916332
+PROMPT = "\001\r\002(adbg) "
 
 def use_colors():
     """

@@ -9,13 +9,16 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * die command:
+      - parse recursiveness flags
+      - if sym is actually a hex addr, grab it direct.
+      - if given a frame number, search for locals and formals instead of globals.
+
+
   * read_byte.dump, `locals 1` -- __c is const const char[]; is_pointer() is true but size=1,
     which seems more like *elem* size than the size of the addr itself? what exactly does DW_OP_addr
     mean w.r.t. array-typed entities? (is_pointer() is true because we declare that to be the
     case for all ArrayType items... correct?)
-
-  * Some sort of weird off-by-one when restoring prompt after verboseprint()'ing leaves
-    a character of the (prior?) input stuck in the prompt but not actually in the current input.
 
   * Link type information for methods & variables to Symbols in Debugger initialization
     after parsing dwarf_info().
