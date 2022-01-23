@@ -584,7 +584,7 @@ class Debugger(object):
                     # Find the method with the relevant $PC
                     frame_sym = self.function_sym_by_pc(cfi_e.header['initial_location'])
                     if frame_sym:
-                        frame_sym.frame_info = cfi_e
+                        frame_sym.setFrameInfo(cfi_e)
                         #self.verboseprint(f"Bound CFI to method {frame_sym.name}.")
                     else:
                         # We have a CFI that claims to start at this $PC, but no method
@@ -711,6 +711,17 @@ class Debugger(object):
         """
         return self._addr_to_symbol[addr]
 
+    def bind_sym_type(self, name, typ):
+        """
+        Look up a symbol with the specified name ('raw' or demangled) and, if found,
+        attach 'typ' to it as its type_info.
+        """
+        if typ is None or name is None:
+            return
+        elif self._demangled_to_symbol.get(name):
+            self._demangled_to_symbol[name].setTypeInfo(typ)
+        elif self._symbols.get(name):
+            self._symbols[name].setTypeInfo(typ)
 
     def function_sym_by_pc(self, pc):
         """

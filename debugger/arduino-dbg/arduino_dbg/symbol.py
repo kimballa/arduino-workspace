@@ -19,7 +19,7 @@ class Symbol(object):
         self.addr = elf_sym.entry['st_value']
         self.demangled = binutils.demangle(self.name)
         self.elf_sym = elf_sym
-        self.type_info = None
+        self.type_info = None # The VariableInfo or MethodInfo associated with this symbol.
         self.frame_info = None
         self.isr_frame_ok = False # For AVR, where SREG saves in ISR aren't handled right:
                                   # Set to true lazily after validating this is

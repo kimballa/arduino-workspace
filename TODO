@@ -9,9 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * 'print'/'info' commands should be size-, array-, and type-aware like `locals` is.
-    * Requires assigning a PrgmType to each Symbol object.
-
   * Implement DW_OP_GNU_implicit_pointer
     startup.dump, locals 1
 

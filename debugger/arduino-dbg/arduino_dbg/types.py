@@ -233,6 +233,7 @@ class CompilationUnitNamespace(object):
 
     def addVariable(self, var):
         self._variables[var.name] = var
+        self._debugger.bind_sym_type(var.name, var)
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -242,6 +243,7 @@ class CompilationUnitNamespace(object):
 
     def addMethod(self, methodInfo):
         self._methods[methodInfo.method_name] = methodInfo
+        self._debugger.bind_sym_type(methodInfo.method_name, methodInfo)
 
     def getMethod(self, methodName):
         return self._methods.get(methodName)
@@ -336,12 +338,14 @@ class GlobalScope(DieBase):
         also accessible here.
     """
 
-    def __init__(self):
+    def __init__(self, debugger):
         self._variables = {}
         self._methods = {}
+        self._debugger = debugger
 
     def addVariable(self, var):
         self._variables[var.name] = var
+        self._debugger.bind_sym_type(var.name, var)
 
     def getVariable(self, varname):
         return self._variables.get(varname)
@@ -351,6 +355,7 @@ class GlobalScope(DieBase):
 
     def addMethod(self, methodInfo):
         self._methods[methodInfo.method_name] = methodInfo
+        self._debugger.bind_sym_type(methodInfo.method_name, methodInfo)
 
     def getMethod(self, methodName):
         return self._methods.get(methodName)
@@ -1157,7 +1162,7 @@ class ParsedDebugInfo(object):
 
         self._encodings = {} # Global encodings table (encodingId -> PrgmTypE)
         self._cu_namespaces = [] # Set of CompilationUnitNamespace objects.
-        self._global_syms = GlobalScope() # vars/methods tagged DW_AT_external visible from any CU.
+        self._global_syms = GlobalScope(debugger) # vars/methods tagged DW_AT_external visible from any CU.
 
         self.int_size = debugger.get_arch_conf("int_size")
         self.addr_size = debugger.get_arch_conf("ret_addr_size")

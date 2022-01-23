@@ -1021,32 +1021,43 @@ class Repl(object):
         self._last_sym_used = argv[0] # Symbol argument saved as last symbol used.
 
         addr = sym.addr
-        size = 1 # set default...
-        try:
-            size = sym.size # override if available.
-        except KeyError:
-            pass
-
-        if size < 1:
-            size = 1
-        elif size > 4 or size == 3:
-            size = 4
-
-        # TODO(aaron): Make this segment break-out be AVR-specific logic.
-        data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
-        if data_addr_mask and (addr & data_addr_mask) == addr:
-            # We're requesting something in flash.
-            v = self._debugger.get_flash(addr, size)
+        if sym.type_info:
+            # Perform type-aware memory access and pretty-print result
+            mem = el.Memory(self._debugger)
+            if isinstance(sym.type_info, types.VariableInfo):
+                val_type = sym.type_info.var_type
+            else:
+                val_type = sym.type_info
+            val, flags = mem.access_address(addr, val_type, is_flat_address=True)
+            print(el.format_accessed_val(val, sym.type_info))
         else:
-            # We're requesting something in SRAM:
-            v = self._debugger.get_sram(addr, size)
+            # No type information. Just print raw read as hex-formatted int.
+            size = 1 # set default...
+            try:
+                size = sym.size # override if available.
+            except KeyError:
+                pass
 
-        if size == 1:
-            print(f"{v:02x}")
-        elif size == 2:
-            print(f"{v:04x}")
-        elif size == 4:
-            print(f"{v:08x}")
+            if size < 1:
+                size = 1
+            elif size > 4 or size == 3:
+                size = 4
+
+            # TODO(aaron): Make this segment break-out be AVR-specific logic.
+            data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
+            if data_addr_mask and (addr & data_addr_mask) == addr:
+                # We're requesting something in flash.
+                v = self._debugger.get_flash(addr, size)
+            else:
+                # We're requesting something in SRAM:
+                v = self._debugger.get_sram(addr, size)
+
+            if size == 1:
+                print(f"0x{v:02x}")
+            elif size == 2:
+                print(f"0x{v:04x}")
+            elif size == 4:
+                print(f"0x{v:08x}")
 
 
     def __format_registers(self, registers):

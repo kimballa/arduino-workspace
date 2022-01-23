@@ -456,7 +456,7 @@ class Memory(object):
 
         if self._debugger.get_conf('dbg.verbose'):
             if isinstance(out, int):
-                self._debugger.verboseprint(f'Resolved value=0x{out} size={access_size}')
+                self._debugger.verboseprint(f'Resolved value=0x{out:x} size={access_size}')
             elif isinstance(out, str):
                 # It's a string.
                 self._debugger.verboseprint(f'Resolved str={repr(out)} len={len(out)}')
