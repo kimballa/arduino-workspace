@@ -1647,7 +1647,13 @@ class Repl(object):
         sym = argv[0]
         (kind, typ) = self._debugger.get_debug_info().getNamedDebugInfoEntry(sym, pc)
         if kind is None:
-            print(f'{sym}: <unknown type>')
+            # Try the global symbol table, especially for a mangled symbol name.
+            global_sym = self._debugger.lookup_sym(sym)
+            if global_sym is not None and global_sym.type_info is not None:
+                print(f'{global_sym.type_info}')
+            else:
+                # Out of options.
+                print(f'{sym}: <unknown type>')
         elif kind == types.KIND_TYPE or kind == types.KIND_METHOD:
             # Print the type description directly, or print the method signature (which includes
             # the method name) directly
@@ -1804,6 +1810,12 @@ class Repl(object):
                 registers = self._debugger.get_registers()
                 pc = registers["PC"]
                 (_, typ) = self._debugger.get_debug_info().getNamedDebugInfoEntry(sym_name, pc)
+
+                if typ is None:
+                    # Try .symtab-based lookup.
+                    global_sym = self._debugger.lookup_sym(sym_name)
+                    if global_sym is not None and global_sym.type_info is not None:
+                        typ = global_sym.type_info
 
             if typ is None:
                 print(f'{sym_name}: <unknown>')
