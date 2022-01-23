@@ -1041,6 +1041,7 @@ class Repl(object):
         elif size > 4 or size == 3:
             size = 4
 
+        # TODO(aaron): Make this segment break-out be AVR-specific logic.
         data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
         if data_addr_mask and (addr & data_addr_mask) == addr:
             # We're requesting something in flash.

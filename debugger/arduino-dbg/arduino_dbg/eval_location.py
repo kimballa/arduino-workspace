@@ -32,6 +32,8 @@ class ExprFlags(object):
                                           # stack unwinding info
     COMPILE_TIME_CONST      =  0x4000     # Value was embedded directly into the .debug_info
                                           # as a compiler-deduced constant.
+    CONST_ADDR              =  0x8000     # Address provided by DW_OP_addr or addrx
+    FLASH_ADDR              = 0x10000     # Address retrieved from flash segment, not RAM.
 
 
     ERRORS_MASK             =    0xF0     # Errors fit under this mask
@@ -72,6 +74,11 @@ class ExprFlags(object):
         elif ExprFlags.has_warnings(flags):
             if flags & ExprFlags.WARN_CLOBBERED_REG:
                 messages = '(Warning: relies on call-clobbered register; data uncertain)'
+
+        if flags & ExprFlags.FLASH_ADDR:
+            if len(messages):
+                messages += ' '
+            messages += '(Flash data)'
         return messages
 
 
@@ -91,8 +98,9 @@ class DWARFExprMachine(object):
         int    - A memory address you should access to get the variable's value.
         str    - The name of a machine register holding the variable's value directly.
 
-    Or instead of `dem.eval()`, use `dem.access(size)` to directly retrieve a result with the
-    specified total size in bytes from the location identified by the expression.
+    Or instead of `dem.eval()`, use `dem.access(val_type)` to directly retrieve a result with the
+    specified data type from the location identified by the expression. Instead of val_type, you
+    can also pass `size=n` to grab a value exactly n bytes wide.
 
     After calling eval() once, you must call `dem.reset()` to run again. The reset
     method gives the opportunity to refresh the current register state, regs + instructions,
@@ -212,20 +220,40 @@ class DWARFExprMachine(object):
 
     def __access_little_endian(self, size, count=1):
         (addrs, flags) = self.eval()
-        out = 0 # for scalar result
-        new_shift = 0
-        existing_mask = 0
-        outlist = [] # for array-based result
 
+        # Check const addr flag to see if we should be segment-aware in our data retrieval.
+        const_addr = flags & ExprFlags.CONST_ADDR
+        arch = self._debugger.get_arch_conf('instruction_set')
+
+        outlist = [] # for array-based result where count > 1.
         for i in range(0, count):
+            out = 0 # for scalar result
+            new_shift = 0
+            existing_mask = 0
             for (addr, piece_size) in addrs:
+                mem_fn = self.mem
+                if const_addr and arch == "avr":
+                    # We got a flat-address-space addr directly from compiler output.
+                    # Translate that into the AVR segment-aware memory space and
+                    # choose the correct address to read and segment accessor function.
+                    # (nb this check is not needed in __access_big_endian since AVR is
+                    # little endian-only.)
+
+                    data_seg_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
+                    if isinstance(addr, int) and addr == addr & data_seg_mask:
+                        # It's a constant address and it's not in .data (i.e., it's in .text).
+                        mem_fn = self.flash # Use self.flash() to load from .text
+                        flags |= ExprFlags.FLASH_ADDR
+                    elif isinstance(addr, int) and addr != addr & data_seg_mask:
+                        addr = addr & data_seg_mask # remove 0x800000 .data prefix from addr.
+
                 if piece_size == DWARFExprMachine.ALL:
                     piece_size = size # There is only one piece, and it is the caller-decl'd size
                 elif count != 1:
                     raise Exception("Cannot access array with addr in multiple pieces")
 
                 if isinstance(addr, int):
-                    out = (self.mem(addr + (i * piece_size), piece_size) << new_shift) | \
+                    out = (mem_fn(addr + (i * piece_size), piece_size) << new_shift) | \
                         (out & existing_mask)
                 elif isinstance(addr, str):
                     if count != 1:
@@ -305,6 +333,8 @@ class DWARFExprMachine(object):
 
         Otherwise, the new non-None values replace the internal state.
         """
+        self.flags = 0 # clear flags on reset.
+
         if new_regs is not None:
             self.regs = new_regs
 
@@ -324,6 +354,8 @@ class DWARFExprMachine(object):
         raise Exception(f"Unimplemented DWARF expr op='{op.op_name}' ({op.op:x}) args={op.args}")
 
     def _addr(self, op):
+        self._flags |= ExprFlags.CONST_ADDR # Retrieved from a literal address. Result may thus
+                                            # be segment-aware in a segmented memory space.
         self.push(op.args[0]) # Push address argument
 
     def _const(self, op):
@@ -611,7 +643,7 @@ class DWARFExprMachine(object):
     _bit_piece = _unimplemented_op
     _implicit_value = _unimplemented_op
     _implicit_pointer = _unimplemented_op
-    _addrx = _unimplemented_op
+    _addrx = _unimplemented_op # Note: if implemented, remember to set flags.CONST_ADDR a la _addr().
     _constx = _unimplemented_op
     _const_type = _unimplemented_op
     _regval_type = _unimplemented_op
@@ -671,6 +703,12 @@ class DWARFExprMachine(object):
         Get the value contained in SRAM at the specified address.
         """
         return self._debugger.get_sram(addr, size)
+
+    def flash(self, addr, size=1):
+        """
+        Get the value contained in flash memory at the specified address.
+        """
+        return self._debugger.get_flash(addr, size)
 
     ### Setup ###
 

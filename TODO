@@ -9,10 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * read_byte.dump, `locals 1` -- __c is const const char[] with addr= 0x1b7.
-    This is _ZZN20I2C4BitNhdByteSender8readByteEhhE3__c in .text (flash) segment.
-    How do we correctly figure that we should read the flash segment, not sram?
-
   * 'print'/'info' commands should be size- and array-aware like `locals` is.
 
   * locals/print should recognize char[] as a string and fmt it as such.
