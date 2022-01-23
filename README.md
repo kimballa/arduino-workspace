@@ -77,3 +77,5 @@ Using the debugger
 * Run `debugger/arduino-dbg/bin/arduino-dbg` to launch the debug console.
 * Use the `help` command at the prompt to see available capabilities.
 
+![debugger screenshot](./debugger/doc/dbg-screenshot.png)
+

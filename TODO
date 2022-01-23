@@ -11,6 +11,8 @@ On-device service capabilities:
 Client:
   * it seems like const types have 'const' printed way too many times.
 
+  * autocomplete `SYM` class should also include names from the .symtab
+
   * Implement DW_OP_GNU_implicit_pointer
     startup.dump, locals 1
 
