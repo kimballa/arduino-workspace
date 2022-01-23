@@ -83,6 +83,79 @@ class ExprFlags(object):
         return messages
 
 
+def format_accessed_val(val, typ, class_indent=0):
+    """
+    Given 'val' as returned by the DWARFExprMachine.access() method, pretty-print
+    it as a string to display to the user.
+    """
+    if val is None:
+        return ''
+
+    if typ.pointer_depth() > 0:
+        # Pointers/references should be formatted as addresses in hex.
+        # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
+        # be able to find the associated MethodInfo and print the method name.
+        if isinstance(val, tuple):
+            # This is (pointer_addr, actual_val)
+            deref_type = typ.get_dereferenced_type()
+            actual_val_s = format_accessed_val(val[1], deref_type, class_indent)
+            addr_s = f'*0x{val[0]:x}'
+            return addr_s + " => " + actual_val_s
+        elif isinstance(val, ObjectFields):
+            return val.format(class_indent + 1)
+        else:
+            # Just a pointer addr.
+            return f'*0x{val:x}'
+    elif isinstance(val, ObjectFields):
+        return val.format(class_indent + 1)
+    else:
+        # Just use the default repr() for the value.
+        # Invoke repr() explicitly to quote/escape strings.
+        return f'{repr(val)}'
+
+class ObjField(object):
+    """
+    A single field within an ObjectFields.
+    """
+    def __init__(self, field, offset, size, val):
+        self.field = field      # FieldType entry for the field.
+        self.offset = offset    # offset into the object, in bytes.
+        self.size = size        # size of field, in bytes.
+        self.val = val          # saved in the format as-received from access().
+
+    def format(self, class_indent):
+        val_str = format_accessed_val(self.val, self.field.parent_type(), class_indent)
+        s = f'.{self.field.field_name} [+0x{self.offset:02x}, {self.size}] = {val_str}'
+        return s
+
+    def __repr__(self):
+        return self.format(0)
+
+class ObjectFields(object):
+    """
+    Memory access scan of an object. Include all of its fields.
+    """
+    def __init__(self, class_type):
+        self.class_type = class_type
+        self.obj_fields = [] # List of ObjField records.
+
+    def add_field_val(self, obj_field):
+        self.obj_fields.append(obj_field)
+
+    def format(self, indent=0):
+        pad = indent * '  '
+        field_list = self.obj_fields.copy()
+        field_list.sort(key=lambda field: field.offset) # Sort fields in ascending offset order.
+        strings = list(map(lambda field: field.format(indent), field_list))
+        join_str = '\n  ' + pad
+        return self.class_type.class_name +  ' {\n  ' + pad + join_str.join(strings) + pad + \
+            '\n' + pad + '}'
+
+    def __repr__(self):
+        return self.format(0)
+
+
+
 class DWARFExprMachine(object):
     """
     Stack machine to evaluate a DWARF expression to a location address.
@@ -183,11 +256,15 @@ class DWARFExprMachine(object):
             return [(out, DWARFExprMachine.ALL)], self._flags
 
     @staticmethod
-    def __make_list_for_addr(addr):
+    def __make_list_for_addr(addr, initial_flags=0):
         """
         Return an address list and flag set for a known memory address.
+
+        You can also specify flags defining the address' construction. e.g., if this is
+        a fully-qualified 'flat address' from the global symbol table, pass
+        ExprFlags.CONST_ADDR to process it with the correct segment-aware accessor.
         """
-        return [(addr, DWARFExprMachine.ALL)], ExprFlags.OK
+        return [(addr, DWARFExprMachine.ALL)], (ExprFlags.OK | initial_flags)
 
     def __access_big_endian(self, addrs, flags, size, offset=0):
         """
@@ -198,21 +275,21 @@ class DWARFExprMachine(object):
             addresses and registers with sub-scalar sizes.
         @param flags specifies the process by which the addrs list was calculated.
         @param size is the total result word size to fetch from this address.
-        @param offset if non-zero treats 'addrs' as a base address for an array and the result word
-            is retrieved from *(addrs + offset)
+        @param offset if non-zero treats 'addrs' as a base address for an array or field offset
+            within an object, and the result word is retrieved from *(addrs + offset).
         """
         out = 0 # scalar result
         for (addr, piece_size) in addrs:
             if piece_size == DWARFExprMachine.ALL:
                 piece_size = size # There is only one piece, and it is the caller-decl'd size
             elif offset != 0:
-                raise Exception("Cannot access array with addr in multiple pieces")
+                raise Exception("Cannot access array/object offset with addr in multiple pieces")
 
             if isinstance(addr, int):
                 out = (out << (8 * piece_size)) | self.mem(addr + offset, piece_size)
             elif isinstance(addr, str):
                 if offset != 0:
-                    raise Exception("Cannot access array with non-memory address")
+                    raise Exception("Cannot access array/object offset with non-memory address")
                 elif addr == DWARFExprMachine.TOP:
                     regval = self.top()
                 else:
@@ -243,8 +320,8 @@ class DWARFExprMachine(object):
             addresses and registers with sub-scalar sizes.
         @param flags specifies the process by which the addrs list was calculated.
         @param size is the total result word size to fetch from this address.
-        @param offset if non-zero treats 'addrs' as a base address for an array and the result word
-            is retrieved from *(addrs + offset)
+        @param offset if non-zero treats 'addrs' as a base address for an array or field offset
+            within an object, and the result word is retrieved from *(addrs + offset).
         """
         # Check const addr flag to see if we should be segment-aware in our data retrieval.
         const_addr = flags & ExprFlags.CONST_ADDR
@@ -273,14 +350,14 @@ class DWARFExprMachine(object):
             if piece_size == DWARFExprMachine.ALL:
                 piece_size = size # There is only one piece, and it is the caller-decl'd size
             elif offset != 0:
-                raise Exception("Cannot access array with addr in multiple pieces")
+                raise Exception("Cannot access array/object offset with addr in multiple pieces")
 
             if isinstance(addr, int):
                 out = (mem_fn(addr + offset, piece_size) << new_shift) | \
                     (out & existing_mask)
             elif isinstance(addr, str):
                 if offset != 0:
-                    raise Exception("Cannot access array with non-memory address")
+                    raise Exception("Cannot access array/object offset with non-memory address")
                 elif addr == DWARFExprMachine.TOP:
                     regval = self.top()
                 else:
@@ -304,20 +381,51 @@ class DWARFExprMachine(object):
     # Maximum length to explore for a null-terminated string.
     MAX_NULL_TERM_STRING_LEN = 64
 
-    def __access_resolved_address(self, addrs, flags=0, typ=None, size=None):
+    def __access_resolved_address(self, addrs, flags=0, typ=None, size=None, field_offset=0):
         """
         Given an address list 'addrs' of the form returned by 'DWARFExprMachine.eval()', and
         associated flags, as well as datatype and/or size of data to retrieve, access the
         information in memory and return it in the appropriate host datatype/format.
 
         Returns the value of size 'size' located at the address computed by the expression and
-        the flags associated with identifying its location.
+        the flags associated with identifying its location. If this method is being invoked to
+        access a field of an object, field_offset is the offset in bytes beyond 'addrs' to read.
 
         The return value may be an integer, a list, or a string depending on the data type
         input. If the value is a pointer, the result is a tuple of (address, pointed-to-value).
         Multiple layers of indirection can return values nested like a LISP-style list:
         (car, (cadr, cddr...)).
         """
+
+        if typ and isinstance(typ, types.ClassType):
+            # For a class, don't just grab a contiguous block of memory; read and follow
+            # each field individually.
+            obj = ObjectFields(typ)
+            last_type = None
+            while typ != last_type and typ is not None:
+                assert isinstance(typ, types.ClassType)
+                for field in typ.fields:
+                    # Read the value of the next field of the object.
+                    field_t = field.parent_type()
+                    field_sz = field_t.size
+                    (val, flags) = self.__access_resolved_address(addrs, flags, field_t,
+                        field_offset=field.offset)
+                    field_val = ObjField(field, field.offset, field_sz, val)
+                    obj.add_field_val(field_val)
+
+                typ = typ.parent_type()
+
+            self._debugger.verboseprint(f'Resolved value as object of type {obj.class_type.class_name}.')
+            return obj, flags
+
+        # The main body of this method handles access to sequential bytes for a scalar, pointer,
+        # array or string:
+
+        if self._debugger.get_arch_conf("endian") == "big":
+            access_fn = self.__access_big_endian
+        else:
+            access_fn = self.__access_little_endian
+
         access_size = None
         access_count = 1
         if size is not None:
@@ -339,11 +447,6 @@ class DWARFExprMachine(object):
                 'Warning: No type or size specified to DWARFExprMachine.access(); ',
                 'defaulting to CPU word size of ', access_size)
 
-        if self._debugger.get_arch_conf("endian") == "big":
-            access_fn = self.__access_big_endian
-        else:
-            access_fn = self.__access_little_endian
-
         outlist=[] # for array-based results
         if access_count == types.VARIABLE_LEN_ARRAY:
             # We're reading a null-termianted string from the specified address. Continue reading
@@ -351,7 +454,7 @@ class DWARFExprMachine(object):
             assert access_size > 0
             offset = 0
             while True:
-                (out, flags) = access_fn(addrs, flags, access_size, offset)
+                (out, flags) = access_fn(addrs, flags, access_size, offset + field_offset)
                 outlist.append(out)
                 if out == 0:
                     break # Found null terminator.
@@ -362,7 +465,7 @@ class DWARFExprMachine(object):
                     break
         else:
             for i in range(0, access_count):
-                (out, flags) = access_fn(addrs, flags, access_size, i * access_size)
+                (out, flags) = access_fn(addrs, flags, access_size, i * access_size + field_offset)
                 outlist.append(out)
 
         if access_count != 1:
@@ -382,7 +485,9 @@ class DWARFExprMachine(object):
         elif typ.pointer_depth() > 0 and isinstance(out, int) and out != 0:
             # We have a pointer to another value.
             deref_type = typ.get_dereferenced_type()
-            if deref_type is not None:
+            # If we know the pointed-to type and it has a non-zero size (i.e., ptr_t is not void*)
+            # then dereference the pointer and read the value too.
+            if deref_type is not None and deref_type.size > 0:
                 if deref_type.is_char():
                     # We dereferenced a pointer to a char. Don't just read as a single char;
                     # read all chars until we encounter '\0'.

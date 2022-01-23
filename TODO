@@ -12,10 +12,6 @@ Client:
   * 'print'/'info' commands should be size-, array-, and type-aware like `locals` is.
     * Requires assigning a PrgmType to each Symbol object.
 
-  * locals should decode class structures
-  * locals should decode class structures when dereferncing pointers
-    - See read_byte; locals 4
-
   * Implement DW_OP_GNU_implicit_pointer
     startup.dump, locals 1
 
