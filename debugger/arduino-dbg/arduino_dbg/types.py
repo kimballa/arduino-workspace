@@ -395,11 +395,33 @@ class PrgmType(DieBase):
         # Implement DieBase method.
         return self._parent_type
 
-    def is_pointer(self):
+    def pointer_depth(self):
         """
-        Return True if this is a pointer type.
+        If this is not a pointer type, return 0. Otherwise return 'n' for the number
+        of layers of indirection involved.
+
+        char x;   // depth=0
+        char *x;  // depth=1
+        char **x; // depth=2, etc...
         """
-        return False
+        return 0
+
+    def get_dereferenced_type(self):
+        """
+        If this is a pointer type, return the pointed-to type.
+        """
+        depth = self.pointer_depth()
+        if depth == 0:
+            return None
+        else:
+            base = self
+            base_depth = depth
+            # Use a loop because 'const foo *' is ConstT(PtrT(foo)) and requires two descents
+            # into parent_type() to return the 'foo' type.
+            while base_depth == depth:
+                base = base.parent_type()
+                base_depth = base.pointer_depth()
+            return base
 
     def is_array(self):
         """
@@ -462,8 +484,8 @@ class ConstType(PrgmType):
         PrgmType.__init__(self, name, base_type.size, base_type)
         self.name = name
 
-    def is_pointer(self):
-        return self.parent_type().is_pointer()
+    def pointer_depth(self):
+        return self.parent_type().pointer_depth()
 
     def is_array(self):
         return self.parent_type().is_array()
@@ -483,6 +505,40 @@ class ConstType(PrgmType):
     def __repr__(self):
         return self.name
 
+
+VARIABLE_LEN_ARRAY = -1 # returned in NullTermString.get_array_len()
+
+class NullTermString(PrgmType):
+    """
+    A special type to represent '[const] char *' after being dereferenced in 'access()';
+    tells access() to read a variable amount of data until a null terminator is encountered.
+    """
+    def __init__(self):
+        PrgmType.__init__(self, '*(const char*)', 1, None)
+
+    def pointer_depth(self):
+        # Returns 0 because this is already the dereferenced memory region.
+        return 0
+
+    def is_char(self):
+        return False
+
+    def is_array(self):
+        return True
+
+    def is_string(self):
+        return True
+
+    def get_array_elem_size(self):
+        return 1 # char size.
+
+    def get_array_len(self):
+        return VARIABLE_LEN_ARRAY
+
+    def __repr__(self):
+        return 'const char*'
+
+
 class PointerType(PrgmType):
     """
     A pointer to an item of type T.
@@ -491,8 +547,8 @@ class PointerType(PrgmType):
         name = f'{base_type.name}*'
         PrgmType.__init__(self, name, addr_size, base_type)
 
-    def is_pointer(self):
-        return True
+    def pointer_depth(self):
+        return self.parent_type().pointer_depth() + 1
 
     # currently using default of 'is_array()' looking at parent_type, which will
     # then be true only if we have an array of pointers. pointer to array will
@@ -509,8 +565,8 @@ class ReferenceType(PrgmType):
         name = f'{base_type.name}&'
         PrgmType.__init__(self, name, addr_size, base_type)
 
-    def is_pointer(self):
-        return True
+    def pointer_depth(self):
+        return self.parent_type().pointer_depth() + 1
 
     # currently using default of 'is_array()' looking at parent_type, which will
     # then be true only if we have an array of pointers. pointer to array will
@@ -604,8 +660,8 @@ class AliasType(PrgmType):
     def __init__(self, alias, base_type):
         PrgmType.__init__(self, alias, base_type.size, base_type)
 
-    def is_pointer(self):
-        return self.parent_type().is_pointer()
+    def pointer_depth(self):
+        return self.parent_type().pointer_depth()
 
     def __repr__(self):
         return f'typedef {self.parent_type().name} {self.name}'
@@ -675,8 +731,8 @@ class MethodPtrType(PrgmType):
             arg = FormalArg('', _VOID, None)
         self.formal_args.append(arg)
 
-    def is_pointer(self):
-        return True
+    def pointer_depth(self):
+        return 1
 
     def __repr__(self):
         formals = FormalArg.filter_signature_args(self.formal_args)

@@ -12,8 +12,12 @@ Client:
   * 'print'/'info' commands should be size-, array-, and type-aware like `locals` is.
     * Requires assigning a PrgmType to each Symbol object.
 
-  * locals should recognize ptr types and auto-deref non-null ptrs.
-  * locals should recognize char* types, auto-deref non-null, fmt as string.
+  * locals should decode class structures
+  * locals should decode class structures when dereferncing pointers
+    - See read_byte; locals 4
+
+  * Implement DW_OP_GNU_implicit_pointer
+    startup.dump, locals 1
 
   * If there's an exception thrown during .debug_info parsing / in the Debugger c'tor, we
     go back to the REPL but the subsequent `\q` will hang until you ^C to kill adbg..

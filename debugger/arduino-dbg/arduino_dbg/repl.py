@@ -536,19 +536,30 @@ class Repl(object):
 
         assert local_type is not None
 
-        if best_val is not None:
-            if local_type.is_pointer():
+        def __fmt_value_inner(val, typ):
+            """ Format *just* the value """
+            if val is None:
+                return ''
+
+            if typ.pointer_depth() > 0:
                 # Pointers/references should be formatted as addresses in hex.
                 # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
                 # be able to find the associated MethodInfo and print the method name.
-                val_str = f'0x{best_val:x}'
+                if isinstance(val, tuple):
+                    # This is (pointer_addr, actual_val)
+                    actual_val_s = __fmt_value_inner(best_val[1], typ.parent_type())
+                    addr_s = f'0x{val[0]:x}'
+                    return addr_s + " => " + actual_val_s
+                else:
+                    # Just a pointer addr.
+                    return f'0x{val:x}'
             else:
                 # Just use the default repr() for the value.
                 # Invoke repr() explicitly to quote/escape strings.
-                val_str = f'{repr(best_val)}'
-        else:
-            val_str = ''
+                return f'{repr(val)}'
 
+
+        val_str = __fmt_value_inner(best_val, local_type)
         type_name = f'{local_type.name}'
 
         if best_var.name is not None:
