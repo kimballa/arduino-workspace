@@ -301,6 +301,9 @@ class DWARFExprMachine(object):
         out &= existing_mask # Ensure we don't return data that's too wide for size.
         return out, flags
 
+    # Maximum length to explore for a null-terminated string.
+    MAX_NULL_TERM_STRING_LEN = 64
+
     def __access_resolved_address(self, addrs, flags=0, typ=None, size=None):
         """
         Given an address list 'addrs' of the form returned by 'DWARFExprMachine.eval()', and
@@ -353,6 +356,10 @@ class DWARFExprMachine(object):
                 if out == 0:
                     break # Found null terminator.
                 offset += access_size
+                if offset == self.MAX_NULL_TERM_STRING_LEN:
+                    # Don't run on in memory forever. Add an ellipse and call it a day.
+                    outlist.extend(3 * [ord('.')])
+                    break
         else:
             for i in range(0, access_count):
                 (out, flags) = access_fn(addrs, flags, access_size, i * access_size)
