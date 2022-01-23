@@ -7,8 +7,8 @@ import locale
 import re
 import subprocess
 
-# undesirable suffix on demangled names
-_constprop_regex = re.compile(r'\[clone \.constprop.*\]$')
+# undesirable suffixes on demangled names
+_clone_regex = re.compile(r'\[clone \.[A-Za-z_]+.*\]$')
 
 
 def demangle(name, hide_params=False):
@@ -27,8 +27,8 @@ def demangle(name, hide_params=False):
     demangled_list = stdout.split("\n")
     demangled = demangled_list[0].strip()
 
-    # Remove any '[clone .constprop.NN]' suffix.
-    demangled = _constprop_regex.sub('', demangled)
+    # Remove any '[clone .constprop.NN]', etc suffixes.
+    demangled = _clone_regex.sub('', demangled)
 
     #print(f"Demangled: {name} -> {demangled}")
     return demangled
