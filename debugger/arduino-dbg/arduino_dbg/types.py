@@ -407,6 +407,18 @@ class PrgmType(DieBase):
         """
         return False
 
+    def is_string(self):
+        """
+        Return True if this represents string-printable data.
+        """
+        return False
+
+    def is_char(self):
+        """
+        Return True if this represents a character. (signed char)
+        """
+        return False
+
     def get_array_len(self):
         """
         If is_array() is true, return the element count.
@@ -430,6 +442,12 @@ class PrimitiveType(PrgmType):
     def __init__(self, name, size, signed=False):
         PrgmType.__init__(self, name, size)
         self.signed = signed
+
+    def is_char(self):
+        """
+        Return True if this represents a character. (signed char)
+        """
+        return self.signed and self.size == 1
 
     def __repr__(self):
         return self.name
@@ -455,6 +473,12 @@ class ConstType(PrgmType):
 
     def get_array_elem_size(self):
         return self.parent_type().get_array_elem_size()
+
+    def is_string(self):
+        return self.parent_type().is_string()
+
+    def is_char(self):
+        return self.parent_type().is_char()
 
     def __repr__(self):
         return self.name
@@ -563,8 +587,15 @@ class ArrayType(PrgmType):
         """
         return self.get_type().size
 
+    def is_string(self):
+        return self.parent_type().is_char()
+
+    def is_char(self):
+        return False # Definitionally it's not a single character, it's an array.
+
     def __repr__(self):
         return f'{self.parent_type()}[{self.length}]'
+
 
 class AliasType(PrgmType):
     """

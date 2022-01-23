@@ -541,10 +541,11 @@ class Repl(object):
                 # Pointers/references should be formatted as addresses in hex.
                 # TODO(aaron): vals of MethodPtrType must refer to a defined method, yes? We should
                 # be able to find the associated MethodInfo and print the method name.
-                val_str = f' = 0x{best_val:x}'
+                val_str = f'0x{best_val:x}'
             else:
                 # Just use the default repr() for the value.
-                val_str = f' = {best_val}'
+                # Invoke repr() explicitly to quote/escape strings.
+                val_str = f'{repr(best_val)}'
         else:
             val_str = ''
 
@@ -568,6 +569,8 @@ class Repl(object):
             val_color = term.BOLD
         warnings = term.fmt(warnings, warn_color)
         val_str = term.fmt(val_str, val_color)
+        if len(val_str):
+            val_str = " = " + val_str
 
         out_str = f'{name_and_type}{val_str} {warnings}'
         return out_str

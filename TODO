@@ -9,11 +9,11 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * 'print'/'info' commands should be size- and array-aware like `locals` is.
+  * 'print'/'info' commands should be size-, array-, and type-aware like `locals` is.
+    * Requires assigning a PrgmType to each Symbol object.
 
-  * locals/print should recognize char[] as a string and fmt it as such.
-  * locals/print should recognize ptr types and auto-deref non-null ptrs.
-  * locals/print should recognize char* types, auto-deref non-null, fmt as string.
+  * locals should recognize ptr types and auto-deref non-null ptrs.
+  * locals should recognize char* types, auto-deref non-null, fmt as string.
 
   * If there's an exception thrown during .debug_info parsing / in the Debugger c'tor, we
     go back to the REPL but the subsequent `\q` will hang until you ^C to kill adbg..

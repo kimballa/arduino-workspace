@@ -26,7 +26,7 @@ class ExprFlags(object):
                                           # on the value of a caller-save register which may
                                           # be clobbered by the time we read the value.
 
-    # Information
+    # Information about how the location was calculated.
     MULTIPART               =  0x1000     # The address is in multiple pieces
     REGISTER_UNWIND         =  0x2000     # The result relies on processing the .debug_frame
                                           # stack unwinding info
@@ -314,12 +314,33 @@ class DWARFExprMachine(object):
         else:
             (out, flags) = self.__access_little_endian(access_size, access_count)
 
+        if typ.is_string() and isinstance(out, list):
+            # Convert output from array to string.
+            out_chars = list(map(lambda c: chr(c), out))
+            try:
+                null_idx = out_chars.index('\x00')
+                # Chomp at the first null terminator we see.
+                out_chars = out_chars[:null_idx]
+            except ValueError:
+                pass # No null terminator to chomp.
+
+            out = ''.join(out_chars)
+
         if access_count == 1:
             self._debugger.verboseprint("Resolved value=0x", dbg.VHEX, out, " size=", access_size)
         elif self._debugger.get_conf('dbg.verbose'):
-            # access_count > 1; format array.
-            self._debugger.verboseprint(f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} ' +
-                f'elem_size={access_size}, cnt={access_count}')
+            # access_count > 1
+            if isinstance(out, str):
+                # It's a string.
+                self._debugger.verboseprint(f'Resolved str={repr(out)} len={len(out)}')
+            elif isinstance(out, list):
+                # It's an array.
+                self._debugger.verboseprint(f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} ' +
+                    f'elem_size={access_size}, cnt={access_count}')
+            else:
+                # Unsure what type this is, exactly.
+                self._debugger.verboseprint(f'Resolved value: {out} ' +
+                    f'(size={access_size}, cnt={access_count})')
 
         return out, flags
 

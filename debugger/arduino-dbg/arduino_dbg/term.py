@@ -55,7 +55,9 @@ def fmt(text, color_code=None):
     """
     Return a string wrapped in the codes to enable a certain color, if use_colors is active.
     """
-    if use_colors() and color_code is not None:
+    if text == '':
+        return ''
+    elif use_colors() and color_code is not None:
         return f'{color_code}{text}{COLOR_OFF}'
     else:
         return text
