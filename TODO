@@ -9,6 +9,8 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * it seems like const types have 'const' printed way too many times.
+
   * Implement DW_OP_GNU_implicit_pointer
     startup.dump, locals 1
 
