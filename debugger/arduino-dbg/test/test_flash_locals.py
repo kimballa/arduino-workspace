@@ -43,16 +43,16 @@ class TestFlashLocals(DbgTestCase):
             for formal in scope.getFormals():
                 val, flags = formal.getValue(frame_regs, frame)
                 if formal.name is not None and val is not None:
-                    self.assertFalse(el.ExprFlags.has_errors(flags))
+                    self.assertFalse(el.LookupFlags.has_errors(flags))
                     var_values[formal.name] = val
 
             for (varname, variable) in scope.getVariables():
                 val, flags = variable.getValue(frame_regs, frame)
                 if variable.name is not None and val is not None:
-                    self.assertFalse(el.ExprFlags.has_errors(flags))
+                    self.assertFalse(el.LookupFlags.has_errors(flags))
                     if variable.name == "__c":
                         # Prove we decoded this from flash.
-                        self.assertTrue(flags & el.ExprFlags.FLASH_ADDR)
+                        self.assertTrue(flags & el.LookupFlags.FLASH_ADDR)
                     var_values[variable.name] = val
 
         # Assert that we correctly processed the data as a string.

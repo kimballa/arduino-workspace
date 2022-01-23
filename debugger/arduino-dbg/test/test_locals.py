@@ -43,13 +43,13 @@ class TestLocals(DbgTestCase):
             for formal in scope.getFormals():
                 val, flags = formal.getValue(frame_regs, frame)
                 if formal.name is not None and val is not None:
-                    self.assertFalse(el.ExprFlags.has_errors(flags))
+                    self.assertFalse(el.LookupFlags.has_errors(flags))
                     var_values[formal.name] = val
 
             for (varname, variable) in scope.getVariables():
                 val, flags = variable.getValue(frame_regs, frame)
                 if variable.name is not None and val is not None:
-                    self.assertFalse(el.ExprFlags.has_errors(flags))
+                    self.assertFalse(el.LookupFlags.has_errors(flags))
                     var_values[variable.name] = val
 
         # We expect to produce values for: this, ctrlFlags, enFlag, send, __c

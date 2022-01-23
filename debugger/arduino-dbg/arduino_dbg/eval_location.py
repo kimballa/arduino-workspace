@@ -1,13 +1,20 @@
 # (c) Copyright 2022 Aaron Kimball
-#
-# Stack machine to evaluate location info from DWARF DW_AT_location bytecode
+"""
+Methods and classes to access data in memory.
+
+class Memory: a class that accesses memory and registers in a type-aware fashion.
+class DWARFExprMachine: A stack machine to evaluate location info from DWARF
+    DW_AT_location bytecode.
+class LookupFlags: flags describing memory location calculation / lookup operations.
+format_accessed_val(): a method to pretty-print a value retrieved by the Memory class.
+"""
 
 import elftools.dwarf.dwarf_expr as dwarf_expr
 
 import arduino_dbg.debugger as dbg
 import arduino_dbg.types as types
 
-class ExprFlags(object):
+class LookupFlags(object):
     """
     Flags that provide info about the result returned by eval() or access().
     """
@@ -45,21 +52,21 @@ class ExprFlags(object):
         """
         Return True for any successful (fully-clean or with-warnings) response.
         """
-        return flags & ExprFlags.OK
+        return flags & LookupFlags.OK
 
     @staticmethod
     def has_warnings(flags):
         """
         Return True if the warning bit is set.
         """
-        return (flags & ExprFlags.WARNINGS_MASK) != 0
+        return (flags & LookupFlags.WARNINGS_MASK) != 0
 
     @staticmethod
     def has_errors(flags):
         """
         Return True if any errors are noticed.
         """
-        return (flags & ExprFlags.ERRORS_MASK) != 0
+        return (flags & LookupFlags.ERRORS_MASK) != 0
 
     @staticmethod
     def get_message(flags):
@@ -67,16 +74,16 @@ class ExprFlags(object):
         Return a formatted user-friendly message about errors or warnings encountered.
         """
         messages = ''
-        if ExprFlags.has_errors(flags):
-            if flags & ExprFlags.ERR_NO_LOCATION:
+        if LookupFlags.has_errors(flags):
+            if flags & LookupFlags.ERR_NO_LOCATION:
                 messages = '(No location data)'
-            elif flags  & ExprFlags.ERR_PC_OUT_OF_BOUNDS:
+            elif flags  & LookupFlags.ERR_PC_OUT_OF_BOUNDS:
                 messages = '(Out of scope)'
-        elif ExprFlags.has_warnings(flags):
-            if flags & ExprFlags.WARN_CLOBBERED_REG:
+        elif LookupFlags.has_warnings(flags):
+            if flags & LookupFlags.WARN_CLOBBERED_REG:
                 messages = '(Warning: relies on call-clobbered register; data uncertain)'
 
-        if flags & ExprFlags.FLASH_ADDR:
+        if flags & LookupFlags.FLASH_ADDR:
             if len(messages):
                 messages += ' '
             messages += '(Flash data)'
@@ -85,7 +92,7 @@ class ExprFlags(object):
 
 def format_accessed_val(val, typ, class_indent=0):
     """
-    Given 'val' as returned by the DWARFExprMachine.access() method, pretty-print
+    Given 'val' as returned by the Memory.access() method, pretty-print
     it as a string to display to the user.
     """
     if val is None:
@@ -155,6 +162,341 @@ class ObjectFields(object):
         return self.format(0)
 
 
+class Memory(object):
+    """
+    Accessor that can retrieve typed or raw data from memory.
+
+    This is used by DWARFExprMachine to convert a resolved memory location to a value,
+    as well as to retrieve data from memory addresses identified by the symbol table, etc.
+
+    This can read from an expansive definition of 'memory' including RAM, flash, and the
+    register file. The access methods handle address lists as formatted by DWARFExprMachine.eval();
+    there are also convenience methods for converting flat memory addresses to address lists.
+    """
+    def __init__(self, debugger, regs=None):
+        self._debugger = debugger
+        self.regs = regs
+
+    def __repr__(self):
+        return 'Memory'
+
+    def set_regs(self, new_regs):
+        """
+        Update the mapping of registers to values.
+        """
+        self.regs = new_regs
+
+    def flash(self, addr, size=1):
+        """
+        Get the value contained in flash memory at the specified address.
+        """
+        self._debugger.verboseprint('Reading ', size, ' bytes at flash 0x', dbg.VHEX4, addr)
+        return self._debugger.get_flash(addr, size)
+
+    def mem(self, addr, size=1):
+        """
+        Get the value contained in SRAM at the specified address.
+        """
+        self._debugger.verboseprint('Reading ', size, ' bytes at addr 0x', dbg.VHEX4, addr)
+        return self._debugger.get_sram(addr, size)
+
+
+    @staticmethod
+    def __make_list_for_addr(addr, initial_flags=0):
+        """
+        Return an address list and flag set for a known memory address.
+
+        You can also specify flags defining the address' construction. e.g., if this is
+        a fully-qualified 'flat address' from the global symbol table, pass
+        LookupFlags.CONST_ADDR to process it with the correct segment-aware accessor.
+        """
+        return [(addr, DWARFExprMachine.ALL)], (LookupFlags.OK | initial_flags)
+
+    def __access_big_endian(self, addrs, flags, size, offset=0, expr_machine=None):
+        """
+        Access a scalar word of the specified size in big-endian format. Subcomponents of the word
+        are located by 1 or more addresses in 'addrs'.
+
+        @param addrs can be a singleton (addr, DWARFExprMachine.ALL) tuple list, or a list of
+            addresses and registers with sub-scalar sizes.
+        @param flags specifies the process by which the addrs list was calculated.
+        @param size is the total result word size to fetch from this address.
+        @param offset if non-zero treats 'addrs' as a base address for an array or field offset
+            within an object, and the result word is retrieved from *(addrs + offset).
+        @param expr_machine the invoking DWARFExprMachine, if any.
+        """
+        out = 0 # scalar result
+        for (addr, piece_size) in addrs:
+            if piece_size == DWARFExprMachine.ALL:
+                piece_size = size # There is only one piece, and it is the caller-decl'd size
+            elif offset != 0:
+                raise Exception("Cannot access array/object offset with addr in multiple pieces")
+
+            if isinstance(addr, int):
+                out = (out << (8 * piece_size)) | self.mem(addr + offset, piece_size)
+            elif isinstance(addr, str):
+                if offset != 0:
+                    raise Exception("Cannot access array/object offset with non-memory address")
+                elif addr == DWARFExprMachine.TOP:
+                    regval = expr_machine.top()
+                else:
+                    regval = self.regs[addr]
+
+                if piece_size == 1:
+                    regval = regval & 0xFF
+                elif piece_size == 2:
+                    regval = regval & 0xFFFF
+                elif piece_size == 4:
+                    regval = regval & 0xFFFFFFFF
+                elif piece_size == 8:
+                    regval = regval & 0xFFFFFFFFFFFFFFFF
+                else:
+                    raise Exception(f'Unknown piece size arg {piece_size}')
+                out = (out << (8 * piece_size)) | regval
+            else:
+                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+
+        return out, flags
+
+    def __access_little_endian(self, addrs, flags, size, offset=0, expr_machine=None):
+        """
+        Access a scalar word of the specified size in little-endian format. Subcomponents of the word
+        are located by 1 or more addresses in 'addrs'.
+
+        @param addrs can be a singleton (addr, DWARFExprMachine.ALL) tuple list, or a list of
+            addresses and registers with sub-scalar sizes.
+        @param flags specifies the process by which the addrs list was calculated.
+        @param size is the total result word size to fetch from this address.
+        @param offset if non-zero treats 'addrs' as a base address for an array or field offset
+            within an object, and the result word is retrieved from *(addrs + offset).
+        @param expr_machine the invoking DWARFExprMachine, if any.
+        """
+        # Check const addr flag to see if we should be segment-aware in our data retrieval.
+        const_addr = flags & LookupFlags.CONST_ADDR
+        arch = self._debugger.get_arch_conf('instruction_set')
+
+        out = 0 # for scalar result
+        new_shift = 0
+        existing_mask = 0
+        for (addr, piece_size) in addrs:
+            mem_fn = self.mem
+            if const_addr and arch == "avr":
+                # We got a flat-address-space addr directly from compiler output.
+                # Translate that into the AVR segment-aware memory space and
+                # choose the correct address to read and segment accessor function.
+                # (nb this check is not needed in __access_big_endian since AVR is
+                # little endian-only.)
+
+                data_seg_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
+                if isinstance(addr, int) and addr == addr & data_seg_mask:
+                    # It's a constant address and it's not in .data (i.e., it's in .text).
+                    mem_fn = self.flash # Use self.flash() to load from .text
+                    flags |= LookupFlags.FLASH_ADDR
+                elif isinstance(addr, int) and addr != addr & data_seg_mask:
+                    addr = addr & data_seg_mask # remove 0x800000 .data prefix from addr.
+
+            if piece_size == DWARFExprMachine.ALL:
+                piece_size = size # There is only one piece, and it is the caller-decl'd size
+            elif offset != 0:
+                raise Exception("Cannot access array/object offset with addr in multiple pieces")
+
+            if isinstance(addr, int):
+                out = (mem_fn(addr + offset, piece_size) << new_shift) | \
+                    (out & existing_mask)
+            elif isinstance(addr, str):
+                if offset != 0:
+                    raise Exception("Cannot access array/object offset with non-memory address")
+                elif addr == DWARFExprMachine.TOP:
+                    regval = expr_machine.top()
+                else:
+                    regval = self.regs[addr]
+                out = (regval << new_shift) | (out & existing_mask)
+            else:
+                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
+
+            # Account for bit width of result built-so-far growing by piece_size bytes.
+            for i in range(0, piece_size):
+                # mask off `piece_size` more bytes on lsb-side of result as present.
+                existing_mask <<= 8
+                existing_mask |= 0xFF
+
+            new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
+                                        # before slotting in
+
+        out &= existing_mask # Ensure we don't return data that's too wide for size.
+        return out, flags
+
+    # Maximum length to explore for a null-terminated string.
+    MAX_NULL_TERM_STRING_LEN = 64
+
+    def access_resolved_address(self, addrs, flags=0, typ=None, size=None, field_offset=0,
+            expr_machine=None):
+        """
+        Given an address list 'addrs' of the form returned by 'DWARFExprMachine.eval()', and
+        associated flags, as well as datatype and/or size of data to retrieve, access the
+        information in memory and return it in the appropriate host datatype/format.
+
+        Returns the value of size 'size' or 'typ.size' located at the address computed by the
+        expression and the flags associated with identifying its location. If this method is being
+        invoked to access a field of an object, field_offset is the offset in bytes beyond 'addrs'
+        to read.
+
+        The return value type may be an integer, a list, or a string depending on the data type
+        input. If the value is a pointer, the result is a tuple of (address, pointed-to-value).
+        Multiple layers of indirection can return values nested like a LISP-style list:
+        (car, (cadr, cddr...)).
+
+        Returns a tuple of the actual typed return value from memory (as defined above) and an
+        integer bitflags (see LookupFlags) describing the memory access.
+        """
+
+        if typ and isinstance(typ, types.ClassType):
+            # For a class, don't just grab a contiguous block of memory; read and follow
+            # each field individually.
+            obj = ObjectFields(typ)
+            last_type = None
+            while typ != last_type and typ is not None:
+                assert isinstance(typ, types.ClassType)
+                for field in typ.fields:
+                    # Read the value of the next field of the object.
+                    field_t = field.parent_type()
+                    field_sz = field_t.size
+                    (val, flags) = self.access_resolved_address(addrs, flags, field_t,
+                        field_offset=field.offset, expr_machine=expr_machine)
+                    field_val = ObjField(field, field.offset, field_sz, val)
+                    obj.add_field_val(field_val)
+
+                typ = typ.parent_type()
+
+            self._debugger.verboseprint(f'Resolved value as object of type {obj.class_type.class_name}.')
+            return obj, flags
+
+        # The main body of this method handles access to sequential bytes for a scalar, pointer,
+        # array or string:
+
+        if self._debugger.get_arch_conf("endian") == "big":
+            access_fn = self.__access_big_endian
+        else:
+            access_fn = self.__access_little_endian
+
+        access_size = None
+        access_count = 1
+        if size is not None:
+            # Fetch exactly as many bytes as requested.
+            access_size = size
+            if typ and typ.size != size:
+                self._debugger.verboseprint('Warning: both type and size specified in access(); ',
+                    'size=', size, ' but type width is ', typ.size, '. ',
+                    'Using explicit size=', size, '.')
+        elif typ and typ.is_array():
+            access_count = typ.get_array_len()
+            access_size = typ.get_array_elem_size()
+        elif typ:
+            access_size = typ.size
+        else:
+            # Didn't get enough parameters to know what type to fetch?
+            access_size = self._debugger.get_arch_conf('push_word_len')
+            self._debugger.verboseprint(
+                'Warning: No type or size specified to Memory.access(); ',
+                'defaulting to CPU word size of ', access_size)
+
+        outlist=[] # for array-based results
+        if access_count == types.VARIABLE_LEN_ARRAY:
+            # We're reading a null-termianted string from the specified address. Continue reading
+            # until we reach a null terminator.
+            assert access_size > 0
+            offset = 0
+            while True:
+                (out, flags) = access_fn(addrs, flags, access_size, offset + field_offset,
+                    expr_machine)
+                outlist.append(out)
+                if out == 0:
+                    break # Found null terminator.
+                offset += access_size
+                if offset == self.MAX_NULL_TERM_STRING_LEN:
+                    # Don't run on in memory forever. Add an ellipse and call it a day.
+                    outlist.extend(3 * [ord('.')])
+                    break
+        else:
+            for i in range(0, access_count):
+                (out, flags) = access_fn(addrs, flags, access_size, i * access_size + field_offset,
+                    expr_machine)
+                outlist.append(out)
+
+        if access_count != 1:
+            out = outlist
+
+        if typ.is_string() and isinstance(out, list):
+            # Convert output from array to string.
+            out_chars = list(map(lambda c: chr(c), out))
+            try:
+                null_idx = out_chars.index('\x00')
+                # Chomp at the first null terminator we see.
+                out_chars = out_chars[:null_idx]
+            except ValueError:
+                pass # No null terminator to chomp.
+
+            out = ''.join(out_chars)
+        elif typ.pointer_depth() > 0 and isinstance(out, int) and out != 0:
+            # We have a pointer to another value.
+            deref_type = typ.get_dereferenced_type()
+            # If we know the pointed-to type and it has a non-zero size (i.e., ptr_t is not void*)
+            # then dereference the pointer and read the value too.
+            if deref_type is not None and deref_type.size > 0:
+                if deref_type.is_char():
+                    # We dereferenced a pointer to a char. Don't just read as a single char;
+                    # read all chars until we encounter '\0'.
+                    deref_type = types.NullTermString()
+                deref_addr = out
+                deref_addr_lst, deref_flags = Memory.__make_list_for_addr(deref_addr)
+                # Look up what it's dereferencing.
+                deref_out, _ = self.access_resolved_address(deref_addr_lst, deref_flags, deref_type,
+                    expr_machine=expr_machine)
+                out = (deref_addr, deref_out) # 'out' is the address and its pointee.
+
+        if self._debugger.get_conf('dbg.verbose'):
+            if isinstance(out, int):
+                self._debugger.verboseprint(f'Resolved value=0x{out} size={access_size}')
+            elif isinstance(out, str):
+                # It's a string.
+                self._debugger.verboseprint(f'Resolved str={repr(out)} len={len(out)}')
+            elif isinstance(out, list):
+                # It's an array.
+                self._debugger.verboseprint(f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} ' +
+                    f'elem_size={access_size}, cnt={access_count}')
+            else:
+                # Unsure what type this is, exactly.
+                self._debugger.verboseprint(f'Resolved value: {out} ' +
+                    f'(size={access_size}, cnt={access_count})')
+
+        return out, flags
+
+    def access_address(self, addr, typ=None, size=None, is_flat_address=False):
+        """
+        Given a memory address to read, as well as datatype and/or size of data to retrieve, access
+        the information in memory and return it in the appropriate host datatype/format.
+
+        Returns the value of size 'size' or 'typ.size' located at the address.
+
+        If is_flat_address is True, then this treats addr as a compiler-specified "flat address
+        space" address that must be converted into the appropriate intra-segment address; when
+        possible, segment-specific accessors (e.g. flash vs RAM) will be used.
+
+        The return value may be an integer, a list, or a string depending on the data type
+        input. If the value is a pointer, the result is a tuple of (address, pointed-to-value).
+        Multiple layers of indirection can return values nested like a LISP-style list:
+        (car, (cadr, cddr...)).
+
+        Returns a tuple of the actual typed return value from memory (as defined above) and an
+        integer bitflags (see LookupFlags) describing the memory access.
+        """
+        default_flags = 0
+        if is_flat_address:
+            default_flags |= LookupFlags.CONST_ADDR
+
+        addrs, flags = Memory.__make_list_for_addr(addr, default_flags)
+        return self.access_resolved_address(addrs, flags, typ, size)
+
 
 class DWARFExprMachine(object):
     """
@@ -214,6 +556,7 @@ class DWARFExprMachine(object):
         self._scope = None               # Containing scope (used for frame base calc)
         self._frame = None               # Backtrace frame for current scope's dynamic state.
         self._flags = 0                  # Flags built up during response evaluation.
+        self._memory = Memory(debugger, regs)
 
     def setScope(self, scope):
         self._scope = scope
@@ -226,7 +569,7 @@ class DWARFExprMachine(object):
         Evaluate the bytecode program to resolve the location.
 
         Returns a list of addresses and piece-widths where the data is held, and an int
-        of bitflags (from ExprFlags) describing the location-resolution process.
+        of bitflags (from LookupFlags) describing the location-resolution process.
 
         If there is a single output address, the piece-width is DWARFExprMachine.ALL.
         Addresses may be either integer memory addresses or strings indicating registers to
@@ -241,11 +584,11 @@ class DWARFExprMachine(object):
 
         # What's the result address? If we got PIECE instructions, deliver a list of addrs and
         # sizes. Otherwise, return a singleton list with the address and DEM.ALL..
-        self._flags |= ExprFlags.OK
+        self._flags |= LookupFlags.OK
         if len(self._pieces):
             self._debugger.verboseprint(f'Resolved to set of pieces: {self._pieces}')
             if len(self._pieces) > 1:
-                self._flags |= ExprFlags.MULTIPART
+                self._flags |= LookupFlags.MULTIPART
             return self._pieces, self._flags
         else:
             out = self.top()
@@ -255,265 +598,6 @@ class DWARFExprMachine(object):
                 self._debugger.verboseprint('Resolved address: 0x', dbg.VHEX4, out)
             return [(out, DWARFExprMachine.ALL)], self._flags
 
-    @staticmethod
-    def __make_list_for_addr(addr, initial_flags=0):
-        """
-        Return an address list and flag set for a known memory address.
-
-        You can also specify flags defining the address' construction. e.g., if this is
-        a fully-qualified 'flat address' from the global symbol table, pass
-        ExprFlags.CONST_ADDR to process it with the correct segment-aware accessor.
-        """
-        return [(addr, DWARFExprMachine.ALL)], (ExprFlags.OK | initial_flags)
-
-    def __access_big_endian(self, addrs, flags, size, offset=0):
-        """
-        Access a scalar word of the specified size in big-endian format. Subcomponents of the word
-        are located by 1 or more addresses in 'addrs'.
-
-        @param addrs can be a singleton (addr, DWARFExprMachine.ALL) tuple list, or a list of
-            addresses and registers with sub-scalar sizes.
-        @param flags specifies the process by which the addrs list was calculated.
-        @param size is the total result word size to fetch from this address.
-        @param offset if non-zero treats 'addrs' as a base address for an array or field offset
-            within an object, and the result word is retrieved from *(addrs + offset).
-        """
-        out = 0 # scalar result
-        for (addr, piece_size) in addrs:
-            if piece_size == DWARFExprMachine.ALL:
-                piece_size = size # There is only one piece, and it is the caller-decl'd size
-            elif offset != 0:
-                raise Exception("Cannot access array/object offset with addr in multiple pieces")
-
-            if isinstance(addr, int):
-                out = (out << (8 * piece_size)) | self.mem(addr + offset, piece_size)
-            elif isinstance(addr, str):
-                if offset != 0:
-                    raise Exception("Cannot access array/object offset with non-memory address")
-                elif addr == DWARFExprMachine.TOP:
-                    regval = self.top()
-                else:
-                    regval = self.regs[addr]
-
-                if piece_size == 1:
-                    regval = regval & 0xFF
-                elif piece_size == 2:
-                    regval = regval & 0xFFFF
-                elif piece_size == 4:
-                    regval = regval & 0xFFFFFFFF
-                elif piece_size == 8:
-                    regval = regval & 0xFFFFFFFFFFFFFFFF
-                else:
-                    raise Exception(f'Unknown piece size arg {piece_size}')
-                out = (out << (8 * piece_size)) | regval
-            else:
-                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
-
-        return out, flags
-
-    def __access_little_endian(self, addrs, flags, size, offset=0):
-        """
-        Access a scalar word of the specified size in little-endian format. Subcomponents of the word
-        are located by 1 or more addresses in 'addrs'.
-
-        @param addrs can be a singleton (addr, DWARFExprMachine.ALL) tuple list, or a list of
-            addresses and registers with sub-scalar sizes.
-        @param flags specifies the process by which the addrs list was calculated.
-        @param size is the total result word size to fetch from this address.
-        @param offset if non-zero treats 'addrs' as a base address for an array or field offset
-            within an object, and the result word is retrieved from *(addrs + offset).
-        """
-        # Check const addr flag to see if we should be segment-aware in our data retrieval.
-        const_addr = flags & ExprFlags.CONST_ADDR
-        arch = self._debugger.get_arch_conf('instruction_set')
-
-        out = 0 # for scalar result
-        new_shift = 0
-        existing_mask = 0
-        for (addr, piece_size) in addrs:
-            mem_fn = self.mem
-            if const_addr and arch == "avr":
-                # We got a flat-address-space addr directly from compiler output.
-                # Translate that into the AVR segment-aware memory space and
-                # choose the correct address to read and segment accessor function.
-                # (nb this check is not needed in __access_big_endian since AVR is
-                # little endian-only.)
-
-                data_seg_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
-                if isinstance(addr, int) and addr == addr & data_seg_mask:
-                    # It's a constant address and it's not in .data (i.e., it's in .text).
-                    mem_fn = self.flash # Use self.flash() to load from .text
-                    flags |= ExprFlags.FLASH_ADDR
-                elif isinstance(addr, int) and addr != addr & data_seg_mask:
-                    addr = addr & data_seg_mask # remove 0x800000 .data prefix from addr.
-
-            if piece_size == DWARFExprMachine.ALL:
-                piece_size = size # There is only one piece, and it is the caller-decl'd size
-            elif offset != 0:
-                raise Exception("Cannot access array/object offset with addr in multiple pieces")
-
-            if isinstance(addr, int):
-                out = (mem_fn(addr + offset, piece_size) << new_shift) | \
-                    (out & existing_mask)
-            elif isinstance(addr, str):
-                if offset != 0:
-                    raise Exception("Cannot access array/object offset with non-memory address")
-                elif addr == DWARFExprMachine.TOP:
-                    regval = self.top()
-                else:
-                    regval = self.regs[addr]
-                out = (regval << new_shift) | (out & existing_mask)
-            else:
-                raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
-
-            # Account for bit width of result built-so-far growing by piece_size bytes.
-            for i in range(0, piece_size):
-                # mask off `piece_size` more bytes on lsb-side of result as present.
-                existing_mask <<= 8
-                existing_mask |= 0xFF
-
-            new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
-                                        # before slotting in
-
-        out &= existing_mask # Ensure we don't return data that's too wide for size.
-        return out, flags
-
-    # Maximum length to explore for a null-terminated string.
-    MAX_NULL_TERM_STRING_LEN = 64
-
-    def __access_resolved_address(self, addrs, flags=0, typ=None, size=None, field_offset=0):
-        """
-        Given an address list 'addrs' of the form returned by 'DWARFExprMachine.eval()', and
-        associated flags, as well as datatype and/or size of data to retrieve, access the
-        information in memory and return it in the appropriate host datatype/format.
-
-        Returns the value of size 'size' located at the address computed by the expression and
-        the flags associated with identifying its location. If this method is being invoked to
-        access a field of an object, field_offset is the offset in bytes beyond 'addrs' to read.
-
-        The return value may be an integer, a list, or a string depending on the data type
-        input. If the value is a pointer, the result is a tuple of (address, pointed-to-value).
-        Multiple layers of indirection can return values nested like a LISP-style list:
-        (car, (cadr, cddr...)).
-        """
-
-        if typ and isinstance(typ, types.ClassType):
-            # For a class, don't just grab a contiguous block of memory; read and follow
-            # each field individually.
-            obj = ObjectFields(typ)
-            last_type = None
-            while typ != last_type and typ is not None:
-                assert isinstance(typ, types.ClassType)
-                for field in typ.fields:
-                    # Read the value of the next field of the object.
-                    field_t = field.parent_type()
-                    field_sz = field_t.size
-                    (val, flags) = self.__access_resolved_address(addrs, flags, field_t,
-                        field_offset=field.offset)
-                    field_val = ObjField(field, field.offset, field_sz, val)
-                    obj.add_field_val(field_val)
-
-                typ = typ.parent_type()
-
-            self._debugger.verboseprint(f'Resolved value as object of type {obj.class_type.class_name}.')
-            return obj, flags
-
-        # The main body of this method handles access to sequential bytes for a scalar, pointer,
-        # array or string:
-
-        if self._debugger.get_arch_conf("endian") == "big":
-            access_fn = self.__access_big_endian
-        else:
-            access_fn = self.__access_little_endian
-
-        access_size = None
-        access_count = 1
-        if size is not None:
-            # Fetch exactly as many bytes as requested.
-            access_size = size
-            if typ and typ.size != size:
-                self._debugger.verboseprint('Warning: both type and size specified in access(); ',
-                    'size=', size, ' but type width is ', typ.size, '. ',
-                    'Using explicit size=', size, '.')
-        elif typ and typ.is_array():
-            access_count = typ.get_array_len()
-            access_size = typ.get_array_elem_size()
-        elif typ:
-            access_size = typ.size
-        else:
-            # Didn't get enough parameters to know what type to fetch?
-            access_size = self._debugger.get_arch_conf('push_word_len')
-            self._debugger.verboseprint(
-                'Warning: No type or size specified to DWARFExprMachine.access(); ',
-                'defaulting to CPU word size of ', access_size)
-
-        outlist=[] # for array-based results
-        if access_count == types.VARIABLE_LEN_ARRAY:
-            # We're reading a null-termianted string from the specified address. Continue reading
-            # until we reach a null terminator.
-            assert access_size > 0
-            offset = 0
-            while True:
-                (out, flags) = access_fn(addrs, flags, access_size, offset + field_offset)
-                outlist.append(out)
-                if out == 0:
-                    break # Found null terminator.
-                offset += access_size
-                if offset == self.MAX_NULL_TERM_STRING_LEN:
-                    # Don't run on in memory forever. Add an ellipse and call it a day.
-                    outlist.extend(3 * [ord('.')])
-                    break
-        else:
-            for i in range(0, access_count):
-                (out, flags) = access_fn(addrs, flags, access_size, i * access_size + field_offset)
-                outlist.append(out)
-
-        if access_count != 1:
-            out = outlist
-
-        if typ.is_string() and isinstance(out, list):
-            # Convert output from array to string.
-            out_chars = list(map(lambda c: chr(c), out))
-            try:
-                null_idx = out_chars.index('\x00')
-                # Chomp at the first null terminator we see.
-                out_chars = out_chars[:null_idx]
-            except ValueError:
-                pass # No null terminator to chomp.
-
-            out = ''.join(out_chars)
-        elif typ.pointer_depth() > 0 and isinstance(out, int) and out != 0:
-            # We have a pointer to another value.
-            deref_type = typ.get_dereferenced_type()
-            # If we know the pointed-to type and it has a non-zero size (i.e., ptr_t is not void*)
-            # then dereference the pointer and read the value too.
-            if deref_type is not None and deref_type.size > 0:
-                if deref_type.is_char():
-                    # We dereferenced a pointer to a char. Don't just read as a single char;
-                    # read all chars until we encounter '\0'.
-                    deref_type = types.NullTermString()
-                deref_addr = out
-                deref_addr_lst, deref_flags = DWARFExprMachine.__make_list_for_addr(deref_addr)
-                # Look up what it's dereferencing.
-                deref_out, _ = self.__access_resolved_address(deref_addr_lst, deref_flags, deref_type)
-                out = (deref_addr, deref_out) # 'out' is the address and its pointee.
-
-        if self._debugger.get_conf('dbg.verbose'):
-            if isinstance(out, int):
-                self._debugger.verboseprint(f'Resolved value=0x{out} size={access_size}')
-            elif isinstance(out, str):
-                # It's a string.
-                self._debugger.verboseprint(f'Resolved str={repr(out)} len={len(out)}')
-            elif isinstance(out, list):
-                # It's an array.
-                self._debugger.verboseprint(f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} ' +
-                    f'elem_size={access_size}, cnt={access_count}')
-            else:
-                # Unsure what type this is, exactly.
-                self._debugger.verboseprint(f'Resolved value: {out} ' +
-                    f'(size={access_size}, cnt={access_count})')
-
-        return out, flags
 
     def access(self, typ=None, size=None):
         """
@@ -525,7 +609,7 @@ class DWARFExprMachine(object):
         input.
         """
         (addrs, flags) = self.eval()
-        return self.__access_resolved_address(addrs, flags, typ, size)
+        return self._memory.access_resolved_address(addrs, flags, typ, size, expr_machine=self)
 
 
     def reset(self, new_regs=None, new_opcodes=None, new_stack=None):
@@ -541,6 +625,7 @@ class DWARFExprMachine(object):
 
         if new_regs is not None:
             self.regs = new_regs
+            self._memory.set_regs(new_regs)
 
         if new_opcodes is not None:
             self.opcodes = new_opcodes
@@ -558,7 +643,7 @@ class DWARFExprMachine(object):
         raise Exception(f"Unimplemented DWARF expr op='{op.op_name}' ({op.op:x}) args={op.args}")
 
     def _addr(self, op):
-        self._flags |= ExprFlags.CONST_ADDR # Retrieved from a literal address. Result may thus
+        self._flags |= LookupFlags.CONST_ADDR # Retrieved from a literal address. Result may thus
                                             # be segment-aware in a segmented memory space.
         self.push(op.args[0]) # Push address argument
 
@@ -786,20 +871,20 @@ class DWARFExprMachine(object):
 
         See DWARFv5 sec 2.5.1.7
         """
-        self._flags |= ExprFlags.REGISTER_UNWIND
+        self._flags |= LookupFlags.REGISTER_UNWIND
         sub_location = op.args[0] # sub_location is a list of DWARFExprOp's.
         # It's either a single opcode identifying a register (DW_OP_regN)
         # or a full expression computing a more complex location. We evaluate this
         # location in a brand new dwarf expr machine.
         sub_machine = DWARFExprMachine(sub_location, self.regs, self._debugger)
         unwind_location_parts, sub_flags = sub_machine.eval()
-        self._flags |= (sub_flags & ~ExprFlags.OK) # Attach all subflags minus the final OK.
+        self._flags |= (sub_flags & ~LookupFlags.OK) # Attach all subflags minus the final OK.
         if len(unwind_location_parts) != 1:
             raise Exception(
                 f"Cannot unwind ENTRY_LOCATION in multiple parts; got len={len(unwind_location_parts)}")
-        if ExprFlags.has_errors(sub_flags):
+        if LookupFlags.has_errors(sub_flags):
             raise Exception(
-                f"Error getting entry location: {ExprFlags.get_message(sub_flags)}")
+                f"Error getting entry location: {LookupFlags.get_message(sub_flags)}")
 
         (unwind_location, _) = unwind_location_parts[0]
         if not isinstance(unwind_location, str):
@@ -818,7 +903,7 @@ class DWARFExprMachine(object):
             call_clobbers = self._debugger.get_arch_conf("call_clobbered_registers")
             try:
                 call_clobbers.index(unwind_location)
-                self._flags |= ExprFlags.WARN_CLOBBERED_REG | ExprFlags.WARNED
+                self._flags |= LookupFlags.WARN_CLOBBERED_REG | LookupFlags.WARNED
             except ValueError:
                 pass # This is the happy path.
             self.push(start_val)
@@ -830,7 +915,7 @@ class DWARFExprMachine(object):
         "The DW_OP_call_frame_cfa operation pushes the value of the CFA, obtained
         from the Call Frame Information"
         """
-        self._flags |= ExprFlags.REGISTER_UNWIND
+        self._flags |= LookupFlags.REGISTER_UNWIND
         if self._frame is None:
             # We cannot report the CFA because we don't have a backtrace frame to use for unwinding.
             raise Exception(f'Cannot push canonical frame address; no backtrace frame set')
@@ -908,13 +993,6 @@ class DWARFExprMachine(object):
         """
         self._debugger.verboseprint('Reading ', size, ' bytes at addr 0x', dbg.VHEX4, addr)
         return self._debugger.get_sram(addr, size)
-
-    def flash(self, addr, size=1):
-        """
-        Get the value contained in flash memory at the specified address.
-        """
-        self._debugger.verboseprint('Reading ', size, ' bytes at flash 0x', dbg.VHEX4, addr)
-        return self._debugger.get_flash(addr, size)
 
     ### Setup ###
 

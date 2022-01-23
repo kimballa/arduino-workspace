@@ -487,13 +487,13 @@ class Repl(object):
         best_var = None
         for var_or_formal in var_or_formal_lst:
             local_val, flags = var_or_formal.getValue(frameRegs, frame)
-            if el.ExprFlags.successful(flags):
+            if el.LookupFlags.successful(flags):
                 if best_flags is None:
                     # Hooray! We converged on a value.
                     best_val = local_val
                     best_flags = flags
                     best_var = var_or_formal
-                elif el.ExprFlags.has_warnings(best_flags) and not el.ExprFlags.has_warnings(flags):
+                elif el.LookupFlags.has_warnings(best_flags) and not el.LookupFlags.has_warnings(flags):
                     # We converged on a value calculated w/o any warnings. Supercedes prior result.
                     best_val = local_val
                     best_flags = flags
@@ -503,12 +503,12 @@ class Repl(object):
                     # Not necessarily any better.
                     pass
 
-                if not el.ExprFlags.has_warnings(flags):
+                if not el.LookupFlags.has_warnings(flags):
                     # There's no reason to keep calculating any further; we got a successful
                     # no-warning result, so that's what we'll use.
                     break
 
-            elif flags & el.ExprFlags.ERR_PC_OUT_OF_BOUNDS:
+            elif flags & el.LookupFlags.ERR_PC_OUT_OF_BOUNDS:
                 best_flags = flags # We'd rather report PC_OUT_OF_BOUNDS than NO_LOCATION.
                                    # The former simply means "not valid at this breakpoint" vs
                                    # "this VariableInfo is useless".
@@ -545,11 +545,11 @@ class Repl(object):
             name_and_type = f'({type_name})'
 
         # Format any warning messages and colorize appropriately.
-        warnings = el.ExprFlags.get_message(best_flags)
-        if el.ExprFlags.has_warnings(best_flags):
+        warnings = el.LookupFlags.get_message(best_flags)
+        if el.LookupFlags.has_warnings(best_flags):
             warn_color = term.WARN
             val_color = term.WARN
-        elif el.ExprFlags.has_errors(best_flags):
+        elif el.LookupFlags.has_errors(best_flags):
             warn_color = term.ERR
             val_color = term.ERR
         else:

@@ -929,15 +929,15 @@ class FormalArg(DieBase):
         @return a tuple containing:
             - the memory and register location info for the variable (in the format
               returned by the DWARFExprMachine), or None if no such info is available.
-            - some ExprFlags OR'd together indicating info about the address.
+            - some LookupFlags OR'd together indicating info about the address.
         """
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return (None, el.ExprFlags.ERR_NO_LOCATION)
+            return (None, el.LookupFlags.ERR_NO_LOCATION)
 
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
+            return (None, el.LookupFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.eval()
@@ -950,20 +950,20 @@ class FormalArg(DieBase):
         @param frame the backtrace frame for this variable's scope.
         @return a tuple containing:
             - the value of the variable, or None if no such info is available
-            - some ExprFlags OR'd together indicating info about the value.
+            - some LookupFlags OR'd together indicating info about the value.
         """
         if self._const_val is not None:
             # It got hardcoded in the end.
-            return (self._const_val, el.ExprFlags.OK | el.ExprFlags.COMPILE_TIME_CONST)
+            return (self._const_val, el.LookupFlags.OK | el.LookupFlags.COMPILE_TIME_CONST)
 
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return (None, el.ExprFlags.ERR_NO_LOCATION)
+            return (None, el.LookupFlags.ERR_NO_LOCATION)
 
         self._cuns.getDebugger().verboseprint("Getting value for formal arg: ", self.name)
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
+            return (None, el.LookupFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.access(self.arg_type)
@@ -1088,15 +1088,15 @@ class VariableInfo(PrgmType):
         @return a tuple containing:
             - the memory and register location info for the variable (in the format
               returned by the DWARFExprMachine), or None if no such info is available.
-            - some ExprFlags OR'd together indicating info about the address.
+            - some LookupFlags OR'd together indicating info about the address.
         """
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return (None, el.ExprFlags.ERR_NO_LOCATION)
+            return (None, el.LookupFlags.ERR_NO_LOCATION)
 
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
+            return (None, el.LookupFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.eval()
@@ -1109,20 +1109,20 @@ class VariableInfo(PrgmType):
         @param frame the backtrace frame for this variable's scope.
         @return a tuple containing:
             - the value of the variable, or None if no such info is available
-            - some ExprFlags OR'd together indicating info about the value.
+            - some LookupFlags OR'd together indicating info about the value.
         """
         if self._const_val is not None:
             # It got hardcoded in the end.
-            return (self._const_val, el.ExprFlags.OK | el.ExprFlags.COMPILE_TIME_CONST)
+            return (self._const_val, el.LookupFlags.OK | el.LookupFlags.COMPILE_TIME_CONST)
 
         loc = self._location or self.getOrigin()._location
         if loc is None:
-            return (None, el.ExprFlags.ERR_NO_LOCATION)
+            return (None, el.LookupFlags.ERR_NO_LOCATION)
 
         self._cuns.getDebugger().verboseprint("Getting value for local var: ", self.name)
         expr_machine = self._cuns.getExprMachine(loc, regs)
         if expr_machine is None:
-            return (None, el.ExprFlags.ERR_PC_OUT_OF_BOUNDS)
+            return (None, el.LookupFlags.ERR_PC_OUT_OF_BOUNDS)
         expr_machine.setScope(self._scope)
         expr_machine.setFrame(frame)
         return expr_machine.access(self.var_type)
@@ -1622,12 +1622,12 @@ class ParsedDebugInfo(object):
                 locationlists.LocationExpr(data_member_location), {})
             expr_machine.push(0)
             offset_list, flags = expr_machine.eval()
-            if el.ExprFlags.successful(flags):
+            if el.LookupFlags.successful(flags):
                 (offset, _) = offset_list[0]
             else:
                 cuns.getDebugger.verboseprint("Error decoding data member location for field ",
                     context.get("class").class_name, "::", name, " - ",
-                    el.ExprFlags.get_message(flags))
+                    el.LookupFlags.get_message(flags))
                 offset = None
 
             accessibility = dieattr('accessibility', 1)
