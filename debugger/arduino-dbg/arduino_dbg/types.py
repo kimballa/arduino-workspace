@@ -458,6 +458,36 @@ class PrgmType(DieBase):
         """
         return None
 
+    def type_tree_details(self, indent):
+        """
+        Return additional details about this object for the Type Tree.
+        Each line of text output should be indented by 2*indent spaces.
+        """
+        pad = indent * '  '
+        return pad + repr(self)
+
+    def type_tree(self, indent=0):
+        """
+        Print structural type information about this object.
+        indent specifies the number of indentation levels (2 spaces/level) to add to each line.
+        Subclasses should implement type_tree_details(indent) to add more lines of detail.
+        """
+        if indent >= 16:
+            # Prevent runaway recurison (e.g., via printing mutually-recursive types)
+            return ''
+
+        pad = indent * '  '
+        s = f'{pad}{self.__class__} (name={self.name}, size={self.size})'
+        details = self.type_tree_details(indent)
+        if details is not None and len(details):
+            s += '\n' + details + '\n'
+
+        parent = self.parent_type()
+        if parent is not None and parent != self:
+            s += f'\n{parent.type_tree(indent + 1)}'
+
+        return s
+
     def __repr__(self):
         return f'{self.name}'
 
@@ -485,7 +515,23 @@ class ConstType(PrgmType):
     A const form of another type
     """
     def __init__(self, base_type):
-        name = f'const {base_type.name}'
+        if base_type.name.endswith("*"):
+            # e.g. 'char* const' -- the pointer itself is const/unchangeable. The data
+            # it points to may or may not be mutable.
+            name = f'{base_type.name} const'
+        elif base_type.name.endswith("[]"):
+            # If we have a line like `char foo[] = "bar";`, foo has type `char[]` but foo
+            # itself cannot be assigned to another array, so we see ConstT(ArrayT(char)).
+            # Nevertheless, we do not render this 'const '.
+            #
+            # If we have a line like 'const char foo[] = "bar";` then foo has type `const char[]`.
+            # This is represented as ConstT(ArrayT(ConstT(char))); only the inner ConstType
+            # renders the string "const " in the output name.
+            name = base_type.name
+        else:
+            # e.g. 'const char'; immutable data. (which may be pointed-to by a PointerType
+            # that wraps this ConstType('char'))
+            name = f'const {base_type.name}'
         PrgmType.__init__(self, name, base_type.size, base_type)
         self.name = name
 
@@ -746,7 +792,12 @@ class MethodPtrType(PrgmType):
             member = self.member_of.class_name + '::'
         else:
             member = ''
-        return f'{self.return_type.name}({member}*{self.name})({formals})'
+
+        name = self.name # ptr-to-method doesn't need to have a name assigned.
+        if name is None:
+            name = ''
+
+        return f'{self.return_type.name}({member}*{name})({formals})'
 
 
 
@@ -876,6 +927,22 @@ class MethodInfo(PrgmType):
     def __repr__(self):
         return self.make_signature(include_class=False, include_die_offset=False)
 
+    def type_tree_details(self, indent):
+        """
+        Return additional details about this object for the Type Tree.
+        Each line of text output should be indented by 2*indent spaces.
+        """
+        pad = indent * '  '
+        details = pad + self.make_signature(include_class=True)
+        details += '\n' + pad + 'Return Type:'
+        details += '\n' + self.return_type.type_tree(indent + 1)
+        details += '\n' + pad + 'Formal Args:'
+        arg_lines = []
+        for arg in self.formal_args:
+            arg_lines.append(arg.type_tree(indent + 1))
+        details += '\n'.join(arg_lines)
+        return details
+
 class FormalArg(DieBase):
 
     @staticmethod
@@ -977,6 +1044,31 @@ class FormalArg(DieBase):
         # Implement DieBase method.
         return self.arg_type
 
+    def type_tree_details(self, indent):
+        """
+        Return additional details about this object for the Type Tree.
+        Each line of text output should be indented by 2*indent spaces.
+        """
+        pad = indent * '  '
+        details = pad + 'Formal arg: ' + repr(self)
+        details += '\n' + pad + 'Arg type:'
+        details += '\n' + self.arg_type.type_tree(indent + 1)
+        return details
+
+    def type_tree(self, indent=0):
+        """
+        Print structural type information about this object.
+        indent specifies the number of indentation levels (2 spaces/level) to add to each line.
+        Subclasses should implement type_tree_details(indent) to add more lines of detail.
+        """
+        pad = indent * '  '
+        s = f'{pad}{self.__class__} (name={self.name})'
+        details = self.type_tree_details(indent)
+        if details is not None and len(details):
+            s += '\n' + details + '\n'
+
+        return s
+
 
 class FieldType(PrgmType):
     def __init__(self, field_name, member_of, field_type, offset, accessibility):
@@ -1047,6 +1139,25 @@ class ClassType(PrgmType):
             s += '\n'
         s += '}'
         return s
+
+    def type_tree_details(self, indent):
+        """
+        Return additional details about this object for the Type Tree.
+        Each line of text output should be indented by 2*indent spaces.
+        """
+        pad = indent * '  '
+        details = pad + f'class {self.class_name}'
+        details += '\n' + pad + 'Methods:\n' + pad
+        method_lines = []
+        for method in self.methods:
+            method_lines.append(method.make_signature(True))
+        details += f'\n{pad}'.join(method_lines)
+        details += '\n' + pad + 'Fields:\n'
+        field_lines = []
+        for field in self.fields:
+            field_lines.append(field.type_tree(indent + 1))
+        details += '\n'.join(field_lines)
+        return details
 
 class VariableInfo(PrgmType):
     """
@@ -1144,6 +1255,18 @@ class VariableInfo(PrgmType):
     def get_type(self):
         # Implement DieBase method.
         return self.var_type
+
+    def type_tree_details(self, indent):
+        """
+        Return additional details about this object for the Type Tree.
+        Each line of text output should be indented by 2*indent spaces.
+        """
+        pad = indent * '  '
+        details = pad + 'Variable: ' + repr(self)
+        details += '\n' + pad + 'Var type:'
+        details += '\n' + self.var_type.type_tree(indent + 1)
+        return details
+
 
 
 
