@@ -42,6 +42,8 @@ class LookupFlags(object):
                                           # as a compiler-deduced constant.
     CONST_ADDR              =  0x8000     # Address provided by DW_OP_addr or addrx
     FLASH_ADDR              = 0x10000     # Address retrieved from flash segment, not RAM.
+    IMPLICIT_PTR            = 0x20000     # 'Address' is an implicit pointer to a known value,
+                                          # but not actually stored at an address in memory.
 
 
     ERRORS_MASK             =    0xF0     # Errors fit under this mask
@@ -89,11 +91,10 @@ class LookupFlags(object):
             messages += '(Flash data)'
         return messages
 
-
 def format_accessed_val(val, typ, class_indent=0):
     """
-    Given 'val' as returned by the Memory.access() method, pretty-print
-    it as a string to display to the user.
+    Given 'val' as returned by the Memory.access_resolved_address() method
+    or interpret_typed_val(), pretty-print it as a string to display to the user.
     """
     if val is None:
         return ''
@@ -106,10 +107,15 @@ def format_accessed_val(val, typ, class_indent=0):
             # This is (pointer_addr, actual_val)
             deref_type = typ.get_dereferenced_type()
             actual_val_s = format_accessed_val(val[1], deref_type, class_indent)
-            addr_s = f'*0x{val[0]:x}'
+            if isinstance(val[0], ImplicitPtr):
+                addr_s = repr(val[0])
+            else:
+                addr_s = f'*0x{val[0]:x}'
             return addr_s + " => " + actual_val_s
         elif isinstance(val, ObjectFields):
             return val.format(class_indent + 1)
+        elif isinstance(val, ImplicitPtr):
+            return repr(val)
         else:
             # Just a pointer addr.
             return f'*0x{val:x}'
@@ -162,6 +168,47 @@ class ObjectFields(object):
         return self.format(0)
 
 
+class ImplicitPtr(object):
+    """
+    Represents an implicit pointer to a known value. `Memory` cannot report the pointer address,
+    but we can "dereference" it to a value.
+    """
+
+    def __init__(self, val, size, offset=None):
+        self.value = val
+        self.size = size
+        self.offset = offset
+
+        if size == -1:
+            # Try to auto-detect the size.
+            if isinstance(val, bytes):
+                self.size = len(val)
+            elif isinstance(val, list):
+                self.size = len(val)
+            elif isinstance(val, str):
+                self.size = len(val);
+
+    def __repr__(self):
+        s = '*(implicit ptr)'
+
+        printed_fields = False
+        if self.offset:
+            s += f' [+0x{self.offset:02x}'
+
+        if self.size > 0:
+            if printed_fields:
+                s += ', '
+            else:
+                s += '['
+            s += f'size={self.size}'
+            printed_fields = True
+
+        if printed_fields:
+            s += ']'
+
+        return s
+
+
 class Memory(object):
     """
     Accessor that can retrieve typed or raw data from memory.
@@ -173,6 +220,10 @@ class Memory(object):
     register file. The access methods handle address lists as formatted by DWARFExprMachine.eval();
     there are also convenience methods for converting flat memory addresses to address lists.
     """
+
+    # Maximum length to explore for a null-terminated string.
+    MAX_NULL_TERM_STRING_LEN = 64
+
     def __init__(self, debugger, regs=None):
         self._debugger = debugger
         self.regs = regs
@@ -212,6 +263,7 @@ class Memory(object):
         """
         return [(addr, DWARFExprMachine.ALL)], (LookupFlags.OK | initial_flags)
 
+
     def __access_big_endian(self, addrs, flags, size, offset=0, expr_machine=None):
         """
         Access a scalar word of the specified size in big-endian format. Subcomponents of the word
@@ -233,7 +285,14 @@ class Memory(object):
                 raise Exception("Cannot access array/object offset with addr in multiple pieces")
 
             if isinstance(addr, int):
+                assert piece_size > 0
                 out = (out << (8 * piece_size)) | self.mem(addr + offset, piece_size)
+            if isinstance(addr, ImplicitPtr):
+                # Return the ImplicitPtr as the value (the "addr" in this pointer is just
+                # the fact that it's "implicit")
+                out = addr
+                # also implicitly, there are no further pieces to this address.
+                return out, flags
             elif isinstance(addr, str):
                 if offset != 0:
                     raise Exception("Cannot access array/object offset with non-memory address")
@@ -257,6 +316,7 @@ class Memory(object):
                 raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
 
         return out, flags
+
 
     def __access_little_endian(self, addrs, flags, size, offset=0, expr_machine=None):
         """
@@ -301,8 +361,15 @@ class Memory(object):
                 raise Exception("Cannot access array/object offset with addr in multiple pieces")
 
             if isinstance(addr, int):
+                assert piece_size > 0
                 out = (mem_fn(addr + offset, piece_size) << new_shift) | \
                     (out & existing_mask)
+            elif isinstance(addr, ImplicitPtr):
+                # Return the ImplicitPtr as the value (the "addr" in this pointer is just
+                # the fact that it's "implicit")
+                out = addr
+                # also implicitly, there are no further pieces to this address.
+                return out, flags
             elif isinstance(addr, str):
                 if offset != 0:
                     raise Exception("Cannot access array/object offset with non-memory address")
@@ -310,6 +377,7 @@ class Memory(object):
                     regval = expr_machine.top()
                 else:
                     regval = self.regs[addr]
+
                 out = (regval << new_shift) | (out & existing_mask)
             else:
                 raise Exception(f"Unknown how to dereference {addr.__class__}: {repr(addr)}")
@@ -326,8 +394,6 @@ class Memory(object):
         out &= existing_mask # Ensure we don't return data that's too wide for size.
         return out, flags
 
-    # Maximum length to explore for a null-terminated string.
-    MAX_NULL_TERM_STRING_LEN = 64
 
     def access_resolved_address(self, addrs, flags=0, typ=None, size=None, field_offset=0,
             expr_machine=None):
@@ -370,6 +436,14 @@ class Memory(object):
 
             self._debugger.verboseprint(f'Resolved value as object of type {obj.class_type.class_name}.')
             return obj, flags
+        elif not typ and size == DWARFExprMachine.ALL:
+            # A DwarfProcedure may just request "all" the result. This requires that the address
+            # refer to the Dwarf eval stack top, rather than have us go digging through memory.
+            # Whatever is there on the Dwarf stack -- return it as-is.
+            assert len(addrs) == 1 and addrs[0][1] == DWARFExprMachine.ALL
+            assert addrs[0][0] == DWARFExprMachine.TOP
+            out = expr_machine.top()
+            return out, flags
 
         # The main body of this method handles access to sequential bytes for a scalar, pointer,
         # array or string:
@@ -418,41 +492,20 @@ class Memory(object):
                     outlist.extend(3 * [ord('.')])
                     break
         else:
+            # If access_size == DWARFExprMachine.ALL (-1), don't actually use it as offset.
+            stride = max(0, access_size)
             for i in range(0, access_count):
-                (out, flags) = access_fn(addrs, flags, access_size, i * access_size + field_offset,
+                (out, flags) = access_fn(addrs, flags, access_size, i * stride + field_offset,
                     expr_machine)
                 outlist.append(out)
 
-        if access_count != 1:
+        if access_count > 1 or access_count == types.VARIABLE_LEN_ARRAY:
+            # Retrieved an array of items, not a scalar. Return as an array.
             out = outlist
 
-        if typ.is_string() and isinstance(out, list):
-            # Convert output from array to string.
-            out_chars = list(map(lambda c: chr(c), out))
-            try:
-                null_idx = out_chars.index('\x00')
-                # Chomp at the first null terminator we see.
-                out_chars = out_chars[:null_idx]
-            except ValueError:
-                pass # No null terminator to chomp.
-
-            out = ''.join(out_chars)
-        elif typ.pointer_depth() > 0 and isinstance(out, int) and out != 0:
-            # We have a pointer to another value.
-            deref_type = typ.get_dereferenced_type()
-            # If we know the pointed-to type and it has a non-zero size (i.e., ptr_t is not void*)
-            # then dereference the pointer and read the value too.
-            if deref_type is not None and deref_type.size > 0:
-                if deref_type.is_char():
-                    # We dereferenced a pointer to a char. Don't just read as a single char;
-                    # read all chars until we encounter '\0'.
-                    deref_type = types.NullTermString()
-                deref_addr = out
-                deref_addr_lst, deref_flags = Memory.__make_list_for_addr(deref_addr)
-                # Look up what it's dereferencing.
-                deref_out, _ = self.access_resolved_address(deref_addr_lst, deref_flags, deref_type,
-                    expr_machine=expr_machine)
-                out = (deref_addr, deref_out) # 'out' is the address and its pointee.
+        # Convert the retrieved data to the appropriate host type, based on the 'typ'
+        # within the debugged program.
+        out = self.interpret_typed_val(out, typ, expr_machine)
 
         if self._debugger.get_conf('dbg.verbose'):
             if isinstance(out, int):
@@ -470,6 +523,7 @@ class Memory(object):
                     f'(size={access_size}, cnt={access_count})')
 
         return out, flags
+
 
     def access_address(self, addr, typ=None, size=None, is_flat_address=False):
         """
@@ -496,6 +550,85 @@ class Memory(object):
 
         addrs, flags = Memory.__make_list_for_addr(addr, default_flags)
         return self.access_resolved_address(addrs, flags, typ, size)
+
+
+    def interpret_typed_val(self, val, typ, expr_machine=None):
+        """
+        Given 'val' as returned by the Memory.access_resolved_address() method,
+        interpret it as an instance of the type given by 'typ', convert the
+        data to the appropriate host type and return the converted data.
+        """
+
+        if isinstance(val, ImplicitPtr):
+            assert typ.pointer_depth() > 0
+            # We got an "implicit pointer" as our result.
+            # We know the value it points to (stored in the ImplicitPtr obj). If we know the type
+            # to decode it to, do so.
+            deref_type = typ.get_dereferenced_type()
+            # If deref_type has a non-zero size (i.e., ptr_t is not void*)
+            # then read the value too.
+            if deref_type is not None and deref_type.size > 0:
+                if deref_type.is_char():
+                    # We dereferenced a pointer to a char. Don't just read as a single char;
+                    # read all chars until we encounter '\0'.
+                    deref_type = types.NullTermString()
+
+                deref_addr = val
+                # Get the value saved in the implicit pointer computation.  and type
+                # convert it as needed. We don't need to go back to # access_resolved_address()
+                # like for a normal pointer, because we have the value right here, and we
+                # *don't* have an actual resolved address.
+                deref_data = val.value
+                if val.offset is not None and val.offset > 0:
+                    if (isinstance(deref_data, str) or isinstance(val.value, list) or
+                            isinstance(deref_data, bytes)):
+                        # We need to acces only data within the result after a certain
+                        # offset.
+                        deref_data = deref_data[val.offset:]
+                    else:
+                        # Can't access at offset +n within e.g. an int.
+                        raise Exception('Cannot dereference implicit ptr at offset within' +
+                          f' {deref_data.__class__}')
+                deref_out = self.interpret_typed_val(deref_data, deref_type)
+                val = (deref_addr, deref_out) # 'val' is the (implicit) "address" and its pointee.
+            else:
+                # We don't know exactly how to type-convert the result, but nonetheless
+                # we do have an implicit pointer to... some value. Show it without further
+                # processing.
+                val = (val, val.value) # 'val' is the (implicit) "address" and its pointee.
+        elif typ is None:
+            pass # No type-specific conversions to do.
+        elif typ.is_string() and isinstance(val, list):
+            # Convert output from array to string.
+            out_chars = list(map(lambda c: chr(c), val))
+            try:
+                null_idx = out_chars.index('\x00')
+                # Chomp at the first null terminator we see.
+                out_chars = out_chars[:null_idx]
+            except ValueError:
+                pass # No null terminator to chomp.
+
+            val = ''.join(out_chars)
+        elif typ.pointer_depth() > 0 and isinstance(val, int) and val != 0:
+            self._debugger.verboseprint(f"Dereferencing pointer at addr 0x{val:x} for target value.")
+            # We have a pointer to another value.
+            deref_type = typ.get_dereferenced_type()
+            # If we know the pointed-to type and it has a non-zero size (i.e., ptr_t is not void*)
+            # then dereference the pointer and read the value too.
+            if deref_type is not None and deref_type.size > 0:
+                if deref_type.is_char():
+                    # We dereferenced a pointer to a char. Don't just read as a single char;
+                    # read all chars until we encounter '\0'.
+                    deref_type = types.NullTermString()
+                deref_addr = val
+                deref_addr_lst, deref_flags = Memory.__make_list_for_addr(deref_addr)
+                # Look up what it's dereferencing.
+                deref_out, _ = self.access_resolved_address(deref_addr_lst, deref_flags, deref_type,
+                    expr_machine=expr_machine)
+                val = (deref_addr, deref_out) # 'val' is the address and its pointee.
+
+        # Return the (possibly-type-converted) value.
+        return val
 
 
 class DWARFExprMachine(object):
@@ -860,8 +993,23 @@ class DWARFExprMachine(object):
         # exist in memory or registers at a particular address, but the _value_ at
         # that logical location is currently at stack.top(). (DWARF v4)
 
+        # TODO(aaron): Is this value always going to be hard-coded? If so, we should
+        # set LookupFlags.COMPILE_TIME_CONST.
+
         piece = (DWARFExprMachine.TOP, DWARFExprMachine.ALL)
         self._pieces.append(piece)
+
+    def _implicit_value(self, op):
+        # Like DW_OP_stack_value, the location does not exist in memory but the value
+        # is known. For DW_OP_implicit_value, the value is the arg. This arg will be
+        # an arbitrary value - e.g. it may be a list of bytes/u8 values.
+        self._flags |= LookupFlags.COMPILE_TIME_CONST
+        self.push(op.args[0])
+
+        # As per DW_OP_stack_value:
+        piece = (DWARFExprMachine.TOP, DWARFExprMachine.ALL)
+        self._pieces.append(piece)
+
 
     def _entry_value(self, op):
         """
@@ -921,6 +1069,35 @@ class DWARFExprMachine(object):
             raise Exception(f'Cannot push canonical frame address; no backtrace frame set')
         self.push(self._frame.get_cfa(self.regs))
 
+    def _implicit_pointer(self, op):
+        """
+        DWARF v5 (sec 2.6.1.1.4) - The pointer itself is eliminated but the val it points to is known.
+
+        The DWARF expression refers to a debugging information entry that represents
+        the actual value of the object to which the pointer would point.
+
+        The DW_OP_implicit_pointer operation has two operands: a reference to a
+        debugging information entry that describes the dereferenced object’s value,
+        and a signed number that is treated as a byte offset from the start of that
+        value.
+
+        The debugging information entry referenced by a DW_OP_implicit_pointer
+        operation is typically a DW_TAG_variable or DW_TAG_formal_parameter entry
+        whose DW_AT_location attribute gives a second DWARF expression or a location
+        list that describes the value of the object, but the referenced entry may be
+        any entry that contains a DW_AT_location or DW_AT_const_value attribute.
+        """
+        # Get the FormalArg or VariableInfo referred to by the DIE offset in the arg.
+        die_type = self._debugger.get_debug_info().getDebugInfoEntryByOffset(op.args[0])
+        assert die_type is not None
+        val, subflags = die_type.getValue(self.regs, self._frame)
+
+        self._flags |= subflags
+        self._flags |= LookupFlags.IMPLICIT_PTR
+
+        self.push(ImplicitPtr(val, op.args[1]))
+
+
     # Unimplemented opcodes; not specified in DWARF2; added in DWARF4 or DWARF5..
     _deref_size = _unimplemented_op
     _xderef_size = _unimplemented_op
@@ -930,8 +1107,6 @@ class DWARFExprMachine(object):
     _call_ref = _unimplemented_op
     _form_tls_address = _unimplemented_op
     _bit_piece = _unimplemented_op
-    _implicit_value = _unimplemented_op
-    _implicit_pointer = _unimplemented_op
     _addrx = _unimplemented_op # Note: if implemented, remember to set flags.CONST_ADDR a la _addr().
     _constx = _unimplemented_op
     _const_type = _unimplemented_op
@@ -941,11 +1116,6 @@ class DWARFExprMachine(object):
     _convert = _unimplemented_op
     _reinterpret = _unimplemented_op
     _push_tls_address = _unimplemented_op
-    _implicit_pointer = _unimplemented_op
-    _const_type = _unimplemented_op
-    _regval_type = _unimplemented_op
-    _deref_type = _unimplemented_op
-    _convert = _unimplemented_op
     _parameter_ref = _unimplemented_op
 
     ### Stack operations ###

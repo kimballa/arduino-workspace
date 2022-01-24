@@ -9,16 +9,9 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * autocomplete `SYM` class should also include names from the .symtab
-
-  * Implement DW_OP_GNU_implicit_pointer
-    startup.dump, locals 1
-
   * If there's an exception thrown during .debug_info parsing / in the Debugger c'tor, we
     go back to the REPL but the subsequent `\q` will hang until you ^C to kill adbg..
 
-  * Link type information for methods & variables to Symbols in Debugger initialization
-    after parsing dwarf_info().
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`
 

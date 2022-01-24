@@ -507,7 +507,6 @@ class Repl(object):
                     # There's no reason to keep calculating any further; we got a successful
                     # no-warning result, so that's what we'll use.
                     break
-
             elif flags & el.LookupFlags.ERR_PC_OUT_OF_BOUNDS:
                 best_flags = flags # We'd rather report PC_OUT_OF_BOUNDS than NO_LOCATION.
                                    # The former simply means "not valid at this breakpoint" vs

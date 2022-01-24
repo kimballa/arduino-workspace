@@ -1159,6 +1159,73 @@ class ClassType(PrgmType):
         details += '\n'.join(field_lines)
         return details
 
+
+class DwarfProcedure(DieBase):
+    """
+    A DWARF Procedure is a `location` attribute containing a dwarf expr that can be invoked
+    during evaluation of other location expressions.
+    """
+
+    def __init__(self, cuns, location=None, const_val=None, scope=None):
+        self._cuns = cuns
+        self._location = location
+        self._const_val = const_val
+        self._scope = scope
+
+    def getAddress(self, regs, frame):
+        """
+        Evaluate the location info to get the memory address of this variable.
+
+        @param regs the current register state for the frame.
+        @param frame the backtrace frame for this variable's scope.
+        @return a tuple containing:
+            - the memory and register location info for the variable (in the format
+              returned by the DWARFExprMachine), or None if no such info is available.
+            - some LookupFlags OR'd together indicating info about the address.
+        """
+        loc = self._location
+        if loc is None:
+            return (None, el.LookupFlags.ERR_NO_LOCATION)
+
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return (None, el.LookupFlags.ERR_PC_OUT_OF_BOUNDS)
+        expr_machine.setScope(self._scope)
+        expr_machine.setFrame(frame)
+        return expr_machine.eval()
+
+    def getValue(self, regs, frame):
+        """
+        Evaluate the location info to get the current value of this variable.
+
+        @param regs the current register state for the frame.
+        @param frame the backtrace frame for this variable's scope.
+        @return a tuple containing:
+            - the value of the variable, or None if no such info is available
+            - some LookupFlags OR'd together indicating info about the value.
+        """
+        if self._const_val is not None:
+            # It got hardcoded in the end.
+            return (self._const_val, el.LookupFlags.OK | el.LookupFlags.COMPILE_TIME_CONST)
+
+        loc = self._location
+        if loc is None:
+            return (None, el.LookupFlags.ERR_NO_LOCATION)
+
+        self._cuns.getDebugger().verboseprint("Evaluating DWARF Procedure")
+        expr_machine = self._cuns.getExprMachine(loc, regs)
+        if expr_machine is None:
+            return (None, el.LookupFlags.ERR_PC_OUT_OF_BOUNDS)
+        expr_machine.setScope(self._scope)
+        expr_machine.setFrame(frame)
+        return expr_machine.access(size=el.DWARFExprMachine.ALL)
+
+    def setConstValue(self, val):
+        """
+        This expression has been const-reduced.
+        """
+        self._const_val = val
+
 class VariableInfo(PrgmType):
     """
     Info record for a variable (not struct field) defined globally/statically in a file or
@@ -2019,6 +2086,17 @@ class ParsedDebugInfo(object):
 
             if dieattr('external'):
                 self._global_syms.addVariable(var)
+        elif die.tag == "DW_TAG_dwarf_procedure":
+            location = _get_locations()
+            const_val = dieattr('const_value')
+
+            if context.get('method'):
+                enclosing_scope = context['method']
+            else:
+                enclosing_scope = None
+
+            proc = DwarfProcedure(cuns, location, const_val, enclosing_scope)
+            _add_entry(proc, None, die.offset)
         else:
             # TODO(aaron): Consider parsing DW_TAG_GNU_call_site
             for child in die.iter_children():
