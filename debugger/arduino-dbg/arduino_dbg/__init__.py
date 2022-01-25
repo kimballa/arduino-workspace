@@ -19,11 +19,9 @@ def _parseArgs():
 def main(argv):
     ret = 1
     args = _parseArgs()
+    connection = None
     if args.port:
         connection = io.SerialConn(args.port, 57600, 0.1)
-    else:
-        print("No serial connection specified. Use 'load <filename>' to load a dump file.")
-        connection = None
 
     console_printer = ConsolePrinter()
     console_printer.start()

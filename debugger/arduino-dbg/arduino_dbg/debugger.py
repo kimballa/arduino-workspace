@@ -146,7 +146,7 @@ class Debugger(object):
         self.elf_name = elf_name
         self._elf_file_handle = None
         if self.elf_name:
-            self.elf_name = os.path.realpath(elf_name)
+            self.elf_name = os.path.realpath(self.elf_name)
 
         self.verboseprint = _silent # verboseprint() method is either _silent() or _verbose_print_all()
 
@@ -200,6 +200,10 @@ class Debugger(object):
             Link to the provided connection.
         """
         if not connection:
+            self._print_q.put(("No serial port specified; cannot connect to device to debug.", MsgLevel.WARN))
+            self._print_q.put((
+                "Use `open </dev/ttyname>` to connect to a serial port, or `load <filename>` " +
+                "to load a dump file.", MsgLevel.INFO))
             return # Nothing to connect to.
 
         if self._conn:
@@ -544,7 +548,7 @@ class Debugger(object):
 
         self.elf_name = elf_filename
         if self.elf_name:
-            self.elf_name = os.path.realpath(elf_name)
+            self.elf_name = os.path.realpath(self.elf_name)
 
         self._try_read_elf()
 
@@ -576,7 +580,8 @@ class Debugger(object):
         start_time = time.time()
 
         if self.elf_name is None:
-            self._print_q.put(("No ELF file provided; cannot load symbols", MsgLevel.WARN))
+            self._print_q.put(("No ELF file provided; cannot load symbols.", MsgLevel.WARN))
+            self._print_q.put(("Use `read <filename.elf>` to load a program image.", MsgLevel.INFO))
             return
 
         # Clear any existing ELF-populated state.

@@ -123,7 +123,8 @@ class ConsolePrinter(object):
         self.print_q = queue.Queue(maxsize=16)
         self._alive = True
         self._readline_enabled = False
-        self._thread = threading.Thread(target=self.service, name='Console print thread')
+        self._thread = threading.Thread(target=self.service, name='Console print thread',
+            daemon=True) # This thread must not hold the process open.
 
     def start(self):
         self._thread.start()

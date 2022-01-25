@@ -766,6 +766,23 @@ class Repl(object):
         """
         self._debugger.send_continue()
 
+    @Command(keywords=['read'], completions=[Completions.PATH])
+    def _read_elf(self, argv):
+        """
+        Read symbol and type information from an ELF file
+
+            Syntax: read <filename.elf>
+
+        Purges information from any previously-loaded ELF file.
+        """
+        if len(argv) == 0:
+            print("Syntax: read <filename.elf>")
+            return
+
+        filename = argv[0]
+        self._debugger.replace_elf_file(filename)
+
+
     @Command(keywords=['open'])
     def _open(self, argv):
         """
@@ -773,7 +790,7 @@ class Repl(object):
 
             Syntax: open </dev/ttyname> [<baud>]
 
-        If baud rate is not specified, attempts to use 57600
+        If baud rate is not specified, attempts to use 57600.
         """
         if len(argv) == 0:
             print("Syntax: open </dev/ttyname> [<baud>]")
