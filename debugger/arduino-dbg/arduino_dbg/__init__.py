@@ -17,6 +17,7 @@ def _parseArgs():
     return parser.parse_args()
 
 def main(argv):
+    ret = 1
     args = _parseArgs()
     if args.port:
         connection = io.SerialConn(args.port, 57600, 0.1)
@@ -26,10 +27,16 @@ def main(argv):
 
     console_printer = ConsolePrinter()
     console_printer.start()
-    debugger = Debugger(args.file, connection, console_printer.print_q)
-    console_printer.join_q()
-    ret = 1
-    repl = Repl(debugger, console_printer)
+    try:
+        debugger = Debugger(args.file, connection, console_printer.print_q)
+        console_printer.join_q()
+        repl = Repl(debugger, console_printer)
+    except:
+        # if we created the Repl, it would own console_printer and shut it down at any
+        # point after this. But any exception here prevents that; shut it down cleanly
+        # ourselves, first.
+        console_printer.shutdown()
+        raise
 
     try:
         ret = repl.loop()

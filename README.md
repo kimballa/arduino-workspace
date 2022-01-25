@@ -60,9 +60,9 @@ Usage:
 * Remember that if you depend on a library `foo` that itself depends on `bar`, you must
   list `foo` *before* `bar` in your `libs` list, or else the link-time optimization will
   be unable to find `foo`'s prerequisite symbols in `bar`.
-* If your source is not all in the current dir, enuerate the `src_dirs` as needed.
+* If your source is not all in the current dir, enumerate the `src_dirs` as needed.
 * Run `make` to build your app or library.
-* Libraries can be installed to a local lib dir for linking to apps later with `make install`
+* Libraries can be installed to a local lib dir for linking to apps later with `make install`.
 * Apps can be flashed to the Arduino with `make upload` or `make verify`.
 * Use `make config` to see and debug your environment config. Use `make help` to see a list of 
   available targets.

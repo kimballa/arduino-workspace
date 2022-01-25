@@ -10,6 +10,7 @@ import queue
 from sortedcontainers import SortedDict, SortedList
 import threading
 import time
+import traceback
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.protocol as protocol
@@ -143,14 +144,11 @@ class Debugger(object):
         self._conn = None
 
         self.elf_name = elf_name
+        self._elf_file_handle = None
         if self.elf_name:
             self.elf_name = os.path.realpath(elf_name)
 
-        self._init_clear_elf_state()
-        self._elf_file_handle = None
         self.verboseprint = _silent # verboseprint() method is either _silent() or _verbose_print_all()
-
-        self.open(connection)
 
         # Set up general user-accessible config.
 
@@ -160,18 +158,39 @@ class Debugger(object):
         # Load latest config from a dotfile in user's $HOME (unless given a force_config).
         self._init_config_from_file(force_config, arduino_platform)
 
-        # Finally, load the real debug info from the ELF file.
-        self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
-        self._read_elf()
+        self._init_clear_elf_state() # Initialize blank ELF file state (after config load).
+
+        # Load the real debug info from the ELF file.
+        self._try_read_elf()
+
+        # Establish connection to the device to debug.
+        self.open(connection)
 
     def _init_clear_elf_state(self):
+
+        # If there's already an open ELF file, close it out.
+        if self._elf_file_handle:
+            # Close the ELF file we opened at the beginning.
+            try:
+                self._elf_file_handle.close()
+            except e:
+                self._print_q.put((f'Error while closing ELF file: {e}', MsgLevel.WARN))
+
+            self._elf_file_handle = None
+
+        self._loaded_debug_info = False
         self._sections = {}
         self._addr_to_symbol = SortedDict()
         self._symbols = SortedDict()
         self._demangled_to_symbol = SortedDict()
         self._dwarf_info = None
         self.elf = None
+        self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
         self._cached_frames = None
+
+    def is_debug_info_loaded(self):
+        """ Return True if we successfully loaded debug info from an ELF file. """
+        return self._loaded_debug_info
 
     def get_debug_info(self):
         return self._debug_info_types
@@ -358,7 +377,7 @@ class Debugger(object):
                     f'Arch changed widths: int={new_int_size}, ptr={new_addr_size}. Reloading ELF...',
                     MsgLevel.WARN))
                 self._print_q.join()
-                self._read_elf()
+                self._try_read_elf()
 
 
     def set_conf(self, key, val):
@@ -511,6 +530,45 @@ class Debugger(object):
 
     ###### ELF-file and symbol functions
 
+    def replace_elf_file(self, elf_filename):
+        """
+        Close any existing ELF file and reset state; load all new symbols, types, etc.
+        from the newly-specified ELF filename.
+
+        If elf_filename is None, just forget what we knew from any prior ELF state.
+        """
+
+        assert elf_filename is None or isinstance(elf_filename, str)
+
+        self._init_clear_elf_state() # Wipe any prior state; close handles.
+
+        self.elf_name = elf_filename
+        if self.elf_name:
+            self.elf_name = os.path.realpath(elf_name)
+
+        self._try_read_elf()
+
+
+    def _try_read_elf(self):
+        """
+            Try to read the target ELF file and load debug info. If there is an
+            exception in this process, report it to the user, reset our internal
+            state, and swallow the exception.
+        """
+        try:
+            self._read_elf()
+        except Exception as e:
+            self._print_q.put((f'Error while reading ELF file: {e}.', MsgLevel.ERR))
+            self._print_q.put((f'Could not load symbols or type information.', MsgLevel.ERR))
+            if self.get_conf("dbg.verbose"):
+                # Also print stack trace details.
+                tb_lines = traceback.extract_tb(e.__traceback__)
+                self.verboseprint("".join(traceback.format_list(tb_lines)))
+            else:
+                self._print_q.put(("For stack trace info, `set dbg.verbose True`", MsgLevel.INFO))
+
+            self._init_clear_elf_state() # Reset ELF info back to 'none'.
+
     def _read_elf(self):
         """
             Read the target ELF file to load debugging information.
@@ -520,12 +578,6 @@ class Debugger(object):
         if self.elf_name is None:
             self._print_q.put(("No ELF file provided; cannot load symbols", MsgLevel.WARN))
             return
-
-        # If there's already an open ELF file, close it out.
-        if self._elf_file_handle:
-            # Close the ELF file we opened at the beginning.
-            self._elf_file_handle.close()
-        self._elf_file_handle = None
 
         # Clear any existing ELF-populated state.
         self._init_clear_elf_state()
@@ -605,6 +657,7 @@ class Debugger(object):
 
         end_time = time.time()
         self.verboseprint(f'Loaded debug information in {1000*(end_time - start_time):0.01f}ms.')
+        self._loaded_debug_info = True
 
 
     def get_frame_cie(self):
