@@ -9,24 +9,10 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Replace all uses of 'print()' in debugger with submissions to the printer queue.
-    Then eliminate the .join() calls all over the place that tank performance.
-
-  * add notion of "current frame" that can be adjusted rather than just as immediate arg
-    to `frame` / `\f`, locals, etc?
+  * Replace all uses of 'print()' and 'term.write()' throughout with submissions to the printer
+    queue. Then eliminate the print_q.join() calls that tank performance in verbose mode.
 
   --------
-
-  * In the case of e.g. NewhavenLcd0440::write(), we have an initial method declaration( #1),
-    then another subprogram (#2) references it with DW_AT_specification. A third subprogram of
-    the same name references #2 with DW_AT_abstract_origin. Both #2 and #3 set #1 as origin;
-    effectively #2 and 3 are "sibling" definitions in this pointer tree. Should 3 point to 2
-    points to 1?
-
-    If we are doing a `locals` within #3, and #3 copied in or referred to all the variables
-    defined in #2, we may have more thorough enumeration of all local variables (some are
-    present in #2 and not #3) but they may have location eval instructions not valid for
-    the $PC..
 
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
     control/suppress existing ones.
@@ -44,6 +30,9 @@ Client:
 
   * types.py should handle union type? bit fields?
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
+
+  * add notion of "current frame" that can be adjusted rather than just as immediate arg
+    to `frame` / `\f`, locals, etc?
 
   * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
 
