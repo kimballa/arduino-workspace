@@ -40,7 +40,8 @@ COLOR_OFF = COLOR_WHITE # Normal white on black
 #
 # see e.g.:
 # https://stackoverflow.com/questions/8806643/colorized-output-breaks-linewrapping-with-readline/8916332#8916332
-PROMPT = "\001\r\002(adbg) "
+NO_CTRL_PROMPT = "(adbg) "              # The actual text we want to appear.
+PROMPT = f'\001\r\002{NO_CTRL_PROMPT}'  # The prompt for readline to use, with leading ctrl chars.
 
 def use_colors():
     """
@@ -168,7 +169,7 @@ class ConsolePrinter(object):
 
             if self._readline_enabled and _readline_input_on:
                 # Refresh the visible console prompt
-                print(f'{PROMPT}{cur_input}', end='', flush=True)
+                print(f'{NO_CTRL_PROMPT}{cur_input}', end='', flush=True)
 
             self.print_q.task_done()
 
