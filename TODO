@@ -9,8 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Add 'reopen' command to attempt reconnection manually.
-
   * Replace all uses of 'print()' in debugger with submissions to the printer queue.
     Then eliminate the .join() calls all over the place that tank performance.
 

@@ -252,7 +252,15 @@ class Debugger(object):
         """
         if self._conn is None:
             # Nothing to work with here.
+            self._print_q.put((f"No connection to reconnect", MsgLevel.ERR))
             return False
+
+        if self._listen_thread and self._listen_thread.ident != threading.get_ident():
+            # Wait for existing thread to exit -- unless this is invoked within that thread.
+            # (In which case, it's already on the way out and knows it.)
+            self._alive = False
+            self._listen_thread.join()
+            self._listen_thread = None
 
         max_retries = self._get_max_retries()
         for i in range(0, max_retries):
@@ -274,13 +282,9 @@ class Debugger(object):
                 # Didn't work this retry. Wait a bit and try again.
                 pass
 
-        # We have tried the maximum number of tries we're allowed. Completely give up,
-        # and free all serial conn resources.
-        try:
-            self._close_serial()
-        except:
-            pass
-
+        # We have tried the maximum number of tries we're allowed. Completely give up.
+        self._alive = False # Make sure nothing's lingering around.
+        self._print_q.put((f"Could not reestablish connection", MsgLevel.ERR))
         return False # Couldn't make it work.
 
 

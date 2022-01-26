@@ -806,6 +806,16 @@ class Repl(object):
         connection = io.SerialConn(port, baud, 0.1)
         self._debugger.open(connection)
 
+    @Command(keywords=['reopen'])
+    def _reopen(self, argv):
+        """
+        Reestablish the serial connection to the current port
+
+            Syntax: reopen
+
+        To change connection parameters, use the `open` command.
+        """
+        self._debugger.reconnect()
 
     @Command(keywords=['flash', 'xf'], completions=[Completions.WORD_SIZE])
     def _flash(self, argv):
