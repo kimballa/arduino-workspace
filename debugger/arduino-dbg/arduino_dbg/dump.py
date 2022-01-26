@@ -241,6 +241,9 @@ class HostedDebugService(object):
                 self._send(protocol.DBG_PAUSE_MSG)
             elif cmd == protocol.DBG_OP_CONTINUE:
                 self._send_comment("Cannot continue in image debugger")
+                # Debugger expects a RESULT_ONELINE, so send a formal response that is not
+                # 'Continuing' in addition to the user-helpful comment above.
+                self._send("error") 
             elif cmd == protocol.DBG_OP_FLASHADDR:
                 size = args[0]
                 addr = args[1]
@@ -284,6 +287,7 @@ class HostedDebugService(object):
                     pass # Invalid GPIO port? Ignore...
             elif cmd == protocol.DBG_OP_RESET:
                 self._send_comment("Cannot reset in image debugger")
+                # Command does not expect any real response so no more to do here.
             elif cmd == protocol.DBG_OP_REGISTERS:
                 for i in range(0, num_gen_registers):
                     reg_nm = f'r{i}'

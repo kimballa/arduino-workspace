@@ -1085,7 +1085,7 @@ class Debugger(object):
 
 
     def reset_sketch(self):
-        self.send_cmd(protocol.DBG_OP_RESET, self._debugger.RESULT_SILENT)
+        self.send_cmd(protocol.DBG_OP_RESET, Debugger.RESULT_SILENT)
         self._process_state = PROCESS_STATE_UNKNOWN
 
 

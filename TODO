@@ -34,6 +34,10 @@ Client:
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
+    * This would be very tricky for frames below #0; especially if the register is live/implicit
+      in the current frame, it could make the current frame have undefined behavior. If it was
+      pushed on the stack but not in frame 'n-1' then it could cause undefined behavior in that
+      intermediate frame.
 
   * types.py should handle union type? bit fields?
   * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
