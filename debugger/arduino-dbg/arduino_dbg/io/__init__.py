@@ -18,7 +18,15 @@ class DebugConn(object):
     def __init__(self):
         pass
 
+    def max_retries(self):
+        """ Return the max number of times we should attempt to retry this connection. """
+        # No particular limit
+        return None
+
     def open(self, *args, **kwargs):
+        raise Exception("Unimplemented")
+
+    def reopen(self, *args, **kwargs):
         raise Exception("Unimplemented")
 
     def close(self):
@@ -48,25 +56,31 @@ class SerialConn(DebugConn):
     def __init__(self, port, baud, timeout):
         DebugConn.__init__(self)
         self._conn = None
+        self.port = None
+        self.baud = None
+        self.timeout = None
         self.reopen(port, baud, timeout)
 
-    def reopen(self, port, baud, timeout):
+    def reopen(self, port=None, baud=None, timeout=None):
         """
           (Re)establish serial connection.
         """
 
-        self.port = port
-        self.baud = baud
-        self.timeout = timeout
+        if port is not None:
+            self.port = port
+        if baud is not None:
+            self.baud = baud
+        if timeout is not None:
+            self.timeout = timeout
 
         if self._conn is not None:
             self.close()
 
-        if port is not None and port != '':
-            self._conn = serial.Serial(port, baud, timeout=timeout)
+        if self.port is not None and self.port != '':
+            self._conn = serial.Serial(self.port, self.baud, timeout=self.timeout)
 
     def open(self):
-        self.reopen(self.port, self.baud, self.timeout)
+        self.reopen()
 
     def is_open(self):
         return self._conn is not None and self._conn.is_open
@@ -109,10 +123,16 @@ class LocalBidiPipeConn(DebugConn):
         self._buf = bytearray()
         self._n_buffered = 0
 
+    def max_retries(self):
+        # This connection cannot be retried.
+        return 0
 
     def open(self, *args, **kwargs):
         # The pipes start already-open.
         pass
+
+    def reopen(self):
+        raise OSError("Cannot re-open pipe once closed.")
 
     def close(self):
         if not self._is_open:

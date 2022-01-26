@@ -24,12 +24,19 @@ import arduino_dbg.types as types
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
 _DEFAULT_HISTORY_FILENAME = os.path.expanduser("~/.arduino_dbg_history")
 
+_DEFAULT_MAX_CONN_RETRIES = 3
+_DEFAULT_MAX_POLL_RETRIES = 20
+_DEFAULT_POLL_TIMEOUT = 100 # milliseconds
+
 _dbg_conf_keys = [
     "arduino.platform",
     "arduino.arch",
-    "dbg.conf.formatversion",
     "dbg.colors",
+    "dbg.conf.formatversion",
+    "dbg.conn.retries",
     "dbg.historyfile",
+    "dbg.poll.retry",    # Attempt to listen how many times in __wait_response() ?
+    "dbg.poll.timeout",  # When listening to recv_q in __wait_response(), wait how long?
     'dbg.print_die.offset',
     "dbg.verbose",
 ]
@@ -38,6 +45,27 @@ _dbg_conf_keys = [
 PROCESS_STATE_UNKNOWN = 0
 PROCESS_STATE_RUNNING = 1
 PROCESS_STATE_BREAK   = 2
+
+class ConnRestart:
+    """
+    If the connection suddenly disconnects/errors within the _conn_listener thread,
+    whose responsibility is it to attempt to restart the connection?
+
+    If within a command--response scenario, the cilent should handle it; we cannot trust
+    that all the intervening data will make it to the client, so it may wait forever for
+    a response unless it just gets the exception and understands its command to have failed.
+
+    If we're just passively listening for debug logging info coming off the device, the
+    _conn_listener should attempt to restart itself, as the client will likely be waiting
+    for user 'readline' input and won't be in a position to issue the restart command
+    in a timely fashion.
+
+    * We use the Debugger._restart_responsibility = ConnRestart.CLIENT state if _conn_listener()
+      is in __send_msg() or __flush_recv_q().
+    * At all other times, we set _restart_responsibility = ConnRestart.INTERNAL.
+    """
+    INTERNAL = 0
+    CLIENT = 1
 
 
 def _silent(*args):
@@ -114,6 +142,12 @@ def _load_conf_module(module_name, resource_name, print_q):
 class NoServerConnException(Exception):
     pass
 
+class DisconnectedException(Exception):
+    pass
+
+class InvalidConnStateException(Exception):
+    pass
+
 class Debugger(object):
     """
         Main debugger state object.
@@ -141,6 +175,8 @@ class Debugger(object):
         self._process_state = PROCESS_STATE_BREAK
         self._listen_thread = None
         self._alive = False
+        self._disconnect_err = False
+        self._restart_responsibility = ConnRestart.INTERNAL
         self._conn = None
 
         self.elf_name = elf_name
@@ -195,6 +231,59 @@ class Debugger(object):
     def get_debug_info(self):
         return self._debug_info_types
 
+    def _get_max_retries(self):
+        if self._conn is None:
+            return 0 # No connection to retry.
+
+        conn_retries = self._conn.max_retries()
+        config_retries = self.get_conf('dbg.conn.retries')
+        if conn_retries is None:
+            # No connection-imposed limit. Use configured limit.
+            return max(0, config_retries)
+        else:
+            return max(0, min(config_retries, conn_retries))
+
+    def reconnect(self):
+        """
+        If we already have a connection and it errored out, re-attempt connection, up to
+        a maximum number of retries.
+
+        @return True if the reconnect was successful, False otherwise.
+        """
+        if self._conn is None:
+            # Nothing to work with here.
+            return False
+
+        max_retries = self._get_max_retries()
+        for i in range(0, max_retries):
+            try:
+                self._print_q.put((f"Reconnecting... (Attempt {i+1} of {max_retries})", MsgLevel.INFO))
+                if i == 0:
+                    # Start reconnection process by waiting generously for USB-serial to be detected by OS.
+                    time.sleep(3)
+                else:
+                    # More modest wait between subsequent retries.
+                    time.sleep(2)
+
+                # Attempt reconnection.
+                self._conn.reopen()
+                # Got the connection restarted -- start a new conn_listener thread.
+                self.__start_conn_listener()
+                return True # success!
+            except:
+                # Didn't work this retry. Wait a bit and try again.
+                pass
+
+        # We have tried the maximum number of tries we're allowed. Completely give up,
+        # and free all serial conn resources.
+        try:
+            self._close_serial()
+        except:
+            pass
+
+        return False # Couldn't make it work.
+
+
     def open(self, connection):
         """
             Link to the provided connection.
@@ -211,11 +300,19 @@ class Debugger(object):
             self._close_serial()
 
         self._conn = connection
-        self._print_q.put((f"Opening connection to {connection}...", MsgLevel.INFO))
+        self.__start_conn_listener()
+
+    def __start_conn_listener(self):
+        """
+        Set up internal listener thread & associated state after connection is established.
+        """
+        self._print_q.put((f"Opening connection to {self._conn}...", MsgLevel.INFO))
         self._recv_q = queue.Queue(maxsize=16) # Data from serial conn for debug internal use.
         self._send_q = queue.Queue(maxsize=1) # Data to send out on serial conn.
         self._alive = True
+        self._disconnect_err = False
         self._process_state = PROCESS_STATE_UNKNOWN
+        self._restart_responsibility = ConnRestart.INTERNAL
         self._listen_thread = threading.Thread(target=self._conn_listener,
             name='Debugger serial listener')
         self._listen_thread.start()
@@ -227,7 +324,9 @@ class Debugger(object):
         Release serial connection resources.
         """
         self._alive = False
-        if self._listen_thread:
+        if self._listen_thread and self._listen_thread.ident != threading.get_ident():
+            # Wait for existing thread to exit -- unless this is invoked within that thread.
+            # (In which case, it's already on the way out and knows it.)
             self._listen_thread.join()
         self._listen_thread = None
 
@@ -235,6 +334,7 @@ class Debugger(object):
         if self._conn:
             self._conn.close()
         self._conn = None
+        self._disconnect_err = False
 
         self._recv_q = None
         self._send_q = None
@@ -269,6 +369,9 @@ class Debugger(object):
         conf_map["dbg.verbose"] = False
         conf_map["dbg.colors"] = True
         conf_map["dbg.historyfile"] = _DEFAULT_HISTORY_FILENAME
+        conf_map["dbg.conn.retries"] = _DEFAULT_MAX_CONN_RETRIES
+        conf_map["dbg.poll.retry"] = _DEFAULT_MAX_POLL_RETRIES
+        conf_map["dbg.poll.timeout"] = _DEFAULT_POLL_TIMEOUT
 
         return conf_map
 
@@ -834,6 +937,11 @@ class Debugger(object):
         and wait for a response.
         """
         self._conn.write(msgline.encode("utf-8"))
+        if response_type == Debugger.RESULT_SILENT:
+            # Client isn't waiting for a response. Immediately reassert responsibility
+            # for connection restart before acknowledging the send-complete and allowing
+            # the client to resume their thread.
+            self._restart_responsibility = ConnRestart.INTERNAL
         self._send_q.task_done() # Mark complete as soon as data's affirmatively sent.
 
         if response_type == Debugger.RESULT_ONELINE:
@@ -855,6 +963,9 @@ class Debugger(object):
 
             # We have received the response line.
             submitted = False
+            # We reassert responsibility for reconnect after finishing requested conn I/O,
+            # but before allowing the client to continue by handing them back the response line.
+            self._restart_responsibility = ConnRestart.INTERNAL
             #print(f"RECVQ: [{line}]")
             while self._alive and not submitted:
                 try:
@@ -862,6 +973,7 @@ class Debugger(object):
                     submitted = True
                 except queue.Full:
                     continue
+
                 self._recv_q.join() # Wait for response line to be acknowledged by debugger.
         elif response_type == Debugger.RESULT_LIST:
             while self._alive:
@@ -879,6 +991,11 @@ class Debugger(object):
                             continue
                 else:
                     # Data response line to forward to consumer
+                    if line == '$':
+                        # end of list and end of requested conn I/O.
+                        # We reassert responsibility for reconnect after finishing requested conn I/O,
+                        # but before allowing the client to continue by handing them back the response line.
+                        self._restart_responsibility = ConnRestart.INTERNAL
                     submitted = False
                     #print(f"RECVQ: [{line}]")
                     while self._alive and not submitted:
@@ -936,77 +1053,172 @@ class Debugger(object):
         As new lines are received, they are either routed to the printer queue
         or the debugger recv queue for processing.
         """
-        while self._alive:
-            if self._process_state == PROCESS_STATE_BREAK:
-                # The device is guaranteed to be in the debugger service. Therefore, we wait
-                # for commands to be sent to us from the Debugger to relay to the device.
-                self.__flush_recv_q()
-                try:
-                    (msgline, response_type) = self._send_q.get(timeout=Debugger.QUEUE_TIMEOUT)
-                except queue.Empty:
-                    continue
+        self.verboseprint(f'Starting connection listener thread {threading.get_ident()}')
+        try:
+            while self._alive:
+                # By default, this thread will attempt to restart the connection if
+                # it is suddenly disconnected.
+                self._restart_responsibility = ConnRestart.INTERNAL
 
-                self.__send_msg(msgline, response_type)
-            else:
-                # Process state is either RUNNING or UNKNOWN.
-                # We need to listen for traffic from the device in case it spontaneously
-                # emits a debug_print() or trace() message.
+                if self._process_state == PROCESS_STATE_BREAK:
+                    # The device is guaranteed to be in the debugger service. Therefore, we wait
+                    # for commands to be sent to us from the Debugger to relay to the device.
 
-                # But first: Send any pending outbound data.
-                if self._send_q.qsize() > 0:
-                    # Ensure the recv_q is empty; discard any pending lines, since they're
-                    # now all unclaimed.
                     self.__flush_recv_q()
-
-                    # Send the outbound line.
-                    (msgline, response_type) = self._send_q.get(block=False)
-                    self.__send_msg(msgline, response_type)
-                    if self._process_state == PROCESS_STATE_BREAK:
-                        # We changed process states to BREAK via this msg.
-                        # Back to the main loop top, switch into send-biased mode.
+                    try:
+                        (msgline, response_type) = self._send_q.get(timeout=Debugger.QUEUE_TIMEOUT)
+                    except queue.Empty:
                         continue
 
-                # Ideally we would have a way to interrupt this if _send_q is filled
-                # while we're waiting on a silent channel, but I don't have a clean way
-                # to select() on both at once. Instead we rely on the timeout we specified
-                # when opening the connection to bring us back to the top of the loop.
-                line = self._conn.readline().decode("utf-8").strip()
-                submitted = False
-
-                if len(line) == 0:
-                    continue # Didn't get a line; timed out.
-                elif line.startswith(protocol.DBG_RET_PRINT):
-                    # got a message for the user from debug_msg() or trace().
-                    # forward it to the ConsolePrinter.
-                    while self._alive and not submitted:
-                        try:
-                            self._print_q.put((line[1:], MsgLevel.DEVICE), timeout=Debugger.QUEUE_TIMEOUT)
-                            submitted = True
-                        except queue.Full:
-                            continue
-                elif line == protocol.DBG_PAUSE_MSG:
-                    # Server has informed us that it switched to break mode.
-                    # (e.g. program-triggered hardcoded breakpoint.)
-                    self.__acknowledge_pause()
+                    # Now that we have data from the client to send to the device, the client is
+                    # waiting on our response. It's the client's responsibility to handle disconnects here.
+                    self._restart_responsibility = ConnRestart.CLIENT
+                    self.__send_msg(msgline, response_type)
+                    self._restart_responsibility = ConnRestart.INTERNAL
                 else:
-                    # Got a line of something but it didn't start with '>'.
-                    # Either it _is_ for the user and we connected to the socket mid-message,
-                    # or we received a legitimate response to a query we sent to the server.
-                    # Either way, we forward it to the printer, since we don't expect to
-                    # receive a response to a command in this state.
-                    while self._alive and not submitted:
-                        try:
-                            self._print_q.put((line, MsgLevel.DEVICE), timeout=Debugger.QUEUE_TIMEOUT)
-                            submitted = True
-                        except queue.Full:
+                    # Process state is either RUNNING or UNKNOWN.
+                    # We need to listen for traffic from the device in case it spontaneously
+                    # emits a debug_print() or trace() message.
+
+                    # But first: Send any pending outbound data.
+                    if self._send_q.qsize() > 0:
+                        # Client's responsibility to handle disconnects if they have a cmd-response
+                        # pattern for us to handle.
+                        self._restart_responsibility = ConnRestart.CLIENT
+
+                        # Ensure the recv_q is empty; discard any pending lines, since they're
+                        # now all unclaimed.
+                        self.__flush_recv_q()
+
+                        # Send the outbound line.
+                        (msgline, response_type) = self._send_q.get(block=False)
+                        self.__send_msg(msgline, response_type)
+                        if self._process_state == PROCESS_STATE_BREAK:
+                            # We changed process states to BREAK via this msg.
+                            # Back to the main loop top, switch into send-biased mode.
                             continue
+
+                        # Back to passive monitoring mode; we manage our own reconnects.
+                        self._restart_responsibility = ConnRestart.INTERNAL
+
+                    # Ideally we would have a way to interrupt this if _send_q is filled
+                    # while we're waiting on a silent channel, but I don't have a clean way
+                    # to select() on both at once. Instead we rely on the timeout we specified
+                    # when opening the connection to bring us back to the top of the loop.
+                    line = self._conn.readline().decode("utf-8").strip()
+                    submitted = False
+
+                    if len(line) == 0:
+                        continue # Didn't get a line; timed out.
+                    elif line.startswith(protocol.DBG_RET_PRINT):
+                        # got a message for the user from debug_msg() or trace().
+                        # forward it to the ConsolePrinter.
+                        while self._alive and not submitted:
+                            try:
+                                self._print_q.put((line[1:], MsgLevel.DEVICE),
+                                    timeout=Debugger.QUEUE_TIMEOUT)
+                                submitted = True
+                            except queue.Full:
+                                continue
+                    elif line == protocol.DBG_PAUSE_MSG:
+                        # Server has informed us that it switched to break mode.
+                        # (e.g. program-triggered hardcoded breakpoint.)
+                        self.__acknowledge_pause()
+                    else:
+                        # Got a line of something but it didn't start with '>'.
+                        # Either it _is_ for the user and we connected to the socket mid-message,
+                        # or we received a legitimate response to a query we sent to the server.
+                        # Either way, we forward it to the printer, since we don't expect to
+                        # receive a response to a command in this state.
+                        while self._alive and not submitted:
+                            try:
+                                self._print_q.put((line, MsgLevel.DEVICE),
+                                    timeout=Debugger.QUEUE_TIMEOUT)
+                                submitted = True
+                            except queue.Full:
+                                continue
+        except OSError as e:
+            # Generally means our connection has unexpectedly closed on us.
+            # Set flags indicating that the connection has failed.
+            # One way or another, this thread is about to terminate.
+            self._alive = False
+            self._disconnect_err = True
+
+            try:
+                self._print_q.put(("Debugger connection unexpectedly closed", MsgLevel.ERR))
+                self.verboseprint(str(e))
+                self._conn.close()
+            except:
+                pass
+
+            if self._restart_responsibility == ConnRestart.INTERNAL:
+                # The client is not actively monitoring the connection. We should attempt to restart
+                # the connection so we can continue to passively listen for debug_print() and
+                # trace() messages. If reconnection is sucessful, this will create a new listener
+                # thread that takes the place of this one.
+                self.reconnect()
+
+                # At this point, _alive, _conn, etc. are all owned by the new _conn_listener
+                # thread. We shouldn't touch *any* internal state, just leave immediately.
+            else:
+                assert self._restart_responsibility == ConnRestart.CLIENT
+                # The client is monitoring the connection. Debugger.__wait_response() will
+                # see that _disconnect_err is set to True and throw DisconnectedException to
+                # the client, which will then determine whether to restart the connection.
+                # We're done.
+                pass
+        finally:
+            self.verboseprint(f'Exiting connection listener thread {threading.get_ident()}')
+
+
+    def __wait_response(self):
+        """
+        Wait for a response on recv_q from within send_cmd().
+        Raise an exception if the server connection disconnected.
+        """
+        if not self._alive or self._disconnect_err:
+            raise DisconnectedException()
+
+        max_attempts = max(self.get_conf("dbg.poll.retry"), 1)
+        attempt_timeout = max(self.get_conf("dbg.poll.timeout"), 10.0) / 1000.0
+        for i in range(0, max_attempts):
+            if not self._alive or self._disconnect_err:
+                raise DisconnectedException()
+
+            try:
+                line = self._recv_q.get(timeout=attempt_timeout)
+            except queue.Empty:
+                # Didn't get a response in time.
+                continue
+
+            #print("<-- %s" % line.strip())
+            self._recv_q.task_done()
+            return line
+
+        # Didn't get a response in enough time. Assume we got disconnected.
+        # Shut down the thread cleanly from our side.
+        self._alive = False
+        self._disconnect_err = True
+        self._print_q.put(("Timeout waiting for response from device.", MsgLevel.ERR))
+        raise DisconnectedException()
+
 
     def send_cmd(self, dbg_cmd, result_type):
         """
             Send a low-level debugger command across the wire and return the results.
+
             @param dbg_cmd either a formatted command string or list of cmd and arguments.
             @param result_type an integer/enum specifying whether to expect 0, 1, or 'n'
             ($-terminated list) lines in response.
+
+            @throws NoServerConnException if not connected to the device.
+            @throws DisconnectedException if a disconnect happens during communication.
+            @throws InvalidConnStateException if we need to interrupt the sketch to send
+                the command and cannot affirmatively do so.
+            @throws RuntimeError if result_type is invalid.
+
+            @return type varies based on result_type: SILENT => None; ONELINE => a single
+            string response line; LIST => a List of string response lines.
         """
 
         if not self.is_open():
@@ -1016,7 +1228,7 @@ class Debugger(object):
             # We need to be in the BREAK state to send any commands to the service
             # besides the break command itself. Send that first..
             if not self.send_break():
-                raise Exception("Could not pause device sketch to send command.")
+                raise InvalidConnStateException("Could not pause device sketch to send command.")
 
         if type(dbg_cmd) == list:
             dbg_cmd = [str(x) for x in dbg_cmd]
@@ -1036,17 +1248,13 @@ class Debugger(object):
         elif result_type == Debugger.RESULT_ONELINE:
             line = None
             while line is None or len(line) == 0:
-                line = self._recv_q.get()
-                #print("<-- %s" % line.strip())
-                self._recv_q.task_done()
+                line = self.__wait_response()
 
             return line
         elif result_type == Debugger.RESULT_LIST:
             lines = []
             while True:
-                thisline = self._recv_q.get()
-                self._recv_q.task_done()
-                #print("<-- %s" % thisline.strip())
+                thisline = self.__wait_response()
                 if len(thisline) == 0:
                     continue
                 elif thisline == "$":
@@ -1281,7 +1489,7 @@ class Debugger(object):
 
         # Walk back through the stack to establish the method calls that got us
         # to where we are. If we didn't have a cached backtrace, get the entire thing (ignore
-        # limit).
+        # limit). (TODO (aaron): Implement incremental backtracing.)
         while sp < ramend and pc != 0:
             frame = stack.CallFrame(self, pc, sp)
             frames.append(frame)

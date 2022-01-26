@@ -169,7 +169,7 @@ class ConsolePrinter(object):
 
             if self._readline_enabled and _readline_input_on:
                 # Refresh the visible console prompt
-                print(f'{NO_CTRL_PROMPT}{cur_input}', end='', flush=True)
+                print(f'\r{NO_CTRL_PROMPT}{cur_input}', end='', flush=True)
 
             self.print_q.task_done()
 

@@ -8,6 +8,7 @@ import readline
 import signal
 import shlex
 from sortedcontainers import SortedDict, SortedList
+import time
 import traceback
 
 import arduino_dbg.binutils as binutils
@@ -2026,6 +2027,11 @@ class Repl(object):
 
         return list(map(__strip_quotes, tokens))
 
+
+    def reconnect(self):
+        return self._debugger.reconnect()
+
+
     def loop_input_body(self):
         """
             Primary function to call inside a loop; executes one flow of Read-eval-print.
@@ -2099,6 +2105,13 @@ class Repl(object):
                 cmd_obj = commandMap[cmd]
                 cmd_obj.invoke(self, tokens[1:])
             except dbg.NoServerConnException as e:
+                term.write(f"Error running '{cmd}': {str(e)}", term.ERR)
+            except dbg.DisconnectedException as e:
+                term.write(f"Error: Disconnected from device", term.ERR)
+                if not self.reconnect():
+                    term.write(f"Error: Could not reconnect to device", term.ERR)
+            except dbg.InvalidConnStateException as e:
+                # Error interrupting the sketch to send command.
                 term.write(f"Error running '{cmd}': {str(e)}", term.ERR)
             except Exception as e:
                 term.write(f"Error running '{cmd}': {e}", term.ERR)
