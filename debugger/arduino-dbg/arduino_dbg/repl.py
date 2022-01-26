@@ -766,17 +766,17 @@ class Repl(object):
         """
         self._debugger.send_continue()
 
-    @Command(keywords=['read'], completions=[Completions.PATH])
+    @Command(keywords=['file'], completions=[Completions.PATH])
     def _read_elf(self, argv):
         """
         Read symbol and type information from an ELF file
 
-            Syntax: read <filename.elf>
+            Syntax: file <filename.elf>
 
         Purges information from any previously-loaded ELF file.
         """
         if len(argv) == 0:
-            print("Syntax: read <filename.elf>")
+            print("Syntax: file <filename.elf>")
             return
 
         filename = argv[0]
