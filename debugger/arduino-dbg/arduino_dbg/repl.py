@@ -2146,7 +2146,7 @@ class Repl(object):
         last_process_state = None
         while not quit:
             process_state = self._debugger.process_state()
-            if process_state != dbg.PROCESS_STATE_BREAK and process_state != last_process_state:
+            if process_state != dbg.ProcessState.BREAK and process_state != last_process_state:
                 # The program is (maybe?) running. Let the user know how to change that.
                 print("Press ^C to interrupt Arduino sketch for debugging.")
 

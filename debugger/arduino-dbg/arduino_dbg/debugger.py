@@ -41,10 +41,19 @@ _dbg_conf_keys = [
     "dbg.verbose",
 ]
 
-# When we connect to the device, which state are we in?
-PROCESS_STATE_UNKNOWN = 0
-PROCESS_STATE_RUNNING = 1
-PROCESS_STATE_BREAK   = 2
+class ProcessState:
+    """
+    When we connect to the device, which state are we in?
+
+    Depending on the process state, the connection listener thread is biased to either
+    passively listen for dbgprint() and trace() messages from the device, or expect
+    command--response interactions to originate from the local client.
+    """
+
+    UNKNOWN = 0  # Don't know if sketch is running or note. Bias to assuming it is running.
+    RUNNING = 1  # The sketch is definitely running.
+    BREAK   = 2  # The sketch is definitely parked at a breakpoint / interrupt in the dbg service.
+
 
 class ConnRestart:
     """
@@ -172,7 +181,7 @@ class Debugger(object):
         self._recv_q = None
         self._send_q = None
         # Before we're connected to anything, stay in 'BREAK' state.
-        self._process_state = PROCESS_STATE_BREAK
+        self._process_state = ProcessState.BREAK
         self._listen_thread = None
         self._alive = False
         self._disconnect_err = False
@@ -315,7 +324,7 @@ class Debugger(object):
         self._send_q = queue.Queue(maxsize=1) # Data to send out on serial conn.
         self._alive = True
         self._disconnect_err = False
-        self._process_state = PROCESS_STATE_UNKNOWN
+        self._process_state = ProcessState.UNKNOWN
         self._restart_responsibility = ConnRestart.INTERNAL
         self._listen_thread = threading.Thread(target=self._conn_listener,
             name='Debugger serial listener')
@@ -343,7 +352,7 @@ class Debugger(object):
         self._recv_q = None
         self._send_q = None
 
-        self._process_state = PROCESS_STATE_BREAK
+        self._process_state = ProcessState.BREAK
 
     def close(self):
         """
@@ -1039,7 +1048,7 @@ class Debugger(object):
         In the conn_listener thread, we received a "Paused" acknowledgement of break request
         from the server. Set our state to confirm that we have received the break stmt.
         """
-        self._process_state = PROCESS_STATE_BREAK # Confirm the BREAK status.
+        self._process_state = ProcessState.BREAK # Confirm the BREAK status.
         submitted = False
         while self._alive and not submitted:
             try:
@@ -1063,7 +1072,7 @@ class Debugger(object):
                 # it is suddenly disconnected.
                 self._restart_responsibility = ConnRestart.INTERNAL
 
-                if self._process_state == PROCESS_STATE_BREAK:
+                if self._process_state == ProcessState.BREAK:
                     # The device is guaranteed to be in the debugger service. Therefore, we wait
                     # for commands to be sent to us from the Debugger to relay to the device.
 
@@ -1096,7 +1105,7 @@ class Debugger(object):
                         # Send the outbound line.
                         (msgline, response_type) = self._send_q.get(block=False)
                         self.__send_msg(msgline, response_type)
-                        if self._process_state == PROCESS_STATE_BREAK:
+                        if self._process_state == ProcessState.BREAK:
                             # We changed process states to BREAK via this msg.
                             # Back to the main loop top, switch into send-biased mode.
                             continue
@@ -1227,7 +1236,7 @@ class Debugger(object):
         if not self.is_open():
             raise NoServerConnException("Error: No debug server connection open")
 
-        if self._process_state != PROCESS_STATE_BREAK and dbg_cmd != protocol.DBG_OP_BREAK:
+        if self._process_state != ProcessState.BREAK and dbg_cmd != protocol.DBG_OP_BREAK:
             # We need to be in the BREAK state to send any commands to the service
             # besides the break command itself. Send that first..
             if not self.send_break():
@@ -1274,11 +1283,11 @@ class Debugger(object):
     def send_break(self):
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
         if break_ok == protocol.DBG_PAUSE_MSG:
-            self._process_state = PROCESS_STATE_BREAK
+            self._process_state = ProcessState.BREAK
             self._print_q.put(("Paused.", MsgLevel.INFO))
             return True
         else:
-            self._process_state = PROCESS_STATE_UNKNOWN
+            self._process_state = ProcessState.UNKNOWN
             self._print_q.put(("Could not interrupt sketch.", MsgLevel.WARN))
             return False
 
@@ -1287,17 +1296,17 @@ class Debugger(object):
         self.clear_frame_cache() # Backtrace is invalidated by continued execution.
         continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, Debugger.RESULT_ONELINE)
         if continue_ok == "Continuing":
-            self._process_state = PROCESS_STATE_RUNNING
+            self._process_state = ProcessState.RUNNING
             self._print_q.put(("Continuing...", MsgLevel.INFO))
         else:
-            self._process_state = PROCESS_STATE_UNKNOWN
+            self._process_state = ProcessState.UNKNOWN
             self._print_q.put(("Could not continue sketch.", MsgLevel.WARN))
             self._print_q.put(("Received unexpected response [%s]" % continue_ok, MsgLevel.WARN))
 
 
     def reset_sketch(self):
         self.send_cmd(protocol.DBG_OP_RESET, Debugger.RESULT_SILENT)
-        self._process_state = PROCESS_STATE_UNKNOWN
+        self._process_state = ProcessState.UNKNOWN
 
 
     def get_registers(self):

@@ -149,7 +149,7 @@ def load_dump(filename, print_q, config=None, history_change_hook=None):
     dbg = debugger.Debugger(elf_filename, left, print_q,
         arduino_platform=dump_data['platform'], force_config=config,
         history_change_hook=history_change_hook)
-    dbg.set_process_state(debugger.PROCESS_STATE_BREAK) # It's definitionally always paused.
+    dbg.set_process_state(debugger.ProcessState.BREAK) # It's definitionally always paused.
 
     # Create a service that acts like the __dbg_service() in C.
     # Connect it to the ram/image and the 'right' pipe.
