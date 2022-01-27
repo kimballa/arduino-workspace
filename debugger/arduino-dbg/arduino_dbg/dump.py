@@ -114,13 +114,14 @@ def capture_dump(debugger, dump_filename):
 def load_dump(filename, print_q, config=None, history_change_hook=None):
     """
     Load a dump file and initialize a debugger instance around it.
-    Returns a pair containing (new_debugger, hosted_debug_service).
 
     @param filename the dump file to load.
     @param print_q the queue to connect the new Debugger to stdout/ConsolePrinter.
     @param config optional debugger config to override defaults & saved cfg file settings.
         If non-None, also prevents Debugger from persisting config changes via `set` kwd.
     @param history_change_hook a callback fn to install in the new Debugger for history filename.
+
+    @return a pair containing (new_debugger, hosted_debug_service).
     """
 
     # Load the data out of the file...

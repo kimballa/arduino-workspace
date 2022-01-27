@@ -735,7 +735,6 @@ class Debugger(object):
                 self.verboseprint("Warning: empty debug info in program binary.")
             if self._dwarf_info:
                 self._debug_info_types.parseTypeInfo(self._dwarf_info)
-                # TODO(aaron): Link the parsed .debug_info / type information to our symbol table.
 
                 # Link .debug_frame unwind info to symbols:
                 for cfi_e in self._dwarf_info.CFI_entries():

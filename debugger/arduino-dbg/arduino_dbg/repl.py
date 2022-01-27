@@ -1882,8 +1882,8 @@ class Repl(object):
 
         Dumps the state of the connected device to a file for offline debugging.
 
-        Later, you can load the associated dump file with `load <filename>` or specify
-        this filename as a command-line argument to a later debugging session.
+        Later, you can load the associated dump file with `load <filename>` or start a
+        later debugging session with it directly via `arduino-dbg --dump <filename`.
         """
         if len(argv) == 0:
             print("Error: Missing filename")
