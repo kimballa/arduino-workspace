@@ -380,12 +380,25 @@ def get_stack_autoskip_count(debugger):
 
 def stack_frame_size_for_method(debugger, pc, method_sym):
     """
-        Given a program counter (PC) somewhere within the body of `method_sym`, determine
+        Given a program counter ($PC) somewhere within the body of `method_sym`, determine
         the size of the current stack frame at that point and return it.
 
         i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
         filled by the method (x+1..x+4) and the (2 byte AVR) return address is at
         x+5..x+6.
+
+        This method uses prologue analysis to determine the size of the stack frame: by
+        analyzing the disassembly of the method containing the indicated $PC, we establish
+        the size of the stack frame in question.
+
+        NOTE: While the opcodes to analyze are parameterized in avr_common.conf, the pattern
+        recognition state machine implemented here is AVR-specific.
+
+        TODO(aaron): For architectures with a frame pointer (e.g. the ARM ABI), use frame
+        pointer walking.
+
+        TODO(aaron): When .debug_frame is available, implement CFA record analysis-based
+        approach.
     """
 
     if method_sym is None:
