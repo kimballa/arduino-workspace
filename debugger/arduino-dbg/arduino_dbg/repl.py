@@ -1271,7 +1271,7 @@ class Repl(object):
                 v = self._debugger.get_conf(k)
                 self._debugger.msg_q(MsgLevel.INFO, "%s = %s" % (k, v))
             except KeyError as e:
-                self._debugger.msg_q(MsgLevel.INFO, str(e))
+                self._debugger.msg_q(MsgLevel.ERR, e.args[0])
         else:
             ### Received key and value (`set k v` or `set k=v`); update the config ###
             if len(argv) == 1 and len(argv[0].split("=", 1)) == 2:
@@ -1307,7 +1307,7 @@ class Repl(object):
             try:
                 self._debugger.set_conf(k, v)
             except KeyError as e:
-                self._debugger.msg_q(MsgLevel.INFO, str(e))
+                self._debugger.msg_q(MsgLevel.ERR, e.args[0])
 
 
     @Command(keywords=['stack'])

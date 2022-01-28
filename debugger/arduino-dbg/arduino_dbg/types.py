@@ -213,14 +213,14 @@ class CompilationUnitNamespace(object):
         if name and not self._named_entries.get(name):
             self._named_entries[name] = typ
 
-        if addr:
-            try:
-                self._addr_entries[addr]
-                # Error: if we found an entry, we're trying to multiply-define it.
-                raise Exception(f"Already defined entry at addr {addr:x}")
-            except KeyError:
-                # Typical case: haven't yet bound this addr to an entry. Do so here.
-                self._addr_entries[addr] = typ
+        if not addr:
+            return
+        elif addr in self._addr_entries:
+            # Error: if we found an entry, we're trying to multiply-define it.
+            raise Exception(f"Already defined entry at addr {addr:x}")
+        else:
+            # Typical case: haven't yet bound this addr to an entry. Do so here.
+            self._addr_entries[addr] = typ
 
     def entry_by_name(self, name):
         return self._named_entries.get(name) or None
@@ -321,12 +321,10 @@ class DieBase(object):
 
             origin_die = None
             if show_origin:
-                try:
+                if '_origin' in self.__dict__:
                     origin_elem = self.__dict__['_origin']
                     if origin_elem and origin_elem != self and origin_elem.die is not None:
                         origin_die = origin_elem.die
-                except KeyError:
-                    pass # No origin available.
 
             return '\n'.join(DieBase.__die_to_str_inner(self.die, recursive, origin_die, typ))
 
@@ -1490,7 +1488,7 @@ class ParsedDebugInfo(object):
         @return the enclosing scopes, sorted from widest to tightest.
         """
         out = []
-        used_set = {}
+        used_set = set()
 
         pc_ranges = SortedList()
 
@@ -1502,24 +1500,20 @@ class ParsedDebugInfo(object):
 
                 # If include_globals is true, then include the CUNS itself as a containing scope..
                 if include_global:
-                    out[cuns] = True
+                    out.append(cuns)
 
                 # Don't keep searching.
                 break
 
 
         for pcr in pc_ranges:
-            if pcr.variable_scope:
-                try:
-                    used_set[pcr.variable_scope]
-                    # We *have* seen this variable scope already; ignore it.
-                except KeyError:
-                    # We have not yet seen this variable scope. Add to output.
-                    out.append(pcr.variable_scope)
+            if pcr.variable_scope and pcr.variable_scope not in used_set:
+                # We have not yet seen this variable scope. Add to output.
+                out.append(pcr.variable_scope)
 
-                    # Save variable scopes as dict keys to get the unique set,
-                    # as a lexical scope's variable_scope may just point to the enclosing method.
-                    used_set[pcr.variable_scope] = True
+                # Save variable scopes as dict keys to get the unique set,
+                # as a lexical scope's variable_scope may just point to the enclosing method.
+                used_set.add(pcr.variable_scope)
 
         if include_global:
             # if include_globals, include the GlobalScope object too.
@@ -1604,10 +1598,10 @@ class ParsedDebugInfo(object):
             # This attr value is offset relative to the compile unit, but it refers
             # to elements of our address-oriented lookup table which is global across
             # all addresses/offsets within the .dwarf_info.
-            try:
-                addr = die.attributes['DW_AT_' + param].value + cu_offset
-            except KeyError:
+            if ('DW_AT_' + param) not in die.attributes:
                 return None # No 'type' field for this DIE.
+
+            addr = die.attributes['DW_AT_' + param].value + cu_offset
 
             if addr == die.offset:
                 # Struct/class can refer to their own addr as containing_type. Do nothing.
@@ -1651,11 +1645,7 @@ class ParsedDebugInfo(object):
             """
                 Return true if DIE has attribute 'name'.
             """
-            try:
-                die.attributes['DW_AT_' + name]
-                return True
-            except KeyError:
-                return False
+            return ('DW_AT_' + name) in die.attributes
 
 
         def _get_locations(attr_name='location'):

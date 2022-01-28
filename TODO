@@ -9,11 +9,6 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  * Search for uses of `KeyError` or `somedict.get(somekey) is not None`,
-    and change to use format `somekey in somedict`
-
-  * types.py needs to uniquify items as it adds them to a list in various search fns over CUNS'.
-    Use `set()` instead of the hacky thing being done with dicts.
 
   --------
 
