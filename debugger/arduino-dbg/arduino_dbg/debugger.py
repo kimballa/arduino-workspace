@@ -219,7 +219,7 @@ class Debugger(object):
             try:
                 self._elf_file_handle.close()
             except e:
-                self._print_q.put((f'Error while closing ELF file: {e}', MsgLevel.WARN))
+                self.msg_q(MsgLevel.WARN, f'Error while closing ELF file: {e}')
 
             self._elf_file_handle = None
 
@@ -233,6 +233,24 @@ class Debugger(object):
         self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
         self._cached_frames = None
 
+    def msg_q(self, color, *args):
+        """
+        Enqueue a msg for printing to the console. Adds the stringified message and color/priority
+        level to the print queue.
+
+        @param color either a term color string (term.COLOR_BOLD) or MsgLevel enum
+        @param args a set of arguments to stringify and concatenate.
+        """
+        def _str_fn(x):
+            if isinstance(x, str):
+                return x
+            else:
+                return repr(x)
+
+        msg_str = "".join(list(map(_str_fn, args)))
+        self._print_q.put((msg_str, color))
+
+    
     def is_debug_info_loaded(self):
         """ Return True if we successfully loaded debug info from an ELF file. """
         return self._loaded_debug_info
@@ -261,7 +279,7 @@ class Debugger(object):
         """
         if self._conn is None:
             # Nothing to work with here.
-            self._print_q.put((f"No connection to reconnect", MsgLevel.ERR))
+            self.msg_q(MsgLevel.ERR, "No connection to reconnect")
             return False
 
         if self._listen_thread and self._listen_thread.ident != threading.get_ident():
@@ -274,7 +292,7 @@ class Debugger(object):
         max_retries = self._get_max_retries()
         for i in range(0, max_retries):
             try:
-                self._print_q.put((f"Reconnecting... (Attempt {i+1} of {max_retries})", MsgLevel.INFO))
+                self.msg_q(MsgLevel.INFO, f"Reconnecting... (Attempt {i+1} of {max_retries})")
                 if i == 0:
                     # Start reconnection process by waiting generously for USB-serial to be detected by OS.
                     time.sleep(3)
@@ -293,7 +311,7 @@ class Debugger(object):
 
         # We have tried the maximum number of tries we're allowed. Completely give up.
         self._alive = False # Make sure nothing's lingering around.
-        self._print_q.put((f"Could not reestablish connection", MsgLevel.ERR))
+        self.msg_q(MsgLevel.ERR, "Could not reestablish connection")
         return False # Couldn't make it work.
 
 
@@ -302,10 +320,10 @@ class Debugger(object):
             Link to the provided connection.
         """
         if not connection:
-            self._print_q.put(("No serial port specified; cannot connect to device to debug.", MsgLevel.WARN))
-            self._print_q.put((
+            self.msg_q(MsgLevel.WARN, "No serial port specified; cannot connect to device to debug.")
+            self.msg_q(MsgLevel.INFO,
                 "Use `open </dev/ttyname>` to connect to a serial port, or `load <filename>` " +
-                "to load a dump file.", MsgLevel.INFO))
+                "to load a dump file.")
             return # Nothing to connect to.
 
         if self._conn:
@@ -319,7 +337,7 @@ class Debugger(object):
         """
         Set up internal listener thread & associated state after connection is established.
         """
-        self._print_q.put((f"Opening connection to {self._conn}...", MsgLevel.INFO))
+        self.msg_q(MsgLevel.INFO, f"Opening connection to {self._conn}...")
         self._recv_q = queue.Queue(maxsize=16) # Data from serial conn for debug internal use.
         self._send_q = queue.Queue(maxsize=1) # Data to send out on serial conn.
         self._alive = True
@@ -330,7 +348,7 @@ class Debugger(object):
             name='Debugger serial listener')
         self._listen_thread.start()
         if self.is_open():
-            self._print_q.put(("Connected.", MsgLevel.SUCCESS))
+            self.msg_q(MsgLevel.SUCCESS, "Connected.")
 
     def _close_serial(self):
         """
@@ -406,7 +424,8 @@ class Debugger(object):
             # If we have a config file to load, load it -- unless given a force_config,
             # in which case we just stick wtih that.
             config_key = 'config'
-            new_conf = serialize.load_config_file(_LOCAL_CONF_FILENAME, config_key, defaults)
+            new_conf = serialize.load_config_file(self._print_q, _LOCAL_CONF_FILENAME,
+                config_key, defaults)
         else:
             new_conf = defaults
 
@@ -493,10 +512,8 @@ class Debugger(object):
             new_int_size = self.get_arch_conf("int_size")
             new_addr_size = self.get_arch_conf("ret_addr_size")
             if new_int_size != old_int_size or new_addr_size != old_addr_size:
-                self._print_q.put((
-                    f'Arch changed widths: int={new_int_size}, ptr={new_addr_size}. Reloading ELF...',
-                    MsgLevel.WARN))
-                self._print_q.join()
+                self.msg_q(MsgLevel.WARN,
+                    f'Arch changed widths: int={new_int_size}, ptr={new_addr_size}. Reloading ELF...')
                 self._try_read_elf()
 
 
@@ -565,9 +582,7 @@ class Debugger(object):
 
                 next_ctrl = None
 
-            self._print_q.put((s, MsgLevel.DEBUG))
-            self._print_q.join() # Process DEBUG-level messages synchronously, so we can see
-                                 # them in proper serialized order w/ the output of the repl.
+            self.msg_q(MsgLevel.DEBUG, s)
 
         return _verbose_print_all
 
@@ -678,14 +693,14 @@ class Debugger(object):
         try:
             self._read_elf()
         except Exception as e:
-            self._print_q.put((f'Error while reading ELF file: {e}.', MsgLevel.ERR))
-            self._print_q.put((f'Could not load symbols or type information.', MsgLevel.ERR))
+            self.msg_q(MsgLevel.ERR, f'Error while reading ELF file: {e}.')
+            self.msg_q(MsgLevel.ERR, f'Could not load symbols or type information.')
             if self.get_conf("dbg.verbose"):
                 # Also print stack trace details.
                 tb_lines = traceback.extract_tb(e.__traceback__)
                 self.verboseprint("".join(traceback.format_list(tb_lines)))
             else:
-                self._print_q.put(("For stack trace info, `set dbg.verbose True`", MsgLevel.INFO))
+                self.msg_q(MsgLevel.INFO, "For stack trace info, `set dbg.verbose True`")
 
             self._init_clear_elf_state() # Reset ELF info back to 'none'.
 
@@ -696,8 +711,8 @@ class Debugger(object):
         start_time = time.time()
 
         if self.elf_name is None:
-            self._print_q.put(("No ELF file provided; cannot load symbols.", MsgLevel.WARN))
-            self._print_q.put(("Use `read <filename.elf>` to load a program image.", MsgLevel.INFO))
+            self.msg_q(MsgLevel.WARN, "No ELF file provided; cannot load symbols.")
+            self.msg_q(MsgLevel.INFO, "Use `read <filename.elf>` to load a program image.")
             return
 
         # Clear any existing ELF-populated state.
@@ -706,7 +721,7 @@ class Debugger(object):
         # Now we're clear to load the new ELF.
         self._elf_file_handle = open(self.elf_name, 'rb')
         self.elf = ELFFile(self._elf_file_handle)
-        self._print_q.put((f"Loading image and symbols from {self.elf_name}", MsgLevel.INFO))
+        self.msg_q(MsgLevel.INFO, f"Loading image and symbols from {self.elf_name}")
 
         for elf_sect in self.elf.iter_sections():
             section = {}
@@ -761,16 +776,15 @@ class Debugger(object):
                     else:
                         # We have a CFI that claims to start at this $PC, but no method
                         # claims this address.
-                        self._print_q.put(
-                            (f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}",
-                            MsgLevel.WARN))
+                        self.msg_q(MsgLevel.WARN,
+                            f"Warning: No method for CFI @ $PC={table[0]['pc']:04x}")
 
                     #for row in cfi_e.get_decoded().table:
                     #    row2 = row.copy()
                     #    pc = row2['pc']
                     #    del row2['pc']
-                    #    print(f'PC: {pc:04x} {row2}')
-                    #print("\n\n")
+                    #    self.msg_q(MsgLevel.DEBUG, f'PC: {pc:04x} {row2}')
+                    #self.msg_q(MsgLevel.DEBUG, "\n\n")
 
         else:
             self.verboseprint("Warning: no debug info in program binary.")
@@ -937,7 +951,7 @@ class Debugger(object):
     def is_open(self):
         return self._conn is not None and self._conn.is_open()
 
-    QUEUE_TIMEOUT = 0.250 # wait up to 250ms to submit new data to a queue
+    QUEUE_TIMEOUT = 0.100 # wait up to 100ms to submit new data to a queue
 
     RESULT_SILENT = 0
     RESULT_ONELINE = 1
@@ -1026,7 +1040,7 @@ class Debugger(object):
             # Nothing further to process in this thread; no response.
             pass
         else:
-            self._print_q.put((f'Error: unkonwn response_type {response_type}', MsgLevel.ERR))
+            self.msg_q(MsgLevel.ERR, f'Error: unkonwn response_type {response_type}')
 
     def __flush_recv_q(self):
         """
@@ -1157,7 +1171,7 @@ class Debugger(object):
             self._disconnect_err = True
 
             try:
-                self._print_q.put(("Debugger connection unexpectedly closed", MsgLevel.ERR))
+                self.msg_q(MsgLevel.ERR, "Debugger connection unexpectedly closed")
                 self.verboseprint(str(e))
                 self._conn.close()
             except:
@@ -1211,7 +1225,7 @@ class Debugger(object):
         # Shut down the thread cleanly from our side.
         self._alive = False
         self._disconnect_err = True
-        self._print_q.put(("Timeout waiting for response from device.", MsgLevel.ERR))
+        self.msg_q(MsgLevel.ERR, "Timeout waiting for response from device.")
         raise DisconnectedException()
 
 
@@ -1284,11 +1298,11 @@ class Debugger(object):
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
         if break_ok == protocol.DBG_PAUSE_MSG:
             self._process_state = ProcessState.BREAK
-            self._print_q.put(("Paused.", MsgLevel.INFO))
+            self.msg_q(MsgLevel.INFO, "Paused.")
             return True
         else:
             self._process_state = ProcessState.UNKNOWN
-            self._print_q.put(("Could not interrupt sketch.", MsgLevel.WARN))
+            self.msg_q(MsgLevel.WARN, "Could not interrupt sketch.")
             return False
 
 
@@ -1297,11 +1311,11 @@ class Debugger(object):
         continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, Debugger.RESULT_ONELINE)
         if continue_ok == "Continuing":
             self._process_state = ProcessState.RUNNING
-            self._print_q.put(("Continuing...", MsgLevel.INFO))
+            self.msg_q(MsgLevel.INFO, "Continuing...")
         else:
             self._process_state = ProcessState.UNKNOWN
-            self._print_q.put(("Could not continue sketch.", MsgLevel.WARN))
-            self._print_q.put(("Received unexpected response [%s]" % continue_ok, MsgLevel.WARN))
+            self.msg_q(MsgLevel.WARN, "Could not continue sketch.")
+            self.msg_q(MsgLevel.WARN, "Received unexpected response [%s]" % continue_ok)
 
 
     def reset_sketch(self):
@@ -1314,9 +1328,8 @@ class Debugger(object):
             Get snapshot of system registers.
         """
         if len(self._arch) == 0:
-            self._print_q.put((
-                "Warning: No architecture specified; cannot assign specific registers",
-                MsgLevel.WARN))
+            self.msg_q(MsgLevel.WARN,
+                "Warning: No architecture specified; cannot assign specific registers")
             register_map = [ "general_regs" ]
             num_general_regs = -1
         else:
@@ -1359,8 +1372,7 @@ class Debugger(object):
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
         if size is None or size < 1:
-            self._print_q.put((f"Warning: cannot set memory poke size = {size}; using 1",
-                MsgLevel.WARN))
+            self.msg_q(MsgLevel.WARN, f"Warning: cannot set memory poke size = {size}; using 1")
             size = 1
 
         self.send_cmd([protocol.DBG_OP_POKE, size, addr, value], Debugger.RESULT_SILENT)
@@ -1376,8 +1388,7 @@ class Debugger(object):
             addr = addr & self._arch["DATA_ADDR_MASK"]
 
         if size is None or size < 1:
-            self._print_q.put((f"Warning: cannot set memory fetch size = {size}; using 1",
-                MsgLevel.WARN))
+            self.msg_q(MsgLevel.WARN, f"Warning: cannot set memory fetch size = {size}; using 1")
             size = 1
 
         result = self.send_cmd([protocol.DBG_OP_RAMADDR, size, addr], Debugger.RESULT_ONELINE)
@@ -1444,9 +1455,8 @@ class Debugger(object):
         if len(lines) == 0:
             return None # Debugger server does not have memstats capability compiled in.
         elif len(lines) != len(mem_report_fmt):
-            self._print_q.put((
-                "Warning: got response inconsistent with expected report format for arch.",
-                MsgLevel.WARN))
+            self.msg_q(MsgLevel.WARN,
+                "Warning: got response inconsistent with expected report format for arch.")
             return None # Debugger server didn't respond with the right mem_list_fmt..?!
 
         mem_map.update(list(zip(mem_report_fmt, lines)))

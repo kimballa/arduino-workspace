@@ -489,7 +489,7 @@ class Memory(object):
                 offset += access_size
                 if offset == self.MAX_NULL_TERM_STRING_LEN:
                     # Don't run on in memory forever. Add an ellipse and call it a day.
-                    outlist.extend(3 * [ord('.')])
+                    outlist.extend(list(map(ord, " [...]")))
                     break
         else:
             # If access_size == DWARFExprMachine.ALL (-1), don't actually use it as offset.

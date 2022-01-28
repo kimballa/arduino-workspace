@@ -5,6 +5,7 @@
 import elftools.dwarf.callframe as callframe
 
 import arduino_dbg.binutils as binutils
+from arduino_dbg.term import MsgLevel
 
 _debugger_methods = [
   "__vector_17",     # timer interrupt
@@ -32,7 +33,7 @@ class CallFrame(object):
 
         func_sym = debugger.function_sym_by_pc(addr)
         if func_sym is None:
-            print(f"Warning: could not resolve $PC={addr:#04x} to method symbol")
+            debugger.msg_q(MsgLevel.WARN, f"Warning: could not resolve $PC={addr:#04x} to method symbol")
             return
         else:
             self.name = func_sym.name
@@ -119,7 +120,8 @@ class CallFrame(object):
         ret_addr_size = self._debugger.get_arch_conf('ret_addr_size') # width of return site addr on stack
 
         if not self.sym or not self.sym.frame_info:
-            print(f"Warning: Could not unwind stack frame for method {self.name}.")
+            self._debugger.msg_q(MsgLevel.WARN,
+                f"Warning: Could not unwind stack frame for method {self.name}.")
             return None
 
         pc = regs_in['PC']
@@ -155,7 +157,8 @@ class CallFrame(object):
         cfa_reg = stack_unwind_registers[cfa_rule.reg] # cfa gives us an index into the unwind
                                                        # reg names. Get the mapped-to reg name.
         if cfa_reg is None:
-            print("Error: Unknown register mapping for r{cfa_reg} in CFA rule")
+            self._debugger.msg_q(MsgLevel.ERROR,
+                "Error: Unknown register mapping for r{cfa_reg} in CFA rule")
             return None
 
         cfa_base = regs_in[cfa_reg] # Read the mapped register to get the baseline for CFA
@@ -212,13 +215,16 @@ class CallFrame(object):
                 self._debugger.verboseprint(
                     f'{reg_name}    <- {reg_in_name} [= {regs_out[reg_name]:x} ]')
             elif rule.type == callframe.RegisterRule.EXPRESSION:
-                print("Error: Cannot process EXPRESSION register rule")
+                self._debugger.msg_q(MsgLevel.ERR,
+                    "Error: Cannot process EXPRESSION register rule")
                 return None
             elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
-                print("Error: Cannot process VAL_EXPRESSION register rule")
+                self._debugger.msg_q(MsgLevel.ERR,
+                    "Error: Cannot process VAL_EXPRESSION register rule")
                 return None
             elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
-                print("Error: Cannot process architecture-specific register rule")
+                self._debugger.msg_q(MsgLevel.ERR,
+                    "Error: Cannot process architecture-specific register rule")
                 return None
 
         regs_out['SP'] = cfa_addr # As established earlier.
@@ -296,7 +302,8 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
                         # calculate the CFA relative to the register in question.
                         rule.offset += 1
                     elif rule.expr is not None:
-                        print(f"Warning: CFA Rule at PC {row_pc:04x} has DWARF expr; unsupported")
+                        debugger.msg_q(MsgLevel.WARN,
+                            f"Warning: CFA Rule at PC {row_pc:04x} has DWARF expr; unsupported")
                 elif isinstance(rule, callframe.RegisterRule):
                     if rule.type == callframe.RegisterRule.UNDEFINED:
                         pass # No modification needed.
@@ -310,20 +317,26 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
                     elif rule.type == callframe.RegisterRule.VAL_OFFSET:
                         # Don't have an example of one of these, so I don't know if we need to
                         # adjust, or in which direction.
-                        print(f"Warning: Got a VAL_OFFSET for reg {reg}; does it need an offset?!??")
+                        debugger.msg_q(MsgLevel.WARN,
+                            f"Warning: Got a VAL_OFFSET for reg {reg}; does it need an offset?!??")
                     elif rule.type == callframe.RegisterRule.REGISTER:
                         pass # No modification needed.
                     elif rule.type == callframe.RegisterRule.EXPRESSION:
-                        print(f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type EXPR')
+                        debugger.msg_q(MsgLevel.WARN,
+                            f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type EXPR')
                     elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
-                        print(f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type VAL_EXPR')
+                        debugger.msg_q(MsgLevel.WARN,
+                            f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type VAL_EXPR')
                     elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
-                        print(f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type ARCH')
+                        debugger.msg_q(MsgLevel.WARN,
+                            f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type ARCH')
                     else:
-                        print(f'Warning: Do not know how to process reg rule type={rule.type}')
+                        debugger.msg_q(MsgLevel.WARN,
+                            f'Warning: Do not know how to process reg rule type={rule.type}')
                 else:
                     # No idea how to process this...
-                    print(f"Warning: Got rule for register {reg} of instance {rule.__class__}")
+                    debugger.msg_q(MsgLevel.WARN,
+                        f"Warning: Got rule for register {reg} of instance {rule.__class__}")
 
                 seen_rules[rule] = True # Mark rule as seen so we don't double-process.
         else:
@@ -376,7 +389,8 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
     """
 
     if method_sym is None:
-        print(f"Error: No function symbol for method: {method_name}; method frame size = ???")
+        debugger.msg_q(MsgLevel.ERR,
+            f"Error: No function symbol for method: {method_name}; method frame size = ???")
         return None
 
     # Pull opcode details from architecture configuration.

@@ -18,6 +18,7 @@ import arduino_dbg.eval_location as el
 import arduino_dbg.io as io
 import arduino_dbg.protocol as protocol
 import arduino_dbg.term as term
+from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
 
 PROMPT = term.PROMPT
@@ -464,10 +465,10 @@ class Repl(object):
             try:
                 readline.append_history_file(1, self._history_filename)
             except e:
-                term.write(f'Error writing to history file: {e}. Disabling history file recording.',
-                    term.WARN)
-                term.write(f'You can try a new file with: set dbg.historyfile = <filename>',
-                    term.WARN)
+                self._debugger.msg_q(MsgLevel.WARN,
+                    f'Error writing to history file: {e}. Disabling history file recording.')
+                self._debugger.msg_q(MsgLevel.WARN,
+                    f'You can try a new file with: set dbg.historyfile = <filename>')
                 self._history_filename = None
 
     def _format_local(self, frame, frameRegs, var_or_formal_lst, is_formal):
@@ -669,7 +670,7 @@ class Repl(object):
         within the method scope at the current $PC.
         """
         if len(argv) == 0:
-            print("Syntax: locals <frame>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: locals <frame>")
             return
 
         frameId = int(argv[0])
@@ -677,12 +678,12 @@ class Repl(object):
         frameScopes = self._debugger.get_frame_vars(frameId)
         frameRegs = self._debugger.get_frame_regs(frameId)
         if frameScopes is None:
-            print(f'No such stack frame {frameId}')
+            self._debugger.msg_q(MsgLevel.INFO, f'No such stack frame {frameId}')
             return
 
         nested_methods = self.__get_scoped_locals(frameScopes)
         if nested_methods is None:
-            print(f'Empty stack frame?')
+            self._debugger.msg_q(MsgLevel.INFO, f'Empty stack frame?')
             return
 
         # nested_methods now contains a linked list of formal/local lists and corresponding
@@ -699,7 +700,8 @@ class Repl(object):
                 inl_str = 'Inlined method'
             else:
                 inl_str = 'Method'
-            print(f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
+            self._debugger.msg_q(MsgLevel.INFO,
+                f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
             die = scope.get_die()
             if die is not None:
                 self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x',
@@ -708,24 +710,24 @@ class Repl(object):
             formals = cur['formals']
             if len(formals) > 0:
                 printed_formals = True
-                print(f"{nest_str}  Formals:")
+                self._debugger.msg_q(MsgLevel.INFO, f"{nest_str}  Formals:")
                 for formal_lst in formals:
                     # formal_lst contains a list of FormalArg entries w/ the same name.
                     formal_lst.reverse() # re-sort so its narrowest scope def first.
                     local_str = self._format_local(frame, frameRegs, formal_lst, is_formal=True)
-                    print(f'{nest_str}  {local_str}')
+                    self._debugger.msg_q(MsgLevel.INFO, f'{nest_str}  {local_str}')
 
             locals_list = cur['locals']
             if len(locals_list) > 0:
                 if printed_formals:
-                    print('')
+                    self._debugger.msg_q(MsgLevel.INFO, '')
 
-                print(f"{nest_str}  Locals:")
+                self._debugger.msg_q(MsgLevel.INFO, f"{nest_str}  Locals:")
                 for local_var_lst in locals_list:
                     # local_var_lst contains a list of VariableInfo entries w/ the same name
                     local_var_lst.reverse() # re-sort so its narrowest scope def first.
                     local_str = self._format_local(frame, frameRegs, local_var_lst, is_formal=False)
-                    print(f'{nest_str}  {local_str}')
+                    self._debugger.msg_q(MsgLevel.INFO, f'{nest_str}  {local_str}')
 
             cur = cur['next'] # advance linked list ptr.
             nest += 2
@@ -748,7 +750,7 @@ class Repl(object):
         """
         frames = self._debugger.get_backtrace()
         for i in range(0, len(frames)):
-            print(f"{i}. {frames[i]}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{i}. {frames[i]}")
 
 
     @Command(keywords=['break'])
@@ -777,7 +779,7 @@ class Repl(object):
         Purges information from any previously-loaded ELF file.
         """
         if len(argv) == 0:
-            print("Syntax: file <filename.elf>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: file <filename.elf>")
             return
 
         filename = argv[0]
@@ -794,7 +796,7 @@ class Repl(object):
         If baud rate is not specified, attempts to use 57600.
         """
         if len(argv) == 0:
-            print("Syntax: open </dev/ttyname> [<baud>]")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: open </dev/ttyname> [<baud>]")
             return
 
         port = argv[0]
@@ -828,7 +830,7 @@ class Repl(object):
         """
 
         if len(argv) == 0:
-            print("Syntax: flash [<size>] <addr (hex)>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: flash [<size>] <addr (hex)>")
             return
         elif len(argv) == 1:
             size = 1
@@ -843,13 +845,13 @@ class Repl(object):
             size = 4
 
         v = self._debugger.get_flash(addr, size)
-        print(f"<{v}>")
+        self._debugger.msg_q(MsgLevel.INFO, f"<{v}>")
         if size == 1:
-            print(f"{v:02x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:02x}")
         elif size == 2:
-            print(f"{v:04x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:04x}")
         elif size == 4:
-            print(f"{v:08x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:08x}")
 
     @Command(keywords=['gpio'], completions=[Completions.NONE, Completions.BINARY])
     def _gpio(self, argv):
@@ -862,43 +864,45 @@ class Repl(object):
         """
 
         if len(argv) == 0:
-            print("Syntax: gpio <pinId> [<value>]")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: gpio <pinId> [<value>]")
             return
         elif len(argv) == 1:
             try:
                 pin = int(argv[0])
             except ValueError:
-                print(f"Error: could not parse pin id {argv[0]}")
+                self._debugger.msg_q(MsgLevel.ERR, f"Error: could not parse pin id {argv[0]}")
                 return
 
             num_pins = self._debugger.get_platform_conf("gpio_pins")
             if pin < 0 or pin >= num_pins:
-                print(f"Error: available gpio pins are between [0, {num_pins}).")
+                self._debugger.msg_q(MsgLevel.ERR,
+                    f"Error: available gpio pins are between [0, {num_pins}).")
 
             v = self._debugger.get_gpio_value(pin)
             if v is not None:
-                print(v)
+                self._debugger.msg_q(MsgLevel.INFO, v)
         else:
             # 2+ args => set the pin value.
             try:
                 pin = int(argv[0])
             except ValueError:
-                print(f"Error: could not parse pin id {argv[0]}")
+                self._debugger.msg_q(MsgLevel.ERR, f"Error: could not parse pin id {argv[0]}")
                 return
 
             try:
                 val = int(argv[1])
             except ValueError:
-                print(f"Error: could not parse value ({argv[1]})")
+                self._debugger.msg_q(MsgLevel.ERR, f"Error: could not parse value ({argv[1]})")
                 return
 
             if val != 0 and val != 1:
-                print("Error: value must be 0 or 1")
+                self._debugger.msg_q(MsgLevel.ERR, "Error: value must be 0 or 1")
                 return
 
             num_pins = self._debugger.get_platform_conf("gpio_pins")
             if pin < 0 or pin >= num_pins:
-                print(f"Error: available gpio pins are between [0, {num_pins}).")
+                self._debugger.msg_q(MsgLevel.ERR,
+                    f"Error: available gpio pins are between [0, {num_pins}).")
 
             self._debugger.set_gpio_value(pin, val)
 
@@ -921,11 +925,13 @@ class Repl(object):
         global_size = mem_map["HeapStart"] - ram_start
         free_ram = total_ram - stack_size - heap_size - global_size
 
-        print(f'   Total RAM:  {total_ram:>4}  RAMEND={ram_end:04x} .. RAMSTART={ram_start:04x}')
-        print(f'  Stack size:  {stack_size:>4}      SP={mem_map["SP"]:04x}')
-        print(f'      (free):  {free_ram:>4}')
-        print(f'   Heap size:  {heap_size:>4}')
-        print(f'     Globals:  {global_size:>4} (.data + .bss)')
+        self._debugger.msg_q(MsgLevel.INFO,
+            f'   Total RAM:  {total_ram:>4}  RAMEND={ram_end:04x} .. RAMSTART={ram_start:04x}')
+        self._debugger.msg_q(MsgLevel.INFO,
+            f'  Stack size:  {stack_size:>4}      SP={mem_map["SP"]:04x}')
+        self._debugger.msg_q(MsgLevel.INFO, f'      (free):  {free_ram:>4}')
+        self._debugger.msg_q(MsgLevel.INFO, f'   Heap size:  {heap_size:>4}')
+        self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>4} (.data + .bss)')
 
 
     @Command(keywords=['mem', 'x', '\\m'], completions=[Completions.WORD_SIZE])
@@ -938,7 +944,7 @@ class Repl(object):
         size must be 1, 2, or 4.
         """
         if len(argv) == 0:
-            print("Syntax: mem [<size>] <addr (hex)>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: mem [<size>] <addr (hex)>")
             return
         elif len(argv) == 1:
             size = 1
@@ -954,11 +960,11 @@ class Repl(object):
 
         v = self._debugger.get_sram(addr, size)
         if size == 1:
-            print(f"{v:02x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:02x}")
         elif size == 2:
-            print(f"{v:04x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:04x}")
         elif size == 4:
-            print(f"{v:08x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:08x}")
 
 
     @Command(keywords=['poke'],
@@ -974,7 +980,7 @@ class Repl(object):
         """
         base = 10
         if len(argv) < 2:
-            print("Syntax: poke <addr (hex)> <value> [size=1] [base=10]")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: poke <addr (hex)> <value> [size=1] [base=10]")
             return
         else:
             addr = argv[0]
@@ -989,28 +995,31 @@ class Repl(object):
             try:
                 base = int(argv[3])
             except ValueError:
-                print(f"Warning: could not set base={argv[3]}. Using base 10")
+                self._debugger.msg_q(MsgLevel.WARN,
+                    f"Warning: could not set base={argv[3]}. Using base 10")
                 base = 10
 
         # Convert argument to integer. (TODO(aaron): Handle floating point some day?)
         try:
             val = int(val, base=base)
         except ValueError:
-            print(f"Error: Cannot parse integer value {val} in base {base}")
+            self._debugger.msg_q(MsgLevel.ERR,
+                f"Error: Cannot parse integer value {val} in base {base}")
             return
 
         # Resolve memory address
         try:
             addr = int(addr, base=16)
         except ValueError:
-            print(f"Error: Cannot parse memory address {addr} in base 16")
+            self._debugger.msg_q(MsgLevel.ERR,
+                f"Error: Cannot parse memory address {addr} in base 16")
             return
 
         # Resolve size
         try:
             size = int(size)
         except ValueError:
-            print(f"Error: Cannot parse memory size {size}")
+            self._debugger.msg_q(MsgLevel.ERR, f"Error: Cannot parse memory size {size}")
 
         if size < 1:
             size = 1
@@ -1020,7 +1029,8 @@ class Repl(object):
         data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
         if data_addr_mask and (addr & data_addr_mask) == addr:
             # We're trying to update something in flash.
-            print(f"Error: Cannot write to flash segment at address {addr:x}")
+            self._debugger.msg_q(MsgLevel.ERR,
+                f"Error: Cannot write to flash segment at address {addr:x}")
         else:
             # We're trying to update something in SRAM:
             self._debugger.set_sram(addr, val, size)
@@ -1037,12 +1047,12 @@ class Repl(object):
         See also the 'setv' command to change the value of a symbol in RAM.
         """
         if len(argv) == 0:
-            print("Syntax: print <symbol_name>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: print <symbol_name>")
             return
 
         sym = self._debugger.lookup_sym(argv[0])
         if sym is None:
-            print(f"No symbol found: {argv[0]}")
+            self._debugger.msg_q(MsgLevel.WARN, f"No symbol found: {argv[0]}")
             return
 
         self._last_sym_used = argv[0] # Symbol argument saved as last symbol used.
@@ -1056,7 +1066,7 @@ class Repl(object):
             else:
                 val_type = sym.type_info
             val, flags = mem.access_address(addr, val_type, is_flat_address=True)
-            print(el.format_accessed_val(val, sym.type_info))
+            self._debugger.msg_q(MsgLevel.INFO, el.format_accessed_val(val, sym.type_info))
         else:
             # No type information. Just print raw read as hex-formatted int.
             size = 1 # set default...
@@ -1080,11 +1090,11 @@ class Repl(object):
                 v = self._debugger.get_sram(addr, size)
 
             if size == 1:
-                print(f"0x{v:02x}")
+                self._debugger.msg_q(MsgLevel.INFO, f"0x{v:02x}")
             elif size == 2:
-                print(f"0x{v:04x}")
+                self._debugger.msg_q(MsgLevel.INFO, f"0x{v:04x}")
             elif size == 4:
-                print(f"0x{v:08x}")
+                self._debugger.msg_q(MsgLevel.INFO, f"0x{v:08x}")
 
 
     def __format_registers(self, registers):
@@ -1097,20 +1107,22 @@ class Repl(object):
             self._debugger.get_arch_conf("has_sph")
 
         cur_width = 0
+        out = ''
         for (reg, regval) in registers.items():
             if reg == "SP" and has_sph:
                 # if reg=SP and we have SPH in the arch conf, it's a 16-bit reg; use 04x for regval.
-                print(f"{reg.rjust(4)}:{regval:04x} ", end='')
+                out += f"{reg.rjust(4)}:{regval:04x} "
             else:
                 # normal 8-bit register
-                print(f"{reg.rjust(4)}:{regval:02x}  ", end='')
+                out += f"{reg.rjust(4)}:{regval:02x}  "
 
             cur_width += 9
             if cur_width >= MAX_WIDTH:
                 cur_width = 0
-                print("")
+                self._debugger.msg_q(MsgLevel.INFO, out)
+                out = ''
 
-        print("")
+        self._debugger.msg_q(MsgLevel.INFO, out)
 
     @Command(keywords=['regs'])
     def _regs(self, argv):
@@ -1219,32 +1231,34 @@ class Repl(object):
 
         def _print_kv_pair(k, v):
             in_hex = isinstance(k, str) and k == k.upper() # CAPS keys are printed in hex.
-            print(f"{k} = {_fmt_value(v, in_hex)}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{k} = {_fmt_value(v, in_hex)}")
 
 
         if len(argv) == 0:
             ### No key argument -- display entire configuration ###
-            print("Configurable debugger settings:")
-            print("-------------------------------")
+            self._debugger.msg_q(MsgLevel.INFO, "Configurable debugger settings:")
+            self._debugger.msg_q(MsgLevel.INFO, "-------------------------------")
             for (k, v) in self._debugger.get_full_config():
                 _print_kv_pair(k, v)
 
-            print("")
-            print("Arduino platform configuration:")
-            print("-------------------------------")
+            self._debugger.msg_q(MsgLevel.INFO, "")
+            self._debugger.msg_q(MsgLevel.INFO, "Arduino platform configuration:")
+            self._debugger.msg_q(MsgLevel.INFO, "-------------------------------")
             platform = self._debugger.get_full_platform_config()
             if len(platform) == 0:
-                print("No platform set; configure with 'set arduino.platform ...'.")
+                self._debugger.msg_q(MsgLevel.WARN,
+                    "No platform set; configure with 'set arduino.platform ...'.")
             else:
                 for (k, v) in platform:
                     _print_kv_pair(k, v)
 
-            print("")
-            print("CPU architecture configuration:")
-            print("-------------------------------")
+            self._debugger.msg_q(MsgLevel.INFO, "")
+            self._debugger.msg_q(MsgLevel.INFO, "CPU architecture configuration:")
+            self._debugger.msg_q(MsgLevel.INFO, "-------------------------------")
             arch = self._debugger.get_full_arch_config()
             if len(arch) == 0:
-                print("No architecture set; configure 'set arduino.platform ...' or " +
+                self._debugger.msg_q(MsgLevel.WARN,
+                    "No architecture set; configure 'set arduino.platform ...' or " +
                     "'set arduino.arch ...' directly.")
             else:
                 for (k, v) in arch:
@@ -1255,9 +1269,9 @@ class Repl(object):
             try:
                 k = argv[0]
                 v = self._debugger.get_conf(k)
-                print("%s = %s" % (k, v))
+                self._debugger.msg_q(MsgLevel.INFO, "%s = %s" % (k, v))
             except KeyError as e:
-                print(str(e))
+                self._debugger.msg_q(MsgLevel.INFO, str(e))
         else:
             ### Received key and value (`set k v` or `set k=v`); update the config ###
             if len(argv) == 1 and len(argv[0].split("=", 1)) == 2:
@@ -1293,7 +1307,7 @@ class Repl(object):
             try:
                 self._debugger.set_conf(k, v)
             except KeyError as e:
-                print(str(e))
+                self._debugger.msg_q(MsgLevel.INFO, str(e))
 
 
     @Command(keywords=['stack'])
@@ -1324,13 +1338,13 @@ class Repl(object):
         offset = top - sp - 1
         ramend = self._debugger.get_arch_conf("RAMEND")
         is_at_ramend = addr == ramend
-        print(f"$SP: {sp:#04x}  Top: {top:#04x}   skip: {offset}")
+        self._debugger.msg_q(MsgLevel.INFO, f"$SP: {sp:#04x}  Top: {top:#04x}   skip: {offset}")
         for b in snapshot:
-            print(f'{addr:04x}: {b:02x}')
+            self._debugger.msg_q(MsgLevel.INFO, f'{addr:04x}: {b:02x}')
             addr -= 1
 
         if not is_at_ramend:
-            print(f'Next: stack 16 {length + offset}')
+            self._debugger.msg_q(MsgLevel.INFO, f'Next: stack 16 {length + offset}')
 
 
     @Command(keywords=['stackaddr', 'xs'], completions=[Completions.WORD_SIZE])
@@ -1341,7 +1355,7 @@ class Repl(object):
             Syntax: stackaddr [size] <offset (hex)>
         """
         if len(argv) == 0:
-            print("Syntax: stackaddr [<size>] <offset (hex)>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: stackaddr [<size>] <offset (hex)>")
             return
         elif len(argv) == 1:
             size = 1
@@ -1357,11 +1371,11 @@ class Repl(object):
 
         v = self._debugger.get_stack_sram(offset, size)
         if size == 1:
-            print(f"{v:02x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:02x}")
         elif size == 2:
-            print(f"{v:04x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:04x}")
         elif size == 4:
-            print(f"{v:08x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"{v:08x}")
 
 
     def __get_frame(self, frame_num):
@@ -1385,23 +1399,25 @@ class Repl(object):
         to get a list of available stack frames.
         """
         if len(argv) == 0:
-            print("Syntax: frame <n> -- display memory from n'th stack frame")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: frame <n> -- display memory from n'th stack frame")
             return
         else:
             frame_num = int(argv[0])
 
         frame = self.__get_frame(frame_num)
         if frame is None:
-            print(f"Error: could only identify {len(frames)} stack frames")
+            self._debugger.msg_q(MsgLevel.ERR, f"Error: could only identify {len(frames)} stack frames")
             return
 
         sp = frame.sp
         frame_size = frame.frame_size
         if frame_size < 0:
             frame_size = 16
-            print(f"Warning: could not identify size of stack frame. Defaulting to {frame_size}.")
+            self._debugger.msg_q(MsgLevel.WARN,
+                f"Warning: could not identify size of stack frame. Defaulting to {frame_size}.")
 
-        print(f'Frame {frame_num} at PC {frame.addr:#04x} in method {frame.demangled}')
+        self._debugger.msg_q(MsgLevel.INFO,
+            f'Frame {frame_num} at PC {frame.addr:#04x} in method {frame.demangled}')
 
         ret_addr_size = self._debugger.get_arch_conf("ret_addr_size")
         ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size + 1)
@@ -1410,20 +1426,21 @@ class Repl(object):
             ret_fn = ret_fn_sym.demangled or ret_fn_sym.name
         else:
             ret_fn = '???'
-        print(f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
+        self._debugger.msg_q(MsgLevel.INFO,
+            f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
         for addr in range(sp + frame_size, sp, -1):
             b = self._debugger.get_sram(addr, 1)
-            print(f'{addr:04x}: {b:02x}')
+            self._debugger.msg_q(MsgLevel.INFO, f'{addr:04x}: {b:02x}')
 
         if frame_size == 0:
             addr = sp + frame_size + 1 # Ensure `addr` initialized in case frame_size == 0.
 
-        print(f'{addr-1:04x} <-- $SP')
+        self._debugger.msg_q(MsgLevel.INFO, f'{addr-1:04x} <-- $SP')
 
         registers = self._debugger.get_frame_regs(frame_num)
         if registers:
-            print('\nRegisters:\n')
+            self._debugger.msg_q(MsgLevel.INFO, '\nRegisters:\n')
             self.__format_registers(registers)
 
 
@@ -1439,7 +1456,7 @@ class Repl(object):
         """
 
         if len(argv) == 0:
-            print("Syntax: time {millis|micros}")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: time {millis|micros}")
             return
 
         if argv[0] == "millis":
@@ -1447,7 +1464,7 @@ class Repl(object):
         elif argv[0] == "micros":
             return self._print_time_micros(argv)
         else:
-            print("Syntax: time {millis|micros}")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: time {millis|micros}")
             return
 
 
@@ -1456,7 +1473,8 @@ class Repl(object):
         """
         Print time since device startup (or rollover) in milliseconds.
         """
-        print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
+        self._debugger.msg_q(MsgLevel.INFO,
+            self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
 
 
     @Command(keywords=['tu'], display_help=False)
@@ -1464,7 +1482,8 @@ class Repl(object):
         """
         Print time since device startup (or rollover) in microseconds.
         """
-        print(self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
+        self._debugger.msg_q(MsgLevel.INFO,
+            self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
 
 
     @Command(keywords=['setv', '!'], completions=[Completions.SYM])
@@ -1485,7 +1504,7 @@ class Repl(object):
         base = 10
         hwm = 0 # high-water mark for tokens consumed
         if len(argv) == 0:
-            print("Syntax: setv <symbol_name> [=] <value> [base=10]")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: setv <symbol_name> [=] <value> [base=10]")
             return
         elif len(argv[0].split("=", 1)) == 2:
             # setv sym=val [base]
@@ -1504,20 +1523,21 @@ class Repl(object):
                 hwm = 2
         else:
             # len(argv) = 1 but no equality; just 'setv sym'.
-            print("Syntax: setv <symbol_name> [=] <value> [base]")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: setv <symbol_name> [=] <value> [base]")
             return
 
         if hwm < len(argv):
             try:
                 base = int(argv[hwm])
             except ValueError:
-                print(f"Warning: could not set base={argv[hwm]}. Using base 10")
+                self._debugger.msg_q(MsgLevel.WARN,
+                    f"Warning: could not set base={argv[hwm]}. Using base 10")
                 base = 10
 
 
         sym = self._debugger.lookup_sym(name)
         if sym is None:
-            print(f"No symbol found: {name}")
+            self._debugger.msg_q(MsgLevel.WARN, f"No symbol found: {name}")
             return
 
         self._last_sym_used = name # Symbol argument saved as last symbol used.
@@ -1526,7 +1546,7 @@ class Repl(object):
         try:
             val = int(val, base=base)
         except ValueError:
-            print(f"Error: Cannot parse integer value {val} in base {base}")
+            self._debugger.msg_q(MsgLevel.ERR, f"Error: Cannot parse integer value {val} in base {base}")
             return
 
         # Resolve symbol to memory address
@@ -1545,7 +1565,8 @@ class Repl(object):
         data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
         if data_addr_mask and (addr & data_addr_mask) == addr:
             # We're trying to update something in flash.
-            print(f"Error: Cannot write to flash segment at address {addr:x}")
+            self._debugger.msg_q(MsgLevel.ERR,
+                f"Error: Cannot write to flash segment at address {addr:x}")
         else:
             # We're trying to update something in SRAM:
             self._debugger.set_sram(addr, val, size)
@@ -1587,16 +1608,16 @@ class Repl(object):
         If one of the returned symbols is an exact match for the search, it is flagged with '(**)'.
         """
         if len(argv) == 0:
-            print("Syntax: sym <substring>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: sym <substring>")
             return
 
         # Perform the symbol search and also cache it.
         self._last_sym_search = self._debugger.syms_by_substr(argv[0])
         if len(self._last_sym_search) == 0:
-            print("(No matching symbols)")
+            self._debugger.msg_q(MsgLevel.INFO, "(No matching symbols)")
         elif len(self._last_sym_search) == 1:
             # Found a unique hit.
-            print(self._last_sym_search[0])
+            self._debugger.msg_q(MsgLevel.INFO, self._last_sym_search[0])
             self._last_sym_used = self._last_sym_search[0] # last-used symbol is the unique match.
         else:
             # Multiple results
@@ -1608,7 +1629,7 @@ class Repl(object):
                 else:
                     asterisk = ""
 
-                print(f"#{i}. {asterisk}{this_sym}")
+                self._debugger.msg_q(MsgLevel.INFO, f"#{i}. {asterisk}{this_sym}")
 
 
     @Command(keywords=['syms'])
@@ -1618,11 +1639,11 @@ class Repl(object):
         """
         all_syms = self._debugger.syms_by_substr("")
         if len(all_syms) == 0:
-            print("No symbol information available")
+            self._debugger.msg_q(MsgLevel.INFO, "No symbol information available")
             return
 
         for i in range(0, len(all_syms)):
-            print(f"#{i}. {all_syms[i]}")
+            self._debugger.msg_q(MsgLevel.INFO, f"#{i}. {all_syms[i]}")
 
 
     @Command(keywords=['types'])
@@ -1632,7 +1653,7 @@ class Repl(object):
         """
 
         for (name, typ) in self._debugger.get_debug_info().types():
-            print(typ)
+            self._debugger.msg_q(MsgLevel.INFO, typ)
 
     @Command(keywords=['addr', '.'], completions=[Completions.SYM])
     def _addr_for_sym(self, argv):
@@ -1645,16 +1666,16 @@ class Repl(object):
         After a search with 'sym', you can use #0 (or '$'), #1, #2... to refer to results.
         """
         if len(argv) == 0:
-            print("Syntax: addr <symbol_name>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: addr <symbol_name>")
             return
 
         sym = self._debugger.lookup_sym(argv[0])
         if sym is None:
-            print(f"No symbol found: {argv[0]}")
-            print(f"(Try 'sym {argv[0]}')")
+            self._debugger.msg_q(MsgLevel.WARN, f"No symbol found: {argv[0]}")
+            self._debugger.msg_q(MsgLevel.WARN, f"(Try 'sym {argv[0]}')")
             return
 
-        print(f'{sym.demangled}: {sym.addr:08x} ({sym.size})')
+        self._debugger.msg_q(MsgLevel.INFO, f'{sym.demangled}: {sym.addr:08x} ({sym.size})')
         self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
 
 
@@ -1666,7 +1687,7 @@ class Repl(object):
             Syntax: type <name>
         """
         if len(argv) == 0:
-            print("Syntax: type <name>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: type <name>")
             return
 
         registers = self._debugger.get_registers()
@@ -1677,17 +1698,17 @@ class Repl(object):
             # Try the global symbol table, especially for a mangled symbol name.
             global_sym = self._debugger.lookup_sym(sym)
             if global_sym is not None and global_sym.type_info is not None:
-                print(f'{global_sym.type_info}')
+                self._debugger.msg_q(MsgLevel.INFO, f'{global_sym.type_info}')
             else:
                 # Out of options.
-                print(f'{sym}: <unknown type>')
+                self._debugger.msg_q(MsgLevel.INFO, f'{sym}: <unknown type>')
         elif kind == types.KIND_TYPE or kind == types.KIND_METHOD:
             # Print the type description directly, or print the method signature (which includes
             # the method name) directly
-            print(f'{typ}')
+            self._debugger.msg_q(MsgLevel.INFO, f'{typ}')
         else:
             # kind == types.VARIABLE
-            print(f'{typ.var_name}: {typ.var_type.name}')
+            self._debugger.msg_q(MsgLevel.INFO, f'{typ.var_name}: {typ.var_type.name}')
 
         return kind
 
@@ -1730,7 +1751,8 @@ class Repl(object):
         if not len(argv):
             # Whether or not we parsed some flags, we don't have a symbol name
             # to work with.
-            print("Syntax: die [-r[d]] [-ro] [-rt] [frameId] {<symbol_name> | <DIE_offset>}")
+            self._debugger.msg_q(MsgLevel.INFO,
+                "Syntax: die [-r[d]] [-ro] [-rt] [frameId] {<symbol_name> | <DIE_offset>}")
             return
 
         sym_name = argv[0]
@@ -1741,7 +1763,7 @@ class Repl(object):
             try:
                 sym_addr = int(sym_name[2:], base=16)
             except ValueError:
-                term.write("Cannot parse integer value: {sym_name}", term.WARN)
+                self._debugger.msg_q(MsgLevel.WARN, f"Cannot parse integer value: {sym_name}")
                 return
         elif len(sym_name) and sym_name[0] >= '0' and sym_name[0] <= '9' and len(argv) > 1:
             # May be a number indicating a frame id.
@@ -1756,7 +1778,7 @@ class Repl(object):
             # Get local variable(s) with the specified name.
             frameScopes = self._debugger.get_frame_vars(frame_id)
             if frameScopes is None:
-                print(f'No such stack frame {frameId}')
+                self._debugger.msg_q(MsgLevel.WARN, f'No such stack frame {frameId}')
                 return
 
             nested_methods = self.__get_scoped_locals(frameScopes)
@@ -1779,7 +1801,7 @@ class Repl(object):
                 i += 1
 
             if last_found_scope is None:
-                print(f'No such local variable: {sym_name}')
+                self._debugger.msg_q(MsgLevel.WARN, f'No such local variable: {sym_name}')
                 return
 
             # At least one nested method scope contains a symbol with the specified name.
@@ -1789,7 +1811,7 @@ class Repl(object):
             i = 0
             while cur is not None and i <= last_found_scope:
                 if printed_formals or printed_locals:
-                    print('')
+                    self._debugger.msg_q(MsgLevel.INFO, '')
 
                 scope = cur['scope'] # Relevant MethodInfo
                 printed_formals = False
@@ -1798,32 +1820,35 @@ class Repl(object):
                     inl_str = 'Inlined method'
                 else:
                     inl_str = 'Method'
-                term.write(f'{inl_str} scope: {scope.make_signature(include_class=True)}',
-                    term.COLOR_GRAY)
+                self._debugger.msg_q(term.COLOR_GRAY,
+                    f'{inl_str} scope: {scope.make_signature(include_class=True)}')
                 method_die = scope.get_die()
                 if method_die is not None:
-                    term.write(f'Method DIE at offset 0x{method_die.offset:x}', term.COLOR_GRAY)
+                    self._debugger.msg_q(term.COLOR_GRAY,
+                        f'Method DIE at offset 0x{method_die.offset:x}')
 
                 formals = cur['formals']
                 if len(formals) > 0:
                     printed_formals = True
-                    print(f"  Formals:")
+                    self._debugger.msg_q(MsgLevel.INFO, f"  Formals:")
                     for formal_lst in formals:
                         # formal_lst contains a list of FormalArg entries w/ the same name.
                         for formal in formal_lst:
-                            print(formal.die_to_str(recurse_die_children, recurse_origin,
+                            self._debugger.msg_q(MsgLevel.INFO,
+                                formal.die_to_str(recurse_die_children, recurse_origin,
                                 recurse_types))
 
                 locals_list = cur['locals']
                 if len(locals_list) > 0:
                     printed_locals = True
                     if printed_formals:
-                        print('')
+                        self._debugger.msg_q(MsgLevel.INFO, '')
 
-                    print(f"  Locals:")
+                    self._debugger.msg_q(MsgLevel.INFO, f"  Locals:")
                     for local_var_lst in locals_list:
                         for local in local_var_lst:
-                            print(local.die_to_str(recurse_die_children, recurse_origin,
+                            self._debugger.msg_q(MsgLevel.INFO,
+                                local.die_to_str(recurse_die_children, recurse_origin,
                                 recurse_types))
 
                 cur = cur['next'] # advance linked list ptr.
@@ -1845,10 +1870,11 @@ class Repl(object):
                         typ = global_sym.type_info
 
             if typ is None:
-                print(f'{sym_name}: <unknown>')
+                self._debugger.msg_q(MsgLevel.INFO, f'{sym_name}: <unknown>')
                 return
 
-            print(typ.die_to_str(recurse_die_children, recurse_origin, recurse_types))
+            self._debugger.msg_q(MsgLevel.INFO,
+                typ.die_to_str(recurse_die_children, recurse_origin, recurse_types))
 
 
     @Command(keywords=['info', '\\i'], completions=[Completions.SYM])
@@ -1862,7 +1888,7 @@ class Repl(object):
         symbol name as the argument to each.
         """
         if len(argv) == 0:
-            print("Syntax: info <symbol_name>")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: info <symbol_name>")
             return
 
         kind = self._sym_datatype(argv)
@@ -1886,14 +1912,14 @@ class Repl(object):
         later debugging session with it directly via `arduino-dbg --dump <filename`.
         """
         if len(argv) == 0:
-            print("Error: Missing filename")
-            print("Syntax: dump <filename>")
+            self._debugger.msg_q(MsgLevel.ERR, "Error: Missing filename")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: dump <filename>")
             return
 
         filename = argv[0]
-        print(f"Writing device state to file ({filename})...")
+        self._debugger.msg_q(MsgLevel.INFO, f"Writing device state to file ({filename})...")
         dump.capture_dump(self._debugger, filename)
-        print("Done.")
+        self._debugger.msg_q(MsgLevel.INFO, "Done.")
 
 
     @Command(keywords=['load'], completions=[Completions.PATH])
@@ -1907,12 +1933,12 @@ class Repl(object):
         any currently-connected debugging session.
         """
         if len(argv) == 0:
-            print("Error: Missing filename")
-            print("Syntax: dump <filename>")
+            self._debugger.msg_q(MsgLevel.ERR, "Error: Missing filename")
+            self._debugger.msg_q(MsgLevel.INFO, "Syntax: dump <filename>")
             return
 
         filename = argv[0]
-        print(f"Loading memory image from {filename}...")
+        self._debugger.msg_q(MsgLevel.INFO, f"Loading memory image from {filename}...")
         (debugger, hosted_dbg_serv) = dump.load_dump(filename, self._console_printer.print_q,
             history_change_hook=self._history_change_callback)
 
@@ -1943,29 +1969,34 @@ class Repl(object):
                 cmd = argv[0]
                 cmdMap = Command.getCommandMap()
                 cmdObj = cmdMap[cmd]
-                print(cmdObj.long_help)
+                self._debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
             except:
-                print(f"Error: No command {argv[0]} found.")
-                print("Try 'help' to list all available commands.")
-                print("Use 'quit' to exit the debugger.")
+                self._debugger.msg_q(MsgLevel.ERR, f"Error: No command {argv[0]} found.")
+                self._debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
+                self._debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
 
             return
 
-        print("Commands")
-        print("--------")
+        self._debugger.msg_q(MsgLevel.INFO, "Commands")
+        self._debugger.msg_q(MsgLevel.INFO, "--------")
 
         cmdIndex = Command.getCommandIndex()
         for (keyword, cmdObj) in cmdIndex.items(): # iterate over sorted map.
             if cmdObj.display_help:
-                print(cmdObj.short_help)
+                self._debugger.msg_q(MsgLevel.INFO, cmdObj.short_help)
 
-        print("")
-        print("After doing a symbol search with sym or '?', you can reference results by")
-        print("number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
-        print("The most recently-used such number--or '#0' if '?' gave a unique result--can")
-        print("then be referenced as '$'. e.g.: `print $`  // look up the same value again")
-        print("")
-        print("For more information, type: help <command>")
+        self._debugger.msg_q(MsgLevel.INFO, "")
+        self._debugger.msg_q(MsgLevel.INFO,
+            "After doing a symbol search with sym or '?', you can reference results by")
+        self._debugger.msg_q(MsgLevel.INFO,
+            "number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
+        self._debugger.msg_q(MsgLevel.INFO,
+            "The most recently-used such number--or '#0' if '?' gave a unique result--can")
+        self._debugger.msg_q(MsgLevel.INFO,
+            "then be referenced as '$'. e.g.: `print $`  // look up the same value again")
+        self._debugger.msg_q(MsgLevel.INFO, "")
+        self._debugger.msg_q(MsgLevel.INFO,
+            "For more information, type: help <command>")
 
 
     @Command(keywords=['quit', '\\q'])
@@ -2089,7 +2120,7 @@ class Repl(object):
                     # Replace '$' with last-referenced symbol.
                     tokens.append(self._last_sym_used)
                 else:
-                    print("Warning: no prior symbol reference for '$'")
+                    term.write("Warning: no prior symbol reference for '$'", term.WARN)
                     tokens.append("$") # try it raw...
             elif isinstance(t, str) and t.startswith("#") and len(t) > 1 and t[1:] == str(_softint(t[1:])):
                 idx = _softint(t[1:])
@@ -2098,7 +2129,7 @@ class Repl(object):
                     sym = self._last_sym_search[idx]
                     tokens.append(sym)
                 except IndexError:
-                    print(f"Warning: no symbol for index {t}")
+                    term.write(f"Warning: no symbol for index {t}", term.WARN)
                     tokens.append(t) # try it raw...
             elif t is not None and t != "":
                 tokens.append(t)
@@ -2112,8 +2143,13 @@ class Repl(object):
             return True # Actually quit.
         elif cmd in commandMap.keys():
             try:
-                cmd_obj = commandMap[cmd]
-                cmd_obj.invoke(self, tokens[1:])
+                try:
+                    cmd_obj = commandMap[cmd]
+                    cmd_obj.invoke(self, tokens[1:])
+                finally:
+                    # Flush any output gathered during cmd invocation before handling exceptions
+                    # or proceeding further.
+                    self._console_printer.join_q()
             except dbg.NoServerConnException as e:
                 term.write(f"Error running '{cmd}': {str(e)}", term.ERR)
             except dbg.DisconnectedException as e:
@@ -2159,6 +2195,8 @@ class Repl(object):
                 # Received '^C'; call the break function
                 print('') # Terminate line after visible '^C' in input.
                 self._break() # This will update the process_state to BREAK.
+            finally:
+                self._console_printer.join_q()
 
         return 0
 

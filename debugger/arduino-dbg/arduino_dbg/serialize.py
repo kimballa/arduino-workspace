@@ -1,8 +1,10 @@
 # (c) Copyright 2022 Aaron Kimball
 
+import arduino_dbg.term as term
+
 DBG_CONF_FMT_VERSION = 1
 
-def load_config_file(filename, map_name='config', defaults=None):
+def load_config_file(print_q, filename, map_name='config', defaults=None):
     """
         Read a debugger configuration file map.
         This is actually a python file that will be evaluated in a sterile environment.
@@ -28,19 +30,20 @@ def load_config_file(filename, map_name='config', defaults=None):
             exec(conf_text, init_env, init_env)
         except:
             # error parsing or executing the config file.
-            print("Warning: error parsing config file '%s'" % filename)
+            print_q.put((("Warning: error parsing config file '%s'" % filename), term.MsgLevel.WARN))
             init_env[map_name] = {}
             init_env['formatversion'] = DBG_CONF_FMT_VERSION
 
     try:
         fmtver = init_env['formatversion']
         if not isinstance(fmtver, int) or fmtver > DBG_CONF_FMT_VERSION:
-            print(f"Error: Cannot read config file '{filename}' with version {fmtver}")
+            print_q.put((f"Error: Cannot read config file '{filename}' with version {fmtver}",
+                term.MsgLevel.ERR))
             init_env[map_name] = {} # Disregard the unsupported configuration data.
 
         loaded_conf = init_env[map_name]
     except:
-        print(f"Error in format for config file '{filename}'")
+        print_q.put((f"Error in format for config file '{filename}'", term.MsgLevel.ERR))
         loaded_conf = {}
 
     # Merge loaded data on top of our default config.

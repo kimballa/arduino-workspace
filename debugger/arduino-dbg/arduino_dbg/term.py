@@ -103,6 +103,9 @@ class MsgLevel(object):
             return COLOR_GRAY
         elif msg_level == MsgLevel.SUCCESS:
             return SUCCESS
+        elif isinstance(msg_level, str):
+            # Actually this is a string... assume it's a raw term color code
+            return msg_level
         else:
             return INFO
 
@@ -118,10 +121,11 @@ class ConsolePrinter(object):
     prompt.
     """
 
-    TIMEOUT = 0.250 # Blink when reading the queue every 250ms.
+    TIMEOUT = 0.100 # Blink when reading the queue every 100ms..
 
     def __init__(self):
-        self.print_q = queue.Queue(maxsize=16)
+        # Batched print performance tops out around n=32 dequeues/context switch.
+        self.print_q = queue.Queue(maxsize=32)
         self._alive = True
         self._readline_enabled = False
         self._thread = threading.Thread(target=self.service, name='Console print thread',
@@ -151,10 +155,32 @@ class ConsolePrinter(object):
         """
         Main service loop for thread. Receive lines to print and print them to stdout.
         """
+        ENDL = "\n"
+
         while self._alive:
+            to_print = []
+            accepted = 0
+
             try:
                 (textline, prio) = self.print_q.get(block=True, timeout=ConsolePrinter.TIMEOUT)
+                to_print.append(fmt(textline, MsgLevel.color_for_msg(prio)))
+                accepted += 1
+                while self.print_q.qsize() > 0:
+                    # If multiple messages are queued up, grab them in batch.
+                    try:
+                        (textline, prio) = self.print_q.get(block=False)
+                        to_print.append(fmt(textline, MsgLevel.color_for_msg(prio)))
+                        accepted += 1
+                    except queue.Empty:
+                        # Didn't actually have more to read.
+                        break # Break out of inner greedy-read loop.
             except queue.Empty:
+                assert len(to_print) == 0
+                assert accepted == 0
+                continue
+
+            if accepted == 0:
+                # Nothing to do here.
                 continue
 
             if self._readline_enabled and _readline_input_on:
@@ -164,14 +190,15 @@ class ConsolePrinter(object):
 
             # Blank out the prompt / input line and print the received text.
 
-            textline = fmt(textline, MsgLevel.color_for_msg(prio))
-            print(f'\r{(len(PROMPT) + len(cur_input)) * " "}\r{textline}', flush=True)
+            print(f'\r{(len(PROMPT) + len(cur_input)) * " "}\r{ENDL.join(to_print)}', flush=True)
 
             if self._readline_enabled and _readline_input_on:
                 # Refresh the visible console prompt
                 print(f'\r{NO_CTRL_PROMPT}{cur_input}', end='', flush=True)
 
-            self.print_q.task_done()
+            for i in range(0, accepted):
+                # Acknowledge all the messages we accepted at once.
+                self.print_q.task_done()
 
 class NullPrinter(ConsolePrinter):
     """

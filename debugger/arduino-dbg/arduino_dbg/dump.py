@@ -125,7 +125,7 @@ def load_dump(filename, print_q, config=None, history_change_hook=None):
     """
 
     # Load the data out of the file...
-    dump_data = serialize.load_config_file(filename, SERIALIZED_STATE_KEY)
+    dump_data = serialize.load_config_file(print_q, filename, SERIALIZED_STATE_KEY)
 
     # Make a pair of pipes that can communicate with one another.
     (left, right) = io.make_bidi_pipe()
