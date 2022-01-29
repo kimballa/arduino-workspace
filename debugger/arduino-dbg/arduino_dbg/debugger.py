@@ -232,6 +232,7 @@ class Debugger(object):
         self.elf = None
         self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
         self._cached_frames = None
+        self._frame_cache_complete = False
 
     def msg_q(self, color, *args):
         """
@@ -1495,28 +1496,43 @@ class Debugger(object):
             Return a list of dicts that describe each frame of the stack.
         """
         if self._cached_frames:
-            # We already have a backtrace.
-            return self._cached_frames[0:limit]
+            if self._frame_cache_complete:
+                # We've traced all the backtrace there is, just return it.
+                return self._cached_frames
+            elif limit is not None and len(self._cached_frames) >= limit:
+                # We already have a backtrace cache long enough to accommodate this request
+                return self._cached_frames[0:limit]
 
-        self.verboseprint('Scanning backtrace')
+        # We need to go deeper.
+
+        self.verboseprint(f'Scanning backtrace (limit={limit})')
         ramend = self._arch["RAMEND"]
         ret_addr_size = self._arch["ret_addr_size"] # nr of bytes on stack for a return address.
 
-        # Start by establishing where we are right now.
-        regs = self.get_registers()
-        pc = regs["PC"]
-        sp = regs["SP"]
+        if not self._cached_frames or not len(self._cached_frames):
+            # We are starting the backtrace at the top.
+            # Start by establishing where we are right now.
+            regs = self.get_registers()
+            pc = regs["PC"]
+            sp = regs["SP"]
 
-        frames = []
-
-        # Walk back through the stack to establish the method calls that got us
-        # to where we are. If we didn't have a cached backtrace, get the entire thing (ignore
-        # limit). (TODO (aaron): Implement incremental backtracing.)
-        while sp < ramend and pc != 0:
+            frames = []
             frame = stack.CallFrame(self, pc, sp)
             frames.append(frame)
+        else:
+            # We have some backtrace already available.
+            frames = self._cached_frames
+            frame = frames[-1]
 
+            pc = frame.addr
+            sp = frame.sp
+
+        # Walk back through the stack to establish the method calls that got us
+        # to where we are, up to either the limits of traceability, the top of the stack,
+        # or the user-requested limit..
+        while sp < ramend and pc != 0 and (limit is None or len(frames) < limit):
             if frame.name is None:
+                self._frame_cache_complete = True
                 break # We've hit the limit of traceable methods
 
             self.verboseprint(f"function {frame.name} has frame {frame.frame_size}; " +
@@ -1530,12 +1546,25 @@ class Debugger(object):
             sp += ret_addr_size
             self.verboseprint(f"returning to pc {pc:04x}, sp {sp:04x}")
 
+            if sp >= ramend or pc == 0:
+                break # Not at a place valid to record as a frame.
+
+            frame = stack.CallFrame(self, pc, sp)
+            frames.append(frame)
+
         self._cached_frames = frames # Cache this backtrace for further lookups.
+
+        if sp >= ramend or pc == 0:
+            # Stack trace has bottomed out.
+            self._frame_cache_complete = True
+
+        # Return the requested subset of the stack trace.
         return frames[0:limit]
 
     def clear_frame_cache(self):
         """ Clear cached backtrace information. """
         self._cached_frames = None
+        self._frame_cache_complete = False
 
     def get_frame_regs(self, frame_num):
         """
