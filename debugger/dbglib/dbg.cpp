@@ -12,7 +12,8 @@ volatile uint8_t debug_status = 0;
 
 // Forward declarations.
 extern "C" {
-  static void __dbg_service() __attribute__((no_instrument_function));
+  static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags)
+      __attribute__((no_instrument_function));
   static inline void __dbg_reset() __attribute__((no_instrument_function));
 }
 
@@ -32,6 +33,7 @@ ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
 #define DBG_OP_BREAK     'B' // Break execution of the program. (Redundant if within server)
 #define DBG_OP_CONTINUE  'C' // continue execution
 #define DBG_OP_FLASHADDR 'f' // Return data at Flash address.
+#define DBG_OP_SET_FLAG  'L' // Set bit flag in int high or low.
 #define DBG_OP_POKE      'K' // Insert data to RAM address.
 #define DBG_OP_MEMSTATS  'm' // Describe memory usage
 #define DBG_OP_PORT_IN   'p' // read gpio pin
@@ -95,14 +97,19 @@ void __dbg_setup() {
 
 // Keyword sent from sketch/server to client whenever breakpoint is triggered (either
 // from sketch source code or via interrupt) to let client know we're in the dbg server.
-static const char _paused_msg[] PROGMEM = "Paused";
+static const char _paused_msg[] PROGMEM = "Paused ";
 
 /**
  * Called at breakpoint in user code (or via ISR if serial traffic arrives). Starts a service
  * that communicates over DBG_SERIAL about the state of the CPU until released to continue by
  * the client.
+ *
+ * @param bp_num Represents the breakpoint number within its translation unit. Each invocation
+ *    of BREAK() has a distinct breakpoint id.
+ * @param breakpoint_flags Pointer to breakpoint-enabling flags for the translation unit containing
+ *    the breakpoint. If the debugger itself invoked a program break, this will be NULL.
  */
-static void __dbg_service() {
+static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
   debug_status |= DBG_STATUS_IN_BREAK; // Mark the service as started so we don't recursively re-enter.
   // In order to communicate over UART or USB Serial, we need to keep servicing interrupts within
   // debugger, even if called via IRQ.
@@ -111,7 +118,11 @@ static void __dbg_service() {
 
   static uint8_t cmd;
 
-  DBG_SERIAL.println(FPSTR(_paused_msg));
+  // Report pause as: "Paused {flagNum:x} {flagsAddr:x}\n"
+  DBG_SERIAL.print(FPSTR(_paused_msg));
+  DBG_SERIAL.print(bp_num, HEX);
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println((unsigned)breakpoint_flags, HEX);
 
   while (true) {
     while (!DBG_SERIAL.available()) { };
@@ -128,7 +139,11 @@ static void __dbg_service() {
     uint8_t b = 0;
     switch(cmd) {
     case DBG_OP_BREAK:
-      DBG_SERIAL.println(FPSTR(_paused_msg));
+      // Report pause as: "Paused {flagNum:x} {flagsAddr:x}\n"
+      DBG_SERIAL.print(FPSTR(_paused_msg));
+      DBG_SERIAL.print(bp_num, HEX);
+      DBG_SERIAL.print(' ');
+      DBG_SERIAL.println((unsigned)breakpoint_flags, HEX);
       break;
     case DBG_OP_RESET:
       __dbg_reset();
@@ -227,6 +242,20 @@ static void __dbg_service() {
       digitalWrite((uint8_t)addr, value != 0);
       break;
 #endif /* DBG_NO_GPIO */
+    case DBG_OP_SET_FLAG:
+      // Sets a breakpoint bitfield flag to 1 or 0.
+      // L <flagNum> <bitFieldAddr> <val>
+      offset = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      b = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
+      if (b) {
+        // Set it to high.
+        *((bp_bitfield_t*) addr) |= (bp_bitfield_t) bit(offset);
+      } else {
+        // Set it to low.
+        *((bp_bitfield_t*) addr) &= ~((bp_bitfield_t) bit(offset));
+      }
+      break;
     case DBG_OP_TIME:
 #ifdef DBG_NO_TIME
       DBG_SERIAL.println('0');
@@ -425,7 +454,13 @@ void __dbg_print(unsigned long msg) {
   DBG_SERIAL.println(msg, DEC);
 }
 
-void __dbg_break(const char *funcOrFile, const uint16_t lineno) {
+void __dbg_break(const uint8_t flag_num, uint16_t* flags,
+    const char *funcOrFile, const uint16_t lineno) {
+  if (flag_num < _DBG_MAX_BP_FLAGS_PER_FILE && (*flags & bit(flag_num)) == 0) {
+    // Breakpoint is disabled by debugger.
+    return;
+  }
+
   debug_status |= DBG_STATUS_IN_BREAK; // Mark debugger as started so we don't recursively re-enter.
   DBG_SERIAL.print(DBG_RET_PRINT);
   DBG_SERIAL.print(FPSTR(_breakpoint_msg));
@@ -434,10 +469,15 @@ void __dbg_break(const char *funcOrFile, const uint16_t lineno) {
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  __dbg_service();
+  __dbg_service(flag_num, flags);
 }
 
-void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+void __dbg_break(const uint8_t flag_num, uint16_t* flags,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
+  if (flag_num < _DBG_MAX_BP_FLAGS_PER_FILE && (*flags & bit(flag_num)) == 0) {
+    // Breakpoint is disabled by debugger.
+    return;
+  }
   debug_status |= DBG_STATUS_IN_BREAK; // Mark debugger as started so we don't recursively re-enter.
   DBG_SERIAL.print(DBG_RET_PRINT);
   DBG_SERIAL.print(FPSTR(_breakpoint_msg));
@@ -446,7 +486,7 @@ void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  __dbg_service();
+  __dbg_service(flag_num, flags);
 }
 
 
@@ -458,6 +498,6 @@ ISR(TIMER1_COMPA_vect) {
   if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
     // Enter debug service if serial traffic available, and we are not already within the dbg
     // service.
-    __dbg_service();
+    __dbg_service(0, NULL);
   }
 }

@@ -72,7 +72,7 @@ class CallFrame(object):
         else:
             self.demangled = binutils.demangle(self.name) or '???'
 
-        self.demangled_inline_chain = [ binutils.demangle(m) for m in self.inline_chain ]
+        self.demangled_inline_chain = list(map(binutils.demangle, self.inline_chain))
 
 
     def _calculate_source_line(self, elf_name):

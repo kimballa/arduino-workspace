@@ -59,6 +59,9 @@
 #define DBG_SERIAL_SPEED DBG_SERIAL_SPEED_FAST
 #endif
 
+#define _DBG_MAX_BP_FLAGS_PER_FILE (16)
+typedef unsigned int bp_bitfield_t;
+
 // Determine whether to enable the debugger, based on preprocessor flags.
 #if defined(DEBUG) && !defined(DBG_ENABLED)
 #  define DBG_ENABLED
@@ -87,11 +90,17 @@
 #include<Arduino.h>  // For typedefs e.g. uint8_t
 #include<avr/wdt.h>  // For watchdog timer control
 
+// Define bitfield of 16 flags / translation unit to switch on/off up to 16 breakpoints/file
+// dynamically from the debugger. Initially set to 'all enabled'.
+static bp_bitfield_t breakpoint_en_flags = (bp_bitfield_t)(-1);
+
 extern void __dbg_setup() __attribute__((no_instrument_function));
 
 /* Enter user breakpoint. */
-extern void __dbg_break(const char *funcOrFile, const uint16_t lineno) __attribute__((noinline));
-extern void __dbg_break(const __FlashStringHelper *funcOrFile, const uint16_t lineno)
+extern void __dbg_break(const uint8_t flag_num, uint16_t* flags,
+    const char *funcOrFile, const uint16_t lineno) __attribute__((noinline));
+extern void __dbg_break(const uint8_t flag_num, uint16_t* flags,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno)
     __attribute__((noinline));
 
 extern bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
@@ -306,11 +315,11 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 #ifdef DBG_PRETTY_FUNCTIONS
 #  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
 #  define TRACE(x) __dbg_trace(F(#x),  __PRETTY_FUNCTION__, __LINE__)
-#  define BREAK() __dbg_break(__PRETTY_FUNCTION__, __LINE__);
+#  define BREAK() __dbg_break(__COUNTER__, &breakpoint_en_flags, __PRETTY_FUNCTION__, __LINE__);
 #else
 #  define ASSERT(x) __dbg_assert(x, F(#x), F(__FILE__), __LINE__)
 #  define TRACE(x) __dbg_trace(F(#x),  F(__FILE__), __LINE__)
-#  define BREAK() __dbg_break(F(__FILE__), __LINE__);
+#  define BREAK() __dbg_break(__COUNTER__, &breakpoint_en_flags, F(__FILE__), __LINE__);
 #endif /* DBG_PRETTY_FUNCTIONS */
 
 

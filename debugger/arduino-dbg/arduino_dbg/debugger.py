@@ -250,7 +250,7 @@ class Debugger(object):
         msg_str = "".join(list(map(_str_fn, args)))
         self._print_q.put((msg_str, color))
 
-    
+
     def is_debug_info_loaded(self):
         """ Return True if we successfully loaded debug info from an ELF file. """
         return self._loaded_debug_info
@@ -1146,7 +1146,7 @@ class Debugger(object):
                                 submitted = True
                             except queue.Full:
                                 continue
-                    elif line == protocol.DBG_PAUSE_MSG:
+                    elif line.startswith(protocol.DBG_PAUSE_MSG):
                         # Server has informed us that it switched to break mode.
                         # (e.g. program-triggered hardcoded breakpoint.)
                         self.__acknowledge_pause()
@@ -1296,7 +1296,7 @@ class Debugger(object):
 
     def send_break(self):
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
-        if break_ok == protocol.DBG_PAUSE_MSG:
+        if break_ok.startswith(protocol.DBG_PAUSE_MSG):
             self._process_state = ProcessState.BREAK
             self.msg_q(MsgLevel.INFO, "Paused.")
             return True

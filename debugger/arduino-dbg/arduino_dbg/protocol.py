@@ -11,6 +11,7 @@ DBG_OP_BREAK     = 'B' # Break execution of the program. Redundant when within i
                        # server but enables confirmation of break state.
 DBG_OP_CONTINUE  = 'C' # continue execution
 DBG_OP_FLASHADDR = 'f' # Return data at Flash address.
+DBG_OP_SET_FLAG  = 'L' # Set bitfield flag for breakpoint en/dis-able..
 DBG_OP_POKE      = 'K' # Insert data to RAM address.
 DBG_OP_MEMSTATS  = 'm' # Describe memory usage
 DBG_OP_PORT_IN   = 'p' # read gpio pin

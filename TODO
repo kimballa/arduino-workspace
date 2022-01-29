@@ -10,6 +10,16 @@ On-device service capabilities:
 
 Client:
 
+  - When we get a `Paused ...` message, parse the bitNum and bitfieldAddr.
+    ... if bitfieldAddr != null ...
+  - Within the conn listener, issue the correct commands to get the non-debugger PC.
+  - Add a Breakpoint to the BreakpointDatabase for pc with the bitnum and bitfield addr.
+  - Print out the stopped-at-breakpoint information 
+
+  - Add bp enable/disable commands.
+  - Add bp list command.
+
+
   --------
 
   * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
