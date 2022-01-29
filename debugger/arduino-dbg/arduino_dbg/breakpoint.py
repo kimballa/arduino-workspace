@@ -19,10 +19,14 @@ Future work:
     step return             - Run all opcodes thru end of this method/call frame.
 """
 
+import threading
+
 import arduino_dbg.binutils as binutils
+import arduino_dbg.debugger as dbg
+from arduino_dbg.term import MsgLevel
 
 
-class BreakpointDatabase(object)
+class BreakpointDatabase(object):
     """
     Database of known breakpoints in the sketch being debugged.
 
@@ -36,6 +40,7 @@ class BreakpointDatabase(object)
         self._debugger = debugger
         self._breakpoints = []
         self._pc_to_bp = {}
+        self._sig_to_bp = {}
 
     def __repr__(self):
         bp_strs = list(map(repr, self._breakpoints)) # Format breakpoint strs
@@ -44,27 +49,20 @@ class BreakpointDatabase(object)
         return '\n'.join(lines)
 
 
-    def parse_pause_flags(self, pause_line):
-        """
-        When the sketch pauses, it sends a line of the form:
-            Paused <bitNum:x> <bitfieldAddr:x>
-
-        ... memorize these two numbers to attach to the next regi
-        """
-        should this be in this file? Or move back to Debugger?
-
-    def register_bp(self, pc):
+    def register_bp(self, pc, signature, is_dynamic):
         """
         Register a new breakpoint; either created by client or as we
         encounter it live in the set program.
         """
 
         if pc in self._pc_to_bp:
-            return # Already registered.
+            return self._pc_to_bp[pc] # Already registered.
 
-        bp = Breakpoint(self._debugger, pc)
+        bp = Breakpoint(self._debugger, pc, signature, is_dynamic)
         self._breakpoints.append(bp)
         self._pc_to_bp[pc] = bp
+        self._sig_to_bp[signature] = bp
+        return bp
 
     def toggle_bp_by_idx(self, idx, enabled):
         """
@@ -73,6 +71,7 @@ class BreakpointDatabase(object)
         if idx >= len(self._breakpoints):
             raise IndexError(f'No such breakpoint id #{idx}')
 
+        raise Exception("XXX TODO: Rewrite, no enabled flag!!!")
         self._breakpoints[idx].enabled = enabled
 
     def toggle_bp_by_pc(self, pc, enabled):
@@ -82,6 +81,7 @@ class BreakpointDatabase(object)
         if pc not in self._pc_to_bp:
             raise KeyError(f'No known breakpoint at $PC={pc:04x}')
 
+        raise Exception("XXX TODO: Rewrite, no enabled flag!!!")
         self._pc_to_bp[pc].enabled = enabled
 
     def get_bp_for_pc(self, pc):
@@ -91,7 +91,17 @@ class BreakpointDatabase(object)
 
         if pc in self._pc_to_bp:
             return self._pc_to_bp[pc]
-        else
+        else:
+            return None
+
+    def get_bp_for_sig(self, sig):
+        """
+        Return the breakpoint with the specified signature or None if no such known breakpoint.
+        """
+
+        if sig in self._sig_to_bp:
+            return self._sig_to_bp[sig]
+        else:
             return None
 
     def get_bp(self, idx):
@@ -103,7 +113,7 @@ class BreakpointDatabase(object)
 
         return self._breakpoints[idx]
 
-    def forget(self, idx)
+    def forget(self, idx):
         """
         Drop the breakpoint entry with the specified index.
         """
@@ -127,10 +137,23 @@ class Breakpoint(object):
     An individual breakpoint location
     """
 
-    def __init__(self, debugger, pc, is_dynamic=False):
-        self.pc = pc
+    @staticmethod
+    def make_signature(bit_num, flag_bits_addr):
+        """
+        Make a unique breakpoint signature from its server-provided elements:
+        a bit number in a flags word, and the address of that flags word in RAM.
+        """
+        # Format is just a tuple.
+        return (bit_num, flag_bits_addr)
+
+
+    def __init__(self, debugger, pc, signature, is_dynamic=False):
+        self.pc = pc                 # Program counter @ breakpoint.
         self.is_dynamic = is_dynamic # True if we created from client; False if static in prgm.
-        self.enabled = True
+
+        self.signature = signature   # A unique server-side id for the breakpoint.
+                                     # We see this as a (bitnumber, bitflags_addr) pair.
+
         self.sym = debugger.function_sym_by_pc(pc)
         if self.sym is None:
             debugger.msg_q(MsgLevel.WARN, f'New breakpoint at {pc:04x} not within known method')
@@ -147,7 +170,7 @@ class Breakpoint(object):
         self.source_line = binutils.pc_to_source_line(debugger.elf_name, pc) or None
 
     def __repr__(self):
-        s = f'$PC={self.pc:04x}:  '
+        s = f'$PC=0x{self.pc:04x}:  '
 
         if len(self.demangled_inline_chain) > 1:
             s += ' inlined in '.join(self.demangled_inline_chain)
@@ -158,3 +181,32 @@ class Breakpoint(object):
             s += f'  ({self.source_line})'
 
         return s
+
+class BreakpointCreateThread(threading.Thread):
+    """
+    A thread that will establish what $PC a new breakpoint sits at, and register the
+    breakpoint with the debugger's breakpoint database.
+
+    This is spawned by the debugger's listener thread, since it cannot run debug commands
+    within the thread due to queue usage. It is assumed that the listener thread owned
+    the cmd lock already, and when this thread is started, ownership of the lock passes to
+    this thread. We are responsible for releasing the lock when we're done.
+    """
+
+    def __init__(self, debugger, sig):
+        super().__init__(name="Register breakpoint")
+        self._debugger = debugger
+        self._sig = sig
+
+    def run(self):
+        """
+        Interact with the debugger to establish the $PC for this breakpoint
+        """
+        try:
+            self._debugger.discover_current_breakpoint(self._sig)
+        except dbg.DebuggerIOError as dioe:
+            self._debugger.msg_q(MsgLevel.ERR, f'Error while analyzing breakpoint: {dioe}')
+        finally:
+            # No matter what happens, we must relinquish this lock when done.
+            self._debugger.release_cmd_lock()
+

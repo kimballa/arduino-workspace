@@ -9,25 +9,12 @@ Debugger:
 On-device service capabilities:
 
 Client:
-
-  - When we get a `Paused ...` message, parse the bitNum and bitfieldAddr.
-    ... if bitfieldAddr != null ...
-  - Within the conn listener, issue the correct commands to get the non-debugger PC.
-  - Add a Breakpoint to the BreakpointDatabase for pc with the bitnum and bitfield addr.
-  - Print out the stopped-at-breakpoint information 
-
   - Add bp enable/disable commands.
   - Add bp list command.
 
 
   --------
 
-  * Even if we can't add brand new breakpoints at arbitrary locations, we can at least
-    control/suppress existing ones.
-    - Server could have a memory array for $PC values we /don't/ stop at. If $prevPC
-      is on the list, don't actually go into the service.
-    - Could maybe also manage this client-side; higher-latency, but would have unlimited
-      memory for bp suppressions and possibly less brittle asm work.
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.

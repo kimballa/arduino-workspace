@@ -68,6 +68,8 @@ class DbgTestCase(unittest.TestCase):
         cls.debugger = debugger
         cls.dbg_service = dbg_service
 
+        debugger.get_cmd_lock() # We'll be sending commands throughout.
+
 
     @classmethod
     def tearDownClass(cls):
@@ -75,6 +77,7 @@ class DbgTestCase(unittest.TestCase):
             cls.dbg_service.shutdown()
 
         if cls.debugger:
+            cls.debugger.release_cmd_lock() # Done.
             cls.debugger.close()
 
         if cls.console_printer:

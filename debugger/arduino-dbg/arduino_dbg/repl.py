@@ -2086,10 +2086,13 @@ class Repl(object):
         except KeyboardInterrupt:
             # Received '^C'; call the break function
             print('') # Terminate line after visible '^C' in input.
+            self._debugger.get_cmd_lock()
             try:
                 self._break()
             except dbg.NoServerConnException:
                 pass # Just go to a clean new line
+            finally:
+                self._debugger.release_cmd_lock()
             self._break_count += 1
             if self._break_count >= 3:
                 # User's mashed ^C a lot... try to help them out?
@@ -2143,10 +2146,22 @@ class Repl(object):
             return True # Actually quit.
         elif cmd in commandMap.keys():
             try:
+                locked = False
                 try:
                     cmd_obj = commandMap[cmd]
+
+                    # Get ready to send commands...
+                    while not locked:
+                        locked = self._debugger.get_cmd_lock()
+
+                    # We have exclusive control of the debugger I/O channels.
+                    assert locked
+                    # Proceed to command.
                     cmd_obj.invoke(self, tokens[1:])
                 finally:
+                    # Release I/O channel lock.
+                    if locked:
+                        self._debugger.release_cmd_lock()
                     # Flush any output gathered during cmd invocation before handling exceptions
                     # or proceeding further.
                     self._console_printer.join_q()
@@ -2194,7 +2209,11 @@ class Repl(object):
             except KeyboardInterrupt as ki:
                 # Received '^C'; call the break function
                 print('') # Terminate line after visible '^C' in input.
-                self._break() # This will update the process_state to BREAK.
+                self._debugger.get_cmd_lock()
+                try:
+                    self._break() # This will update the process_state to BREAK.
+                finally:
+                    self._debugger.release_cmd_lock()
             finally:
                 self._console_printer.join_q()
 

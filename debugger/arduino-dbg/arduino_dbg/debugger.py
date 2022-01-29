@@ -13,6 +13,7 @@ import time
 import traceback
 
 import arduino_dbg.binutils as binutils
+import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.protocol as protocol
 import arduino_dbg.serialize as serialize
 import arduino_dbg.stack as stack
@@ -148,13 +149,23 @@ def _load_conf_module(module_name, resource_name, print_q):
     return conf
 
 
-class NoServerConnException(Exception):
+class DebuggerIOError(Exception):
+    """
+    Base class for I/O errors that may occur communicating cmds to the device
+    debugger service.
+    """
     pass
 
-class DisconnectedException(Exception):
+class NoServerConnException(DebuggerIOError):
+    """ We're not actually connected in the first place. """
     pass
 
-class InvalidConnStateException(Exception):
+class DisconnectedException(DebuggerIOError):
+    """ Disconnected during the operation """
+    pass
+
+class InvalidConnStateException(DebuggerIOError):
+    """ We tried to interrupt the device to send the command but could not. """
     pass
 
 class Debugger(object):
@@ -178,16 +189,31 @@ class Debugger(object):
         self._print_q = print_q # Data from serial conn to print directly to console.
         self._history_change_hook = history_change_hook
 
-        self._recv_q = None
-        self._send_q = None
+        self._recv_q = None       # Main debugger client receives responses from server via this q.
+        self._send_q = None       # Client(s) may enqueue comms to the server (commands) via this q.
+
+        # A thread wishing to send on the send_q must acquire the 'submit lock' first. You must
+        # acquire this *before* calling any methods that may submit commands, as a compound method
+        # may need to make multiple submissions.
+        self._submit_lock = threading.Lock()
+        self._cmd_event = threading.Event() # Event to signal a client is waiting to acquire lock.
+
         # Before we're connected to anything, stay in 'BREAK' state.
         self._process_state = ProcessState.BREAK
-        self._listen_thread = None
-        self._alive = False
-        self._disconnect_err = False
-        self._restart_responsibility = ConnRestart.INTERNAL
-        self._conn = None
+        self._listen_thread = None   # This thread listens for input from the device (and relays to
+                                     # the print q or recv q depending on state). It also listens
+                                     # for commands on the send q and dispatches those, putting the
+                                     # response on the recv q.
 
+        self._alive = False          # True if the listen thread should stay alive.
+        self._disconnect_err = False # Set True if the listen thread died due to TTY disconnect.
+        # Should the listener thread attempt to reestablish a disconnected TTY connection by itself
+        # (INTERNAL) or is the client responsible for initiating reconnection / recovery?
+        self._restart_responsibility = ConnRestart.INTERNAL
+        self._conn = None            # The serial connection to the device or mock device for dump
+                                     # debugging. See impls in arduino_dbg.io package.
+
+        # The filename of the sketch image.
         self.elf_name = elf_name
         self._elf_file_handle = None
         if self.elf_name:
@@ -231,6 +257,7 @@ class Debugger(object):
         self._dwarf_info = None
         self.elf = None
         self._debug_info_types = types.ParsedDebugInfo(self) # Must create after config load.
+        self._breakpoints = breakpoint.BreakpointDatabase(self)
         self._cached_frames = None
         self._frame_cache_complete = False
 
@@ -258,6 +285,9 @@ class Debugger(object):
 
     def get_debug_info(self):
         return self._debug_info_types
+
+    def breakpoints(self):
+        return self._breakpoints
 
     def _get_max_retries(self):
         if self._conn is None:
@@ -952,6 +982,26 @@ class Debugger(object):
     def is_open(self):
         return self._conn is not None and self._conn.is_open()
 
+    def get_cmd_lock(self, blocking=True, timeout=-1):
+        """
+        Acquire the lock that gives this thread the right to send commands on the send_q.
+
+        A Repl should call this method _before_ doing work that may call other methods
+        like send_break() or get_backtrace(), etc.
+
+        You should release the lock (with `release_cmd_lock()`) only after completing the end-to-end
+        interaction with the server (which may be multiple command--response elements).
+        """
+        self._cmd_event.set() # Tell the _conn_listener we want the lock, don't hog it.
+        acquired = self._submit_lock.acquire(blocking, timeout)
+        if acquired:
+            self._cmd_event.clear()
+        return acquired
+
+    def release_cmd_lock(self):
+        """ Release the send_q lock. """
+        self._submit_lock.release()
+
     QUEUE_TIMEOUT = 0.100 # wait up to 100ms to submit new data to a queue
 
     RESULT_SILENT = 0
@@ -1058,19 +1108,53 @@ class Debugger(object):
             self._conn.readline()
 
 
-    def __acknowledge_pause(self):
+    def __acknowledge_pause(self, pause_notification):
         """
         In the conn_listener thread, we received a "Paused" acknowledgement of break request
-        from the server. Set our state to confirm that we have received the break stmt.
+        from the server.
+
+        * Set our state to BREAK to confirm that we have received the 'paused' notification.
+        * We own the cmd lock; if breakpoint isn't null, start a *separate* client thread to
+          create the breakpoint and do any backtrace required to establish its $PC.
+
+        We will implicitly hand the cmd lock off to the client thread if we create it.
+
+        @param pause_notification the line sent by the server indicating the BP location.
+        @return True if the listener thread still owns the cmd lock. False if we handed
+            ownership off to the client
         """
-        self._process_state = ProcessState.BREAK # Confirm the BREAK status.
-        submitted = False
-        while self._alive and not submitted:
-            try:
-                self._print_q.put(("Paused.", MsgLevel.INFO), timeout=Debugger.QUEUE_TIMEOUT)
-                submitted = True
-            except queue.Full:
-                continue
+        self._process_state = ProcessState.BREAK # Confirm the BREAK status first.
+        own_lock = True
+
+        flagBitNum, flagsAddr = self._parse_break_response(pause_notification)
+        if flagsAddr != 0:
+            # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
+            sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
+            bp = self._breakpoints.get_bp_for_sig(sig)
+            if bp is None:
+                # We haven't seen it before. We need to register it, which requires a bit
+                # of discussion with the server. Spawn a thread to have that conversation.
+                register_thread = breakpoint.BreakpointCreateThread(self, sig)
+                register_thread.start()
+                own_lock = False # Ownership of the cmd lock passes to register_thread.
+                msg = None # Let the register_thread give the report.
+            else:
+                msg = f'Paused at breakpoint, {bp}'
+        else:
+            msg = "Paused by debugger."
+
+        # Tell the user as much as we know about why we're stopped.
+        if msg is not None:
+            submitted = False
+            while self._alive and not submitted:
+                try:
+                    self._print_q.put((msg, MsgLevel.INFO), timeout=Debugger.QUEUE_TIMEOUT)
+                    submitted = True
+                except queue.Full:
+                    continue
+
+        return own_lock
+
 
     def _conn_listener(self):
         """
@@ -1081,8 +1165,11 @@ class Debugger(object):
         or the debugger recv queue for processing.
         """
         self.verboseprint(f'Starting connection listener thread {threading.get_ident()}')
+        own_lock = False
         try:
             while self._alive:
+                assert own_lock == False # We shouldn't carry lock ownership around the loop.
+
                 # By default, this thread will attempt to restart the connection if
                 # it is suddenly disconnected.
                 self._restart_responsibility = ConnRestart.INTERNAL
@@ -1104,66 +1191,112 @@ class Debugger(object):
                     self._restart_responsibility = ConnRestart.INTERNAL
                 else:
                     # Process state is either RUNNING or UNKNOWN.
+
                     # We need to listen for traffic from the device in case it spontaneously
-                    # emits a debug_print() or trace() message.
+                    # emits a debug_print() or trace() message, or hits a breakpoint and
+                    # reports that fact to us. If we do hit a BP, we may need to issue commands
+                    # to get more info about the breakpoint -- in which case, we'll need to own
+                    # the cmd lock.
 
-                    # But first: Send any pending outbound data.
-                    if self._send_q.qsize() > 0:
-                        # Client's responsibility to handle disconnects if they have a cmd-response
-                        # pattern for us to handle.
-                        self._restart_responsibility = ConnRestart.CLIENT
+                    # The client may also want to start sending commands at any time. In which case
+                    # they may already own the cmd lock. If they want to send commands but *don't*
+                    # own the cmd lock, then they will have raised _cmd_event. In which case we
+                    # should not even contend for the lock.
+                    if not self._cmd_event.isSet():
+                        # We don't *think* the Repl is waiting for the lock. Try to get it ourselves.
+                        # (Access lock directly, don't use get_cmd_lock(), so we don't confuse
+                        # ourselves by setting the Event object. That's for client-priority locking
+                        # only.)
+                        own_lock = self._submit_lock.acquire(blocking=False)
 
-                        # Ensure the recv_q is empty; discard any pending lines, since they're
-                        # now all unclaimed.
-                        self.__flush_recv_q()
+                    if not own_lock:
+                        # Send any pending outbound data.
+                        if self._send_q.qsize() == 0:
+                            # ... client owns the lock, but didn't submit anything yet?
+                            # Give them a chance to act.
+                            time.sleep(0)
 
-                        # Send the outbound line.
-                        (msgline, response_type) = self._send_q.get(block=False)
-                        self.__send_msg(msgline, response_type)
-                        if self._process_state == ProcessState.BREAK:
-                            # We changed process states to BREAK via this msg.
-                            # Back to the main loop top, switch into send-biased mode.
-                            continue
+                        if self._send_q.qsize() > 0:
+                            # If a command is waiting to be sent, *someone* should own the send lock.
+                            assert self._submit_lock.locked()
 
-                        # Back to passive monitoring mode; we manage our own reconnects.
-                        self._restart_responsibility = ConnRestart.INTERNAL
+                            # Client's responsibility to handle disconnects if they have a cmd-response
+                            # pattern for us to handle.
+                            self._restart_responsibility = ConnRestart.CLIENT
 
-                    # Ideally we would have a way to interrupt this if _send_q is filled
-                    # while we're waiting on a silent channel, but I don't have a clean way
-                    # to select() on both at once. Instead we rely on the timeout we specified
-                    # when opening the connection to bring us back to the top of the loop.
-                    line = self._conn.readline().decode("utf-8").strip()
-                    submitted = False
+                            # Ensure the recv_q is empty; discard any pending lines, since they're
+                            # now all unclaimed.
+                            self.__flush_recv_q()
 
-                    if len(line) == 0:
-                        continue # Didn't get a line; timed out.
-                    elif line.startswith(protocol.DBG_RET_PRINT):
-                        # got a message for the user from debug_msg() or trace().
-                        # forward it to the ConsolePrinter.
-                        while self._alive and not submitted:
-                            try:
-                                self._print_q.put((line[1:], MsgLevel.DEVICE),
-                                    timeout=Debugger.QUEUE_TIMEOUT)
-                                submitted = True
-                            except queue.Full:
+                            # Send the outbound line.
+                            (msgline, response_type) = self._send_q.get(block=False)
+                            self.__send_msg(msgline, response_type)
+                            if self._process_state == ProcessState.BREAK:
+                                # We changed process states to BREAK via this msg.
+                                # Back to the main loop top, switch into send-biased mode.
+                                time.sleep(0)
                                 continue
-                    elif line.startswith(protocol.DBG_PAUSE_MSG):
-                        # Server has informed us that it switched to break mode.
-                        # (e.g. program-triggered hardcoded breakpoint.)
-                        self.__acknowledge_pause()
+
+                            # Back to passive monitoring mode; we manage our own reconnects.
+                            self._restart_responsibility = ConnRestart.INTERNAL
                     else:
-                        # Got a line of something but it didn't start with '>'.
-                        # Either it _is_ for the user and we connected to the socket mid-message,
-                        # or we received a legitimate response to a query we sent to the server.
-                        # Either way, we forward it to the printer, since we don't expect to
-                        # receive a response to a command in this state.
-                        while self._alive and not submitted:
-                            try:
-                                self._print_q.put((line, MsgLevel.DEVICE),
-                                    timeout=Debugger.QUEUE_TIMEOUT)
-                                submitted = True
-                            except queue.Full:
-                                continue
+                        # Command submission is blocked because we own the cmd lock.
+                        assert self._send_q.qsize() == 0
+
+                        # Ideally we would have a way to interrupt this if the client
+                        # wants to fill the _send_q while we're waiting on a silent
+                        # channel, but I don't have a clean way to select() on both at
+                        # once. Instead we rely on the short timeout we specified when
+                        # opening the connection to bring us back to the top of the loop.
+                        # We'll release lock ownership on our way back out.
+                        line = self._conn.readline().decode("utf-8").strip()
+                        submitted = False
+
+                        if len(line) == 0:
+                            # Didn't get a line; timed out. Give client opportunity to
+                            # acquire lock and send.
+                            self.release_cmd_lock()
+                            own_lock = False
+                            time.sleep(0) # Yield to other threads; anyone else want the lock?
+                            continue
+                        elif line.startswith(protocol.DBG_RET_PRINT):
+                            # got a message for the user from debug_msg() or trace().
+                            # forward it to the ConsolePrinter.
+                            while self._alive and not submitted:
+                                try:
+                                    self._print_q.put((line[1:], MsgLevel.DEVICE),
+                                        timeout=Debugger.QUEUE_TIMEOUT)
+                                    submitted = True
+                                except queue.Full:
+                                    continue
+                        elif line.startswith(protocol.DBG_PAUSE_MSG):
+                            # Server has informed us that it switched to break mode.
+                            # (e.g. program-triggered hardcoded breakpoint.)
+                            # We may hand off ownership of the lock to a thread spawned in
+                            # __acknowledge_pause().
+                            own_lock = self.__acknowledge_pause(line)
+                        else:
+                            # Got a line of something but it didn't start with '>'.
+                            # Either it _is_ for the user and we connected to the socket mid-message,
+                            # or we received a legitimate response to a query we sent to the server.
+                            # Either way, we forward it to the printer, since we don't expect to
+                            # receive a response to a command in this state.
+                            while self._alive and not submitted:
+                                try:
+                                    self._print_q.put((line, MsgLevel.DEVICE),
+                                        timeout=Debugger.QUEUE_TIMEOUT)
+                                    submitted = True
+                                except queue.Full:
+                                    continue
+
+                        # Client now has opportunity to acquire lock and send commands.
+                        if own_lock:
+                            # May have been released in __acknowledge_pause(); verify
+                            # own_lock before release, here.
+                            self.release_cmd_lock()
+                            own_lock = False
+                            time.sleep(0) # Yield to other threads; anyone else want the lock?
+
         except OSError as e:
             # Generally means our connection has unexpectedly closed on us.
             # Set flags indicating that the connection has failed.
@@ -1177,6 +1310,12 @@ class Debugger(object):
                 self._conn.close()
             except:
                 pass
+
+            if own_lock:
+                # Release this before opening a new connection thread (if we have restart
+                # responsibility)..
+                self.release_cmd_lock()
+                own_lock = False
 
             if self._restart_responsibility == ConnRestart.INTERNAL:
                 # The client is not actively monitoring the connection. We should attempt to restart
@@ -1196,6 +1335,8 @@ class Debugger(object):
                 pass
         finally:
             self.verboseprint(f'Exiting connection listener thread {threading.get_ident()}')
+            if own_lock:
+                self.release_cmd_lock()
 
 
     def __wait_response(self):
@@ -1232,20 +1373,20 @@ class Debugger(object):
 
     def send_cmd(self, dbg_cmd, result_type):
         """
-            Send a low-level debugger command across the wire and return the results.
+        Send a low-level debugger command across the wire and return the results.
 
-            @param dbg_cmd either a formatted command string or list of cmd and arguments.
-            @param result_type an integer/enum specifying whether to expect 0, 1, or 'n'
-            ($-terminated list) lines in response.
+        @param dbg_cmd either a formatted command string or list of cmd and arguments.
+        @param result_type an integer/enum specifying whether to expect 0, 1, or 'n'
+        ($-terminated list) lines in response.
 
-            @throws NoServerConnException if not connected to the device.
-            @throws DisconnectedException if a disconnect happens during communication.
-            @throws InvalidConnStateException if we need to interrupt the sketch to send
-                the command and cannot affirmatively do so.
-            @throws RuntimeError if result_type is invalid.
+        @throws NoServerConnException if not connected to the device.
+        @throws DisconnectedException if a disconnect happens during communication.
+        @throws InvalidConnStateException if we need to interrupt the sketch to send
+            the command and cannot affirmatively do so.
+        @throws RuntimeError if result_type is invalid.
 
-            @return type varies based on result_type: SILENT => None; ONELINE => a single
-            string response line; LIST => a List of string response lines.
+        @return type varies based on result_type: SILENT => None; ONELINE => a single
+        string response line; LIST => a List of string response lines.
         """
 
         if not self.is_open():
@@ -1296,10 +1437,30 @@ class Debugger(object):
     ###### Higher-level commands to communicate with server
 
     def send_break(self):
+        """
+        Send a 'break' command to the device.
+
+        If we are already at a breakpoint, register it in our breakpoint database if
+        this is the first we're learning of that bp.
+        """
+
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
         if break_ok.startswith(protocol.DBG_PAUSE_MSG):
             self._process_state = ProcessState.BREAK
-            self.msg_q(MsgLevel.INFO, "Paused.")
+            flagBitNum, flagsAddr = self._parse_break_response(break_ok)
+            if flagsAddr != 0:
+                # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
+                sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
+                bp = self._breakpoints.get_bp_for_sig(sig)
+                if bp is None:
+                    # We haven't seen it before. We need to register it, which requires a bit
+                    # of discussion with the server.
+                    self.discover_current_breakpoint(sig) # Will print a msg to user, too.
+                else:
+                    self.msg_q(MsgLevel.INFO, f'Paused at breakpoint, {bp}')
+            else:
+                self.msg_q(MsgLevel.INFO, "Paused by debugger.")
+
             return True
         else:
             self._process_state = ProcessState.UNKNOWN
@@ -1619,5 +1780,45 @@ class Debugger(object):
             ret_addr = (ret_addr << 8) | (v & 0xFF)
         ret_addr = ret_addr << 1 # AVR: LSH all PC values read from memory by 1.
         return ret_addr
+
+
+    def discover_current_breakpoint(self, sig):
+        """
+        If we're paused at a new breakpoint with signature 'sig', identify its $PC
+        and register it in our breakpoint database.
+
+        Invoked within send_cmd() if we issued a redundant break cmd and
+        discovered we're already at a breakpoint, OR from a BreakpointCreateThread if we
+        hit a breakpoint while in passive listening mode.
+        """
+        # Get partial backtrace to establish breakpoint location. Top of stack is
+        # the dbg_service; breakpoint is in whatever's below that.
+        frames = self.get_backtrace(limit=2)
+        if len(frames) < 2:
+            # Not really at a useful breakpoint? Nothing to register w/o a $PC.
+            msg = 'Paused at unknown breakpoint.'
+        else:
+            frame = frames[1]
+            bp = self._breakpoints.register_bp(frame.addr, sig, False)
+            msg = f'Paused at breakpoint, {bp}'
+
+        self.msg_q(MsgLevel.INFO, msg)
+
+    def _parse_break_response(self, pause_notification):
+        # The pause notification is of the form: 'Paused {flagBitNum:x} {flagsAddr:x}'
+        tokens = pause_notification.split()
+        if len(tokens) < 3:
+            flagBitNum = 0
+            flagsAddr = 0
+        else:
+            try:
+                flagBitNum = int(tokens[1], base=16)
+                flagsAddr = int(tokens[2], base=16)
+            except ValueError:
+                # Couldn't parse breakpoint addr. Ignore it.
+                flagBitNum = 0
+                flagsAddr = 0
+
+        return flagBitNum, flagsAddr
 
 
