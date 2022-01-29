@@ -9,6 +9,7 @@ from sortedcontainers import SortedDict, SortedList
 import time
 import traceback
 
+import arduino_dbg
 import arduino_dbg.binutils as binutils
 import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.debugger as dbg
@@ -1591,63 +1592,27 @@ class Repl(object):
         self._debugger.close()
         self._debugger = debugger
 
+    @Command(keywords=['version'])
+    def print_version(self, argv):
+        """
+        Print debugger version
+
+            Syntax: version
+        """
+        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.FULL_DBG_VERSION_STR)
+
+
     @Command(keywords=['help'], completions=[Completions.KW])
     def print_help(self, argv):
         """
         Print usage information
 
-        Syntax: help [cmd]
+            Syntax: help [cmd]
 
         If given a specific command name, will print the usage info for that command.
         Otherwise, this help message lists all available commands.
         """
-
-        if len(argv) > 1 and CompoundCommand.is_compound_leader(argv[0]):
-            try:
-                primary = argv[0]
-                secondary = argv[1]
-                cmdMap = CompoundCommand.getCommandMap()
-                cmdObj = cmdMap[(primary, secondary)]
-                self._debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
-            except:
-                self._debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]} {argv[1]}' found.")
-                self._debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
-                self._debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
-
-            return
-        elif len(argv) > 0:
-            try:
-                cmd = argv[0]
-                cmdMap = Command.getCommandMap()
-                cmdObj = cmdMap[cmd]
-                self._debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
-            except:
-                self._debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]}' found.")
-                self._debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
-                self._debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
-
-            return
-
-        self._debugger.msg_q(MsgLevel.INFO, "Commands")
-        self._debugger.msg_q(MsgLevel.INFO, "--------")
-
-        cmdIndex = Command.getCommandIndex()
-        for (keyword, cmdObj) in cmdIndex.items(): # iterate over sorted map.
-            if cmdObj.display_help:
-                self._debugger.msg_q(MsgLevel.INFO, cmdObj.short_help)
-
-        self._debugger.msg_q(MsgLevel.INFO, "")
-        self._debugger.msg_q(MsgLevel.INFO,
-            "After doing a symbol search with sym or '?', you can reference results by")
-        self._debugger.msg_q(MsgLevel.INFO,
-            "number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
-        self._debugger.msg_q(MsgLevel.INFO,
-            "The most recently-used such number--or '#0' if '?' gave a unique result--can")
-        self._debugger.msg_q(MsgLevel.INFO,
-            "then be referenced as '$'. e.g.: `print $`  // look up the same value again")
-        self._debugger.msg_q(MsgLevel.INFO, "")
-        self._debugger.msg_q(MsgLevel.INFO,
-            "For more information, type: help <command>")
+        print_command_help(self._debugger, argv) # call method imported from repl_commands module.
 
 
     @Command(keywords=['quit', '\\q'])

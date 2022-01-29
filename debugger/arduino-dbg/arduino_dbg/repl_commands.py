@@ -2,6 +2,7 @@
 
 """
 Decorators to define REPL commands, auto completion, etc.
+Methods to tokenize command input, and print per-command help messages.
 """
 
 import inspect
@@ -14,6 +15,7 @@ import sys
 import traceback
 
 import arduino_dbg.term as term
+from arduino_dbg.term import MsgLevel
 
 class Completions(object):
     """
@@ -585,3 +587,69 @@ def repl_split(cmdline, incomplete_ok=False):
             else:
                 # A single-quote was likely left hanging open.
                 return repl_split(cmdline.rstrip() + "'", False)
+
+
+def print_command_help(debugger, argv):
+    """
+    Print help on available commands.
+
+    @param debugger the debugger with a print queue.
+    @param argv a list of strings from the REPL. Usually argv[0] is the keyword to look up.
+        For compound commands, this may be in (argv[0], argv[1]). If an empty list, prints
+        a list of available commands.
+    """
+    if argv is None:
+        argv = []
+
+    if len(argv) > 1 and CompoundCommand.is_compound_leader(argv[0]):
+        # Multi-keyword compound command detected based on first keyword.
+
+        try:
+            primary = argv[0]
+            secondary = argv[1]
+            cmdMap = CompoundCommand.getCommandMap()
+            cmdObj = cmdMap[(primary, secondary)]
+            debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
+        except:
+            debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]} {argv[1]}' found.")
+            debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
+            debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
+
+        return
+    elif len(argv) > 0:
+        # Get help on single-keyword command.
+        try:
+            cmd = argv[0]
+            cmdMap = Command.getCommandMap()
+            cmdObj = cmdMap[cmd]
+            debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
+        except:
+            debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]}' found.")
+            debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
+            debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
+
+        return
+
+    # No command keyword specified -- just list all available commands.
+
+    debugger.msg_q(MsgLevel.INFO, "Commands")
+    debugger.msg_q(MsgLevel.INFO, "--------")
+
+    cmdIndex = Command.getCommandIndex()
+    for (keyword, cmdObj) in cmdIndex.items(): # iterate over sorted map.
+        if cmdObj.display_help:
+            debugger.msg_q(MsgLevel.INFO, cmdObj.short_help)
+
+    debugger.msg_q(MsgLevel.INFO, "")
+    debugger.msg_q(MsgLevel.INFO,
+        "After doing a symbol search with sym or '?', you can reference results by")
+    debugger.msg_q(MsgLevel.INFO,
+        "number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
+    debugger.msg_q(MsgLevel.INFO,
+        "The most recently-used such number--or '#0' if '?' gave a unique result--can")
+    debugger.msg_q(MsgLevel.INFO,
+        "then be referenced as '$'. e.g.: `print $`  // look up the same value again")
+    debugger.msg_q(MsgLevel.INFO, "")
+    debugger.msg_q(MsgLevel.INFO,
+        "For more information, type: help <command>")
+
