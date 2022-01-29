@@ -1,22 +1,22 @@
 # (c) Copyright 2021 Aaron Kimball
 
 import functools
-import inspect
 import os
 import os.path
 import readline
 import signal
-import shlex
 from sortedcontainers import SortedDict, SortedList
 import time
 import traceback
 
 import arduino_dbg.binutils as binutils
+import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
 import arduino_dbg.io as io
 import arduino_dbg.protocol as protocol
+from arduino_dbg.repl_commands import *
 import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
@@ -32,370 +32,6 @@ def _softint(intstr, base=10):
     except ValueError:
         return None
 
-
-class Completions(object):
-    """
-    Enumeration of valid autocomplete token classes.
-    These can be used as entries in the `completions` list argument to @Command, and
-    are interpreted by the ReplAutocompleter to query the right set of possibilities.
-    """
-    NONE = ''                   # A token that is uncompletable. Used as 'filler' in the
-                                # completions list, before later completable token positions.
-    KW = 'kw'                   # Another keyword that starts with the token as prefix.
-    SYM = 'sym'                 # A symbol name that starts with the token as prefix.
-    TYPE = 'type'               # A type name that starts with the token as prefix.
-    SYM_OR_TYPE = 'sym/type'    # Either a symbol or a type name.
-    WORD_SIZE = 'word_size'     # An integer that's a valid word size {1, 2, 4}.
-    BINARY = 'binary'           # Values 0 and 1.
-    BASE = 'base'               # integer base: 2, 8, 10, 16.
-    CONF_KEY = 'conf_key'       # A configuration key.
-    PATH = 'path'               # A file path.
-
-
-
-class Command(object):
-    """
-    meta-decorator that tags a given function as a command that can be executed in the repl.
-    Binds the keyword(s) to the function, registers the function's docstring as its help
-    text, and the first non-empty line of the function's docstring as its short help text
-    shown by the 'help' command.
-
-    @param keywords is a list of keywords that trigger the command function.
-    @return a decorator that directly returns its function argument unmodified.
-    """
-
-    _cmd_map = {}                 # Lookup from all keywords to Command instances
-    _cmd_index = SortedDict()     # Set of Command instances keyed by primary keyword only.
-    _cmd_list = SortedList()      # Sorted list of all keywords.
-    _cmd_syntax_completions = {}  # Instructions indicating the kinds of tokens that can follow
-                                  # each keyword, for use in tab autocompletion.
-
-    def __init__(self, keywords, help_keywords=None, display_help=True, completions=None):
-        self.keywords = keywords # Set of keywords that activate this command.
-        self.help_keywords = help_keywords or [] # Additional keywords to display in cmd summary.
-        self.command_func = None # The function to call (memoized in __call__)
-        self.short_help = ''     # 1-line help summary extracted from fn docstring.
-        self.long_help = ''      # Full help summary extracted from fn docstring.
-        self.display_help = display_help # Does this show up in the command summary?
-
-        if not isinstance(keywords, list):
-            raise Exception("Expected syntax @Command(keywords=[...])")
-
-        if keywords is None or len(keywords) == 0:
-            raise Exception("Must supply one or more keywords to @command.")
-
-        # Register binding from each keyword to this object.
-        for kw in keywords:
-            if Command._cmd_map.get(kw):
-                raise Exception(f"Warning: keyword '{kw}' used multiple times")
-            Command._cmd_map[kw] = self
-            Command._cmd_list.add(kw)
-            Command._cmd_syntax_completions[kw] = completions
-
-        # Register this in the full command map
-        Command._cmd_index[keywords[0]] = self
-
-    def invoke(self, repl, args):
-        """
-        Actually invoke the command function we decorated.
-
-        @param repl the repl instance that owns the method.
-        @param args the arg array to pass to the method.
-        """
-
-        return self.command_func(repl, args) # repl is 'self' from pov of called method.
-
-    def __call__(self, *args, **kwargs):
-        """
-        Memoize the actual function associated with this command, and extract help text
-        from docstring.
-
-            @Command(keywords=['x','y'])
-            def some_fn(): ...
-
-            is equivalent to:
-
-            def some_fn(): ...
-            some_fn = Command(keywords=['x','y'])(some_fn)
-
-            ... is equivalent to...
-
-            def some_fn(): ...
-            c = Command(keywords=...)
-            some_fn = c.__call__(some_fn)
-
-        This callable method will be invoked with the function itself as the arg, to transform
-        that function. We want to save the function argument as 'what we really invoke' and
-        return the identity transformation in-place.
-
-        """
-
-        fn = args[0]
-        self.command_func = fn # The function argument is what we'll call to run the command.
-
-        # The long help (shown in `help <kwd>`) is the entire cleanly-reformatted docstring,
-        # along with the list of keyword synonyms to invoke it.
-        all_keywords = []
-        all_keywords.extend(self.keywords)
-        all_keywords.extend(self.help_keywords) # Some keywords like 'tm' show up as synonyms
-                                                # for <X> without activating <X> directly.
-
-        if len(all_keywords) > 1:
-            keywordsIntro = f"{all_keywords[0]} ({', '.join(all_keywords[1:])})"
-        else:
-            keywordsIntro = f"{all_keywords[0]}"
-
-        # Get the docstring and eliminate method-level indentation.
-        docstring = inspect.cleandoc(fn.__doc__)
-        # Split into lines; if one line matches `Syntax: <foo>`, make that line bold.
-        docstr_lines = docstring.split("\n")
-        for i in range(0, len(docstr_lines)):
-            if docstr_lines[i].strip().startswith("Syntax:"):
-                # Replace this line with *bold*
-                docstr_lines[i] = term.fmt(docstr_lines[i], term.BOLD)
-                break # Only need to bold one syntax line.
-        docstring = "\n".join(docstr_lines)
-
-        helptext = f"    {keywordsIntro}\n\n{docstring}"
-        self.long_help = helptext
-
-        # The short help (shown in the `help` summary) is the keyword list and
-        # the first non-empty line of the docstring.
-        if len(docstr_lines) == 1:
-            self.short_help = f'{keywordsIntro} -- {docstring.strip()}'
-        else:
-            first_real_line = None
-            for line in docstr_lines:
-                if len(line.strip()) > 0:
-                    first_real_line = line.strip()
-                    break
-            if first_real_line:
-                self.short_help = f'{keywordsIntro} -- {first_real_line}'
-            else:
-                # Just use.. the entire (empty?) docstring
-                self.short_help = f'{keywordsIntro} -- {docstring.strip()}'
-
-        return fn
-
-    @classmethod
-    def getCommandMap(cls):
-        """
-        Return full mapping from keywords to Command instances.
-        """
-        return cls._cmd_map
-
-    @classmethod
-    def getCommandIndex(cls):
-        """
-        Return sorted mapping from primary keyword to Command instances.
-        """
-        return cls._cmd_index
-
-    @classmethod
-    def getCommandList(cls):
-        """
-        Return sorted list of keywords.
-        """
-        return cls._cmd_list
-
-    @classmethod
-    def getCommandCompletions(cls, keyword):
-        """
-        Return a list of completion tokens accepted by each keyword
-        """
-        try:
-            return cls._cmd_syntax_completions[keyword]
-        except KeyError:
-            return None
-
-
-class ReplAutoComplete(object):
-    """
-    readline autocompleter for debugger repl.
-    """
-
-    def __init__(self, debugger):
-        self._debugger = debugger
-        self._cached_key = None     # (prefix, tokens, state) of previous request.
-        self._cached_result = None  # Last cached completion-suggestions value.
-
-    def clear_cache(self):
-        self._cached_key = None
-        self._cached_result = None
-
-    @staticmethod
-    def __filter(iterable, prefix):
-        """
-        Helper method: return only elements of the list that start with the prefix.
-        """
-        return list(filter(lambda item: item.startswith(prefix), iterable))
-
-    def _complete_keyword(self, prefix):
-        """
-        Return completions for keyword
-        """
-        if prefix is None or len(prefix) == 0:
-            nextfix = None
-        else:
-            last_char = prefix[-1]
-            next_char = chr(ord(last_char) + 1)
-            nextfix = prefix[0:-1] + next_char
-
-        return Command.getCommandList().irange(prefix, nextfix, inclusive=(True,False))
-
-    def _complete_symbol(self, prefix):
-        return self._debugger.syms_by_prefix(prefix)
-
-    def _complete_type(self, prefix):
-        lst = SortedList()
-        # ParsedDebugInfo.types() iteratively yields tuples of (typename, typedata). Just keep the name.
-        lst.update([elt[0] for elt in self._debugger.get_debug_info().types(prefix)])
-        return lst
-
-    def _complete_symbol_or_type(self, prefix):
-        lst = SortedList()
-        lst.update(self._complete_symbol(prefix))
-        lst.update(self._complete_type(prefix))
-        return lst
-
-    def _complete_conf_key(self, prefix):
-        conf_keys = self._debugger.get_conf_keys()
-        return self.__filter(conf_keys, prefix)
-
-    def _complete_path(self, prefix):
-        # See e.g. http://schdbr.de/python-readline-path-completion/
-        if prefix is None or len(prefix) == 0:
-            searchdir = '.'
-            result_prepend = ''
-            file_prefix = ''
-        elif prefix.endswith(os.path.sep):
-            # Prefix as-is is the directory to list.
-            searchdir = prefix
-            result_prepend = ''
-            file_prefix = ''
-        else:
-            # Iterate over parent dir of the complete prefix
-            searchdir = os.path.dirname(prefix)
-            result_prepend = searchdir
-            if searchdir is None or len(searchdir) == 0:
-                searchdir='.'
-            file_prefix = os.path.basename(prefix)
-
-        # Iterate through everything in the search dir.
-        if not os.path.isabs(searchdir):
-            searchdir = os.path.abspath(searchdir)
-
-        contents = os.listdir(searchdir)
-        # But only keep the ones that start with the prefix.
-        contents = list(filter(lambda item: item.startswith(file_prefix), contents))
-        contents = [ os.path.join(result_prepend, elem) for elem in contents ]
-        # Append '/' to directory elements.
-        for i in range(0, len(contents)):
-            if os.path.isdir(contents[i]):
-                # Completing to a directory should make next [tab] show items within that directory.
-                contents[i] = contents[i] + os.path.sep
-            else:
-                # files are complete items and should advance to next token
-                contents[i] = contents[i] + ' '
-
-        return contents
-
-    def _space(self, suggestions):
-        """
-        Add a space after each suggestion to advance to the next token in the autocomplete sequence.
-        """
-        return [ item + ' ' for item in suggestions ]
-
-    def _suggest(self, tokens, prefix):
-        if len(tokens) == 0 or len(tokens) == 1:
-            # We are trying to suggest the first token in the line, which is always a keyword.
-            return self._space(self._complete_keyword(prefix.strip()))
-
-        # Otherwise, we need to recommend a keyword-specific next token.
-        keyword = tokens[0].strip()
-        arg_tokens = tokens[1:]
-        # Get a list of the form [ clsA, clsB, clsC ] where clsA..C are strings in the
-        # 'Completions' string enumeration. Each of these defines the set of things that
-        # can be completed in each successive position of the arguments to the keyword.
-        completion_sets = Command.getCommandCompletions(keyword)
-        if completion_sets is None or len(completion_sets) < len(arg_tokens):
-            # We can't complete this far into the token set for this command
-            return []
-
-        # Get the completion set relevant to the current token
-        completion_set = completion_sets[len(arg_tokens) - 1]
-        if completion_set == Completions.NONE:
-            return [] # No suggestions
-        elif completion_set == Completions.KW:
-            return self._space(self._complete_keyword(prefix))
-        elif completion_set == Completions.SYM:
-            return self._space(self._complete_symbol(prefix))
-        elif completion_set == Completions.TYPE:
-            return self._space(self._complete_type(prefix))
-        elif completion_set == Completions.SYM_OR_TYPE:
-            return self._space(self._complete_symbol_or_type(prefix))
-        elif completion_set == Completions.WORD_SIZE:
-            return self._space(self.__filter([ '1', '2', '4' ], prefix))
-        elif completion_set == Completions.BINARY:
-            return self._space(self.__filter([ '0', '1' ], prefix))
-        elif completion_set == Completions.BASE:
-            return self._space(self.__filter([ '2', '8', '10', '16' ], prefix))
-        elif completion_set == Completions.CONF_KEY:
-            return self._space(self._complete_conf_key(prefix))
-        elif completion_set == Completions.PATH:
-            return self._complete_path(prefix)
-        elif isinstance(completion_set, list):
-            # Completion set is itself a set of explicit choices.
-            return self._space(list(filter(lambda choice: choice.startswith(prefix), completion_set)))
-
-        # Don't know what this completion set is supposed to be.
-        raise Exception(f"Unknown completion set: '{completion_set}'")
-
-
-    def complete(self, prefix, state):
-        """
-        Main interface method for readline autocomplete.
-        We are passed the current token to complete as 'text' and the iteration number in 'state'.
-        Incrementally higher 'state' values should yield subsequently-indexed suggestions.
-        """
-        try:
-            line_buffer = readline.get_line_buffer()
-            try:
-                tokens = Repl.split(line_buffer, incomplete_ok=True)
-            except ValueError:
-                # Even with quote-fixing, couldn't actually figure out what to do.
-                # Don't suggest anything.
-                return None
-
-            if not tokens or line_buffer[-1] == ' ':
-                tokens.append('')
-
-            # If this is the next 'state' for the same search, short-circuit by
-            # returning the next value in the cached suggestion result list.
-            expected_cache_key = (prefix, line_buffer, state - 1)
-            if self._cached_key == expected_cache_key and self._cached_result is not None:
-                # Cache hit
-                self._cached_key = (prefix, line_buffer, state)
-                return self._cached_result[state]
-
-            results = list(self._suggest(tokens, prefix))
-            results.append(None) # Append a 'None' to the end to signal
-                                 # stop-iteration condition to readline.
-
-            # Cache the result on the way out, along with a key to ensure we're still on the same
-            # search next time we try to access a cached result.
-            self._cached_key = (prefix, line_buffer, state)
-            self._cached_result = results
-
-            return results[state] # state is an index into the output list.
-
-        except Exception as e:
-            # readline swallows our exceptions. Print them out, because we need to know
-            # what's going on.
-            print(f'\nException in autocomplete: {e}')
-            if self._debugger.get_conf("dbg.verbose"):
-                traceback.print_tb(e.__traceback__)
-            raise # rethrow
 
 
 class Repl(object):
@@ -426,6 +62,9 @@ class Repl(object):
         # to user-configured filename.
         self._history_filename = None
         debugger.set_history_change_hook(self._history_change_callback)
+
+    def debugger(self):
+        return self._debugger
 
     def close(self):
         if self._hosted_dbg_service:
@@ -1952,7 +1591,6 @@ class Repl(object):
         self._debugger.close()
         self._debugger = debugger
 
-
     @Command(keywords=['help'], completions=[Completions.KW])
     def print_help(self, argv):
         """
@@ -1964,14 +1602,27 @@ class Repl(object):
         Otherwise, this help message lists all available commands.
         """
 
-        if len(argv) > 0:
+        if len(argv) > 1 and CompoundCommand.is_compound_leader(argv[0]):
+            try:
+                primary = argv[0]
+                secondary = argv[1]
+                cmdMap = CompoundCommand.getCommandMap()
+                cmdObj = cmdMap[(primary, secondary)]
+                self._debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
+            except:
+                self._debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]} {argv[1]}' found.")
+                self._debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
+                self._debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
+
+            return
+        elif len(argv) > 0:
             try:
                 cmd = argv[0]
                 cmdMap = Command.getCommandMap()
                 cmdObj = cmdMap[cmd]
                 self._debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
             except:
-                self._debugger.msg_q(MsgLevel.ERR, f"Error: No command {argv[0]} found.")
+                self._debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]}' found.")
                 self._debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
                 self._debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
 
@@ -2009,55 +1660,6 @@ class Repl(object):
         # `help quit`.
         pass
 
-    @staticmethod
-    def split(cmdline, incomplete_ok=False):
-        """
-        Split a commandline into tokens. We allow 'single quotes' or "double quotes" to preserve
-        whitespace within a token. There is no escape character; shortcuts like '\q' are returned
-        as-is. Unlike shlex in its posix=False settinsg, we strip '"containing quotes"' from token
-        responses.
-
-        @param cmdline the line to tokenize
-        @param incomplete_ok - if True, don't freak out at unclosed quote marks; attempt to
-            complete the quotes and try again. If False, unclosed quotes raise ValueError.
-        @return a list of whitespace-separated tokens from cmdline.
-        """
-        try:
-            tokens = shlex.split(cmdline, posix=False)
-        except ValueError:
-            if not incomplete_ok:
-                # Got incomplete quotation marks.
-                raise # re-throw
-            else:
-                single_q = None
-                double_q = None
-                try:
-                    single_q = cmdline.rindex("'")
-                except ValueError:
-                    # no single quote at all. That's fine.
-                    pass
-
-                try:
-                    double_q = cmdline.rindex('"')
-                except ValueError:
-                    # no double quote at all. That's fine.
-                    pass
-
-                if double_q is None and single_q is None:
-                    raise # No idea how to process a ValueError w/o any open-quote issues.
-                elif double_q is None and single_q is not None:
-                    # Try again with closed single-quote.
-                    return Repl.split(cmdline.rstrip() + "'", False)
-                elif double_q is not None and single_q is None:
-                    # Try again with closed double-quote.
-                    return Repl.split(cmdline.rstrip() + '"', False)
-                elif double_q > single_q:
-                    # A double-quote was likely left hanging open.
-                    return Repl.split(cmdline.rstrip() + '"', False)
-                else:
-                    # A single-quote was likely left hanging open.
-                    return Repl.split(cmdline.rstrip() + "'", False)
-
         def __strip_quotes(token):
             if len(token) >= 2 and token.startswith("'") and token.endswith("'"):
                 return token[1:-1]
@@ -2079,6 +1681,7 @@ class Repl(object):
             Returns True if we want to quit, False to continue.
         """
         commandMap = Command.getCommandMap()
+        compoundCommandMap = CompoundCommand.getCommandMap()
 
         try:
             self._completer.clear_cache() # Don't accidentally use suggestions from last input line.
@@ -2112,7 +1715,7 @@ class Repl(object):
             self._append_history()
 
         try:
-            raw_tokens = Repl.split(cmdline, incomplete_ok=False)
+            raw_tokens = repl_split(cmdline, incomplete_ok=False)
         except ValueError:
             print("Error: Unclosed quoted string")
 
@@ -2141,47 +1744,59 @@ class Repl(object):
             return False
 
         cmd = tokens[0].strip()
+        cmd_obj = None
+        cmd_self = self
+        pretty_cmd = cmd
 
         if cmd == "quit" or cmd == "exit" or cmd == "\\q":
             return True # Actually quit.
-        elif cmd in commandMap.keys():
+        elif cmd in commandMap:
+            cmd_obj = commandMap[cmd]
+            cmd_args = tokens[1:]
+        elif len(tokens) > 1 and CompoundCommand.is_compound_leader(cmd):
+            secondary = tokens[1].strip()
+            pretty_cmd = cmd + ' ' + secondary
+            if (cmd, secondary) in compoundCommandMap:
+                cmd_obj = compoundCommandMap[cmd, secondary]
+                cmd_args = tokens[2:]
+
+        if not cmd_obj:
+            print("Unknown command '%s'; try 'help'." % pretty_cmd)
+            return False
+
+        try:
+            locked = False
             try:
-                locked = False
-                try:
-                    cmd_obj = commandMap[cmd]
+                # Get ready to send commands...
+                while not locked:
+                    locked = self._debugger.get_cmd_lock()
 
-                    # Get ready to send commands...
-                    while not locked:
-                        locked = self._debugger.get_cmd_lock()
-
-                    # We have exclusive control of the debugger I/O channels.
-                    assert locked
-                    # Proceed to command.
-                    cmd_obj.invoke(self, tokens[1:])
-                finally:
-                    # Release I/O channel lock.
-                    if locked:
-                        self._debugger.release_cmd_lock()
-                    # Flush any output gathered during cmd invocation before handling exceptions
-                    # or proceeding further.
-                    self._console_printer.join_q()
-            except dbg.NoServerConnException as e:
-                term.write(f"Error running '{cmd}': {str(e)}", term.ERR)
-            except dbg.DisconnectedException as e:
-                term.write(f"Error: Disconnected from device", term.ERR)
-                if not self.reconnect():
-                    term.write(f"Error: Could not reconnect to device", term.ERR)
-            except dbg.InvalidConnStateException as e:
-                # Error interrupting the sketch to send command.
-                term.write(f"Error running '{cmd}': {str(e)}", term.ERR)
-            except Exception as e:
-                term.write(f"Error running '{cmd}': {e}", term.ERR)
-                if self._debugger.get_conf("dbg.verbose"):
-                    traceback.print_tb(e.__traceback__)
-                else:
-                    print("For stack trace info, `set dbg.verbose True`")
-        else:
-            print("Unknown command '%s'; try 'help'." % cmd)
+                # We have exclusive control of the debugger I/O channels.
+                assert locked
+                # Proceed to command.
+                cmd_obj.invoke(cmd_self, cmd_args)
+            finally:
+                # Release I/O channel lock.
+                if locked:
+                    self._debugger.release_cmd_lock()
+                # Flush any output gathered during cmd invocation before handling exceptions
+                # or proceeding further.
+                self._console_printer.join_q()
+        except dbg.NoServerConnException as e:
+            term.write(f"Error running '{pretty_cmd}': {str(e)}", term.ERR)
+        except dbg.DisconnectedException as e:
+            term.write(f"Error: Disconnected from device", term.ERR)
+            if not self.reconnect():
+                term.write(f"Error: Could not reconnect to device", term.ERR)
+        except dbg.InvalidConnStateException as e:
+            # Error interrupting the sketch to send command.
+            term.write(f"Error running '{pretty_cmd}': {str(e)}", term.ERR)
+        except Exception as e:
+            term.write(f"Error running '{pretty_cmd}': {e}", term.ERR)
+            if self._debugger.get_conf("dbg.verbose"):
+                traceback.print_tb(e.__traceback__)
+            else:
+                print("For stack trace info, `set dbg.verbose True`")
 
         return False
 

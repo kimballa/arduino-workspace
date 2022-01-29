@@ -9,6 +9,7 @@ Supports repl commands:
     breakpoint disable #n   - disable breakpoint by id. If at a breakpoint, #n is optional, use
                               current.
     breakpoint forget #n    - forget the n'th breakpoint in the database.
+    breakpoint sync         - Syncs enable/disable info from debugger up to device.
 
     `bp` is a synonym for `breakpoint` in repl.
 
@@ -23,6 +24,7 @@ import threading
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
+from arduino_dbg.repl_commands import CompoundCommand, CompoundHost
 from arduino_dbg.term import MsgLevel
 
 
@@ -209,4 +211,63 @@ class BreakpointCreateThread(threading.Thread):
         finally:
             # No matter what happens, we must relinquish this lock when done.
             self._debugger.release_cmd_lock()
+
+
+@CompoundHost
+class BreakpointCommands(object):
+    """
+    Handler for breakpoint repl commands.
+    """
+
+    def __init__(self, repl):
+        self._repl = repl
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['enable', 'e'], cls='BreakpointCommands')
+    def enable(self, args):
+        """
+        Enable a breakpoint
+
+        More text.
+        """
+        pass
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['disable', 'd'], cls='BreakpointCommands')
+    def disable(self, args):
+        """
+        Disable a breakpoint
+        """
+        pass
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['list'], cls='BreakpointCommands')
+    def list_bps(self, args):
+        """
+        List known breakpoints
+        """
+        self._repl.debugger().msg_q(MsgLevel.INFO, self._repl.debugger().breakpoints())
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['forget'], cls='BreakpointCommands')
+    def forget(self, args):
+        """
+        Forget a breakpoint
+        """
+        pass
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['sync'], cls='BreakpointCommands')
+    def sync(self, args):
+        """
+        Sync breakpoint enable/disable state from debugger to device
+
+        Breakpoint disable flags are cleared after resetting the device; this will
+        restore their state to that known by the debugger.
+        """
+        pass
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['new'], cls='BreakpointCommands')
+    def create(self, args):
+        """
+        Create a new breakpoint
+        """
+        pass
+
+
 
