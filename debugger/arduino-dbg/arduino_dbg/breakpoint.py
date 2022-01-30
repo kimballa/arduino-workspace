@@ -203,6 +203,16 @@ class Breakpoint(object):
         self.enabled = False
         self._debugger.set_bit_flag(flag_bits_addr, bit_num, 0)
 
+    def sync(self):
+        """
+        Sync the local enable status of this breakpoint up to the debugger.
+        """
+        bit_num, flag_bits_addr = self.signature
+        if flag_bits_addr == 0:
+            return # Cannot sync this breakpoint
+
+        self._debugger.set_bit_flag(flag_bits_addr, bit_num, int(self.enabled))
+
 
 class BreakpointCreateThread(threading.Thread):
     """
@@ -322,7 +332,7 @@ class BreakpointCommands(object):
         id = int(args[0])
         try:
             self._repl.debugger().breakpoints().forget(id)
-        except IndexErrpr:
+        except IndexError:
             self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
 
 
@@ -336,7 +346,18 @@ class BreakpointCommands(object):
         Breakpoint disable flags are cleared after resetting the device; this will
         restore their state to that known by the debugger.
         """
-        raise Exception("Unimplemented: breakpoint sync")
+        breakpoint_list = self._repl.debugger().breakpoints().breakpoints()
+        n = len(breakpoint_list)
+        if n == 0:
+            self._repl.debugger().msg_q(MsgLevel.INFO, '(No breakpoints to sync)')
+            return
+        elif n == 1:
+            self._repl.debugger().msg_q(MsgLevel.INFO, 'Setting enable flag for 1 breakpoint...')
+        else:
+            self._repl.debugger().msg_q(MsgLevel.INFO, f'Setting enable flags for {n} breakpoints...')
+
+        for bp in breakpoint_list:
+            bp.sync()
 
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['new'], cls='BreakpointCommands')

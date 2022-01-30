@@ -779,7 +779,12 @@ class Repl(object):
 
         Execution resumes at the program entry point. This will disconnect the debugger.
         """
+        self._debugger.msg_q(MsgLevel.INFO, "Resetting sketch...")
         self._debugger.reset_sketch()
+        if len(self._debugger.breakpoints().breakpoints()) > 0:
+            self._debugger.msg_q(MsgLevel.INFO,
+                "Disabled breakpoints will be reset. You may want to run `breakpoint sync`.")
+
 
 
     @Command(keywords=['set'], completions=[Completions.CONF_KEY])

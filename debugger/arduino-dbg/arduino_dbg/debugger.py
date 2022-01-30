@@ -1142,6 +1142,7 @@ class Debugger(object):
                 msg = None # Let the register_thread give the report.
             else:
                 msg = f'Paused at breakpoint, {bp}'
+                bp.enabled = True # Definitionally, it's enabled, whether or not we thought so.
         else:
             msg = "Paused by debugger."
 
@@ -1461,6 +1462,7 @@ class Debugger(object):
                     self.discover_current_breakpoint(sig) # Will print a msg to user, too.
                 else:
                     self.msg_q(MsgLevel.INFO, f'Paused at breakpoint, {bp}')
+                    bp.enabled = True # Definitionally, it's enabled, whether or not we thought so.
             else:
                 self.msg_q(MsgLevel.INFO, "Paused by debugger.")
 
