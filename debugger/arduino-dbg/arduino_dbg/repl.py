@@ -1590,7 +1590,10 @@ class Repl(object):
 
         # Swap out the active debugger instance for one attached to the specified file.
         self._debugger.close()
-        self._debugger = debugger
+        self._debugger.release_cmd_lock() # We hold the cmd lock coming into this method.
+                                          # Release it as we close the debugger
+        self._debugger = debugger  # Starts locked. The release() in loop_input_body() will
+                                   # release this lock.
 
     @Command(keywords=['version'])
     def print_version(self, argv):

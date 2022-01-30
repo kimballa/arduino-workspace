@@ -174,7 +174,7 @@ class Debugger(object):
     """
 
     def __init__(self, elf_name, connection, print_q, arduino_platform=None, force_config=None,
-            history_change_hook=None):
+            history_change_hook=None, is_locked=False):
         """
         @param elf_name the name of the ELF file holding the binary to debug
         @param connection the Serial connection to device (or pipe connection to local image host)
@@ -197,6 +197,8 @@ class Debugger(object):
         # may need to make multiple submissions.
         self._submit_lock = threading.Lock()
         self._cmd_event = threading.Event() # Event to signal a client is waiting to acquire lock.
+        if is_locked:
+            self._submit_lock.acquire() # Start with lock owned by caller.
 
         # Before we're connected to anything, stay in 'BREAK' state.
         self._process_state = ProcessState.BREAK
@@ -1241,6 +1243,7 @@ class Debugger(object):
                             self._restart_responsibility = ConnRestart.INTERNAL
                     else:
                         # Command submission is blocked because we own the cmd lock.
+                        assert own_lock
                         assert self._send_q.qsize() == 0
 
                         # Ideally we would have a way to interrupt this if the client

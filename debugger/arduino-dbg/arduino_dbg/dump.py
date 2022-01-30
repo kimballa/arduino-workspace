@@ -146,9 +146,10 @@ def load_dump(filename, print_q, config=None, history_change_hook=None):
 
     # Create a new Debugger instance connected to the 'left' pipe.
     # Specify the ELF file associated with this dump and the relevant Arduino platform.
+    # Start with client lock ownership - we'll release it when this 'load' command is done.
     dbg = debugger.Debugger(elf_filename, left, print_q,
         arduino_platform=dump_data['platform'], force_config=config,
-        history_change_hook=history_change_hook)
+        history_change_hook=history_change_hook, is_locked=True)
     dbg.set_process_state(debugger.ProcessState.BREAK) # It's definitionally always paused.
 
     # Create a service that acts like the __dbg_service() in C.
