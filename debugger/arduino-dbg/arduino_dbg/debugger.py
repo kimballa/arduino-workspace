@@ -549,6 +549,11 @@ class Debugger(object):
                     f'Arch changed widths: int={new_int_size}, ptr={new_addr_size}. Reloading ELF...')
                 self._try_read_elf()
 
+        # Clear cached architecture parameters in DWARFExprMachine
+        import arduino_dbg.eval_location as el
+        el.DWARFExprMachine.hard_reset_state()
+        el.DWARFExprMachine([], {}, self)
+
 
     def set_conf(self, key, val):
         """

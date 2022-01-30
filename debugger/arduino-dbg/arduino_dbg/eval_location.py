@@ -675,6 +675,7 @@ class DWARFExprMachine(object):
             DWARFExprMachine.__init_dispatch()
         if DWARFExprMachine.__instruction_set == None:
             # Set this up as a class value; assume arch is constant within debugger prgm lifetime
+            # Use DWARFExprMachine.hard_reset_state() to purge if necessary.
             DWARFExprMachine.__instruction_set = debugger.get_arch_conf('instruction_set')
             DWARFExprMachine.__register_mapping = debugger.get_arch_conf('stack_unwind_registers')
             DWARFExprMachine.__addr_size = debugger.get_arch_conf('ret_addr_size')
