@@ -603,7 +603,6 @@ def print_command_help(debugger, argv):
 
     if len(argv) > 1 and CompoundCommand.is_compound_leader(argv[0]):
         # Multi-keyword compound command detected based on first keyword.
-
         try:
             primary = argv[0]
             secondary = argv[1]
@@ -624,9 +623,19 @@ def print_command_help(debugger, argv):
             cmdObj = cmdMap[cmd]
             debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
         except:
-            debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]}' found.")
-            debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
-            debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
+            if CompoundCommand.is_compound_leader(cmd):
+                # List compound commands that start with this initial keyword.
+                compoundMap = CompoundCommand.getCommandMap()
+                compound_cmds = list(filter(lambda full_cmd: full_cmd.startswith(cmd + ' '),
+                    Command.getCommandIndex()))
+                debugger.msg_q(MsgLevel.INFO, f"'{cmd}' Commands")
+                debugger.msg_q(MsgLevel.INFO, (len(cmd) + 11) * "-")
+                debugger.msg_q(MsgLevel.INFO, '\n'.join(compound_cmds))
+                debugger.msg_q(MsgLevel.INFO, f"\nType 'help {cmd} <subcommand>' for more details")
+            else:
+                debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]}' found.")
+                debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
+                debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
 
         return
 
