@@ -251,7 +251,7 @@ class CompoundCommand(object):
             if primary not in Command._cmd_syntax_completions:
                 Command._cmd_syntax_completions[primary] = [[]]
 
-            Command._cmd_syntax_completions[primary].extend(kw2)
+            Command._cmd_syntax_completions[primary][0].extend(kw2)
 
         # Register in full command index for help.
         Command._cmd_index[f'{kw1[0]} {kw2[0]}'] = self
