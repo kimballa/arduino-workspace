@@ -46,8 +46,17 @@ class BreakpointDatabase(object):
 
     def __repr__(self):
         bp_strs = list(map(repr, self._breakpoints)) # Format breakpoint strs
+
+        # Mark enabled breakpoints with '[*]', disabled with '[ ]'
+        bp_enables = map(lambda bp: bp.enabled, self._breakpoints)
+        bp_enable_strs = list(map(lambda flag: '[' + (flag * '*') + ((not flag) * ' ') + '] ',
+            bp_enables))
+
         nums = list(map(lambda i: f'#{i}. ', range(0, len(bp_strs)))) # Format "#0. ", "#1. ", ...
-        lines = list(map(''.join, zip(nums, bp_strs))) # connect those into 1 str/line.
+        lines = list(map(''.join, zip(nums, bp_enable_strs, bp_strs))) # connect those into 1 str/line.
+
+        lines.insert(0, "id  en  breakpoint")
+        lines.insert(1, "------------------")
         return '\n'.join(lines)
 
 
@@ -66,25 +75,6 @@ class BreakpointDatabase(object):
         self._sig_to_bp[signature] = bp
         return bp
 
-    def toggle_bp_by_idx(self, idx, enabled):
-        """
-        Set breakpoint enabled state for the idx'th entry in our database.
-        """
-        if idx >= len(self._breakpoints):
-            raise IndexError(f'No such breakpoint id #{idx}')
-
-        raise Exception("XXX TODO: Rewrite, no enabled flag!!!")
-        self._breakpoints[idx].enabled = enabled
-
-    def toggle_bp_by_pc(self, pc, enabled):
-        """
-        Set breakpoint enabled state for bp at $PC.
-        """
-        if pc not in self._pc_to_bp:
-            raise KeyError(f'No known breakpoint at $PC={pc:04x}')
-
-        raise Exception("XXX TODO: Rewrite, no enabled flag!!!")
-        self._pc_to_bp[pc].enabled = enabled
 
     def get_bp_for_pc(self, pc):
         """
@@ -156,6 +146,8 @@ class Breakpoint(object):
         self.signature = signature   # A unique server-side id for the breakpoint.
                                      # We see this as a (bitnumber, bitflags_addr) pair.
 
+        self._debugger = debugger
+
         self.sym = debugger.function_sym_by_pc(pc)
         if self.sym is None:
             debugger.msg_q(MsgLevel.WARN, f'New breakpoint at {pc:04x} not within known method')
@@ -171,6 +163,9 @@ class Breakpoint(object):
 
         self.source_line = binutils.pc_to_source_line(debugger.elf_name, pc) or None
 
+        self.enabled = True
+
+
     def __repr__(self):
         s = f'$PC=0x{self.pc:04x}:  '
 
@@ -183,6 +178,31 @@ class Breakpoint(object):
             s += f'  ({self.source_line})'
 
         return s
+
+    def enable(self):
+        """
+        Enable this breakpoint.
+        """
+        bit_num, flag_bits_addr = self.signature
+        if flag_bits_addr == 0:
+            self._debugger.msg_q(MsgLevel.ERR,
+                'Error: Breakpoint has null bitfield addr, cannot enable')
+
+        self.enabled = True
+        self._debugger.set_bit_flag(flag_bits_addr, bit_num, 1)
+
+    def disable(self):
+        """
+        Disable this breakpoint.
+        """
+        bit_num, flag_bits_addr = self.signature
+        if flag_bits_addr == 0:
+            self._debugger.msg_q(MsgLevel.ERR,
+                'Error: Breakpoint has null bitfield addr, cannot disable')
+
+        self.enabled = False
+        self._debugger.set_bit_flag(flag_bits_addr, bit_num, 0)
+
 
 class BreakpointCreateThread(threading.Thread):
     """
@@ -227,21 +247,52 @@ class BreakpointCommands(object):
         """
         Enable a breakpoint
 
-        More text.
+            Syntax: breakpoint enable <id>
+
+        Enables a breakpoint, specified by its id from `breakpoint list`.
+        See also `help breakpoint disable`.
         """
-        pass
+        if len(args) == 0:
+            self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint enable <id>")
+            return
+
+        id = int(args[0])
+        bp = self._repl.debugger().breakpoints().get_bp(id)
+        if bp is None:
+            self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
+            return
+
+        bp.enable()
+
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['disable', 'd'], cls='BreakpointCommands')
     def disable(self, args):
         """
         Disable a breakpoint
+
+            Syntax: breakpoint disable <id>
+
+        Disables a breakpoint, specified by its id from `breakpoint list`. Disabled breakpoints
+        do not stop program execution, but can be re-enabled later with `breakpoint enable`.
         """
-        pass
+        if len(args) == 0:
+            self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint disable <id>")
+            return
+
+        id = int(args[0])
+        bp = self._repl.debugger().breakpoints().get_bp(id)
+        if bp is None:
+            self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
+            return
+
+        bp.disable()
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['list'], cls='BreakpointCommands')
     def list_bps(self, args):
         """
         List known breakpoints
+
+            Syntax: breakpoint list
         """
         self._repl.debugger().msg_q(MsgLevel.INFO, self._repl.debugger().breakpoints())
 
@@ -249,25 +300,50 @@ class BreakpointCommands(object):
     def forget(self, args):
         """
         Forget a breakpoint
+
+            Syntax: breakpoint forget <id>
+
+        Drops a breakpoint from the local breakpoints list. This does not change whether or
+        not the breakpoint is enabled or disabled on the device.
         """
-        pass
+        if len(args) == 0:
+            self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint disable <id>")
+            return
+
+        id = int(args[0])
+        try:
+            self._repl.debugger().breakpoints().forget(id)
+        except IndexErrpr:
+            self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
+
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['sync'], cls='BreakpointCommands')
     def sync(self, args):
         """
         Sync breakpoint enable/disable state from debugger to device
 
+            Syntax: breakpoint sync
+
         Breakpoint disable flags are cleared after resetting the device; this will
         restore their state to that known by the debugger.
         """
-        pass
+        raise Exception("Unimplemented: breakpoint sync")
+
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['new'], cls='BreakpointCommands')
     def create(self, args):
         """
         Create a new breakpoint
-        """
-        pass
 
+            Syntax: breakpoint new
+
+        If supported by the device architecture, create a new breakpoint.
+        """
+        if not self._debugger.get_arch_conf("dynamic_breakpoints"):
+            self._repl.debugger().msg_q(MsgLevel.ERR, "Device does not support breakpoint creation")
+            return
+
+        # TODO(aaron): Work out additional syntax requirements and implement.
+        raise Exception("Unimplemented: `breakpoint new`")
 
 

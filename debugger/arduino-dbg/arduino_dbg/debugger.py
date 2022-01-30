@@ -1571,6 +1571,12 @@ class Debugger(object):
         result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], Debugger.RESULT_ONELINE)
         return int(result, base=16)
 
+    def set_bit_flag(self, flags_addr, bit_num, val):
+        """
+            In a bitfield flags variable, set the bit 'bit_num' to val (0 or 1).
+        """
+        self.send_cmd([protocol.DBG_OP_SET_FLAG, bit_num, flags_addr, int(val)], Debugger.RESULT_SILENT)
+
     def get_stack_snapshot(self, size=16, skip=-1):
         """
             Retrieve the `size` bytes above SP+k (but not past RAMEND),

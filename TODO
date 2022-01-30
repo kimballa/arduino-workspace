@@ -9,13 +9,9 @@ Debugger:
 On-device service capabilities:
 
 Client:
-  - Add bp enable/disable commands.
-  - Add bp list command.
-
   - if we reset the device, all bp en/disables go back to full enabled.
-    we can sweep the bp db for known addrs and poke them though. add a
-    command to sync ('breakpoint sync' ?)
-
+    we can sweep the bp db for known addrs and poke them though. Implement
+    command to sync ('breakpoint sync')
 
   --------
 
