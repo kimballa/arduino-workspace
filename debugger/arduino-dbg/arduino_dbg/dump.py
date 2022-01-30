@@ -245,6 +245,9 @@ class HostedDebugService(object):
                 # Debugger expects a RESULT_ONELINE, so send a formal response that is not
                 # 'Continuing' in addition to the user-helpful comment above.
                 self._send("error") 
+            elif cmd == protocol.DBG_OP_SET_FLAG:
+                # Used to enable/disable breakpoints; unnecessary in static image debugger.
+                self._send_comment("Cannot set bit flag in image debugger")
             elif cmd == protocol.DBG_OP_FLASHADDR:
                 size = args[0]
                 addr = args[1]
