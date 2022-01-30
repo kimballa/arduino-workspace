@@ -12,6 +12,23 @@
 //       /* your setup function. */
 //     }
 //
+// ** API:
+//
+// The API is defined as a set of macros; do not call the functions directly.
+// The debugger enable-control (see below) will cleanly no-op the macros when debug mode
+// is disabled. Moreover, the macros make possible some things like breakpoint disabling.
+//
+// BREAK() -- Set an unconditional breakpoint. You can disable and re-enable these in the
+//            debugger during runtime with `breakpoint disable` and `breakpoint enable`.
+//            Up to 16 per translation unit (each .cpp file, or entire sketch if .ino) can
+//            be selectively controlled; subsequent breakpoints are unconditional.
+//
+// ASSERT(cond)  -- Evaluate `cond` and break if false. Prints assertion expression and
+//                  location in the debugger if the assertion fails.
+//
+// DBGPRINT(msg) -- Print a message to the serial console, printed in the debugger.
+// TRACE(msg)    -- Print a message to the serial console, along with file/line info.
+//
 // ** Configuration:
 //
 // You can control this library by defining the following macros before dbg.h is #include'd:

@@ -272,8 +272,12 @@ class BreakpointCommands(object):
 
             Syntax: breakpoint disable <id>
 
-        Disables a breakpoint, specified by its id from `breakpoint list`. Disabled breakpoints
-        do not stop program execution, but can be re-enabled later with `breakpoint enable`.
+        Disables a breakpoint, specified by its id from `breakpoint list`. Disabled
+        breakpoints do not stop program execution when encountered by the sketch. They can
+        be re-enabled later with `breakpoint enable`.
+
+        If the program is currently paused at a breakpoint that you then disable,
+        execution will not resume until you explicitly `continue` execution.
         """
         if len(args) == 0:
             self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint disable <id>")
@@ -293,6 +297,11 @@ class BreakpointCommands(object):
         List known breakpoints
 
             Syntax: breakpoint list
+
+        Breakpoints are catalogued as they are encountered in the running program and
+        assigned sequentially increasing id numbers in the debugger. You can toggle these
+        breakpoints on and off with the `breakpoint enable` and `breakpoint disable`
+        commands.
         """
         self._repl.debugger().msg_q(MsgLevel.INFO, self._repl.debugger().breakpoints())
 
