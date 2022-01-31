@@ -70,12 +70,7 @@ Usage:
 Using the debugger
 ===================
 
-* Install the dependencies with `cd debugger/arduino_dbg/ && pip install -r requirements.txt`.
-* If not already installed, install `binutils` through your OS package manager.
-* Build the Arduino library with `cd debugger/dbglib && make install`
-* Follow instructions in `dbg.h` to include in your application.
-* Run `debugger/arduino-dbg/bin/arduino-dbg` to launch the debug console.
-* Use the `help` command at the prompt to see available capabilities.
+See README.md in the `debugger/arduino_dbg` directory for more details.
 
 ![debugger screenshot](./debugger/doc/dbg-screenshot.png)
 

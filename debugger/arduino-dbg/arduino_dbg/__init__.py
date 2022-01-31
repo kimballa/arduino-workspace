@@ -25,7 +25,7 @@ def _parseArgs():
     return parser.parse_args()
 
 
-def main(argv):
+def main():
     ret = 1
     args = _parseArgs()
     connection = None
