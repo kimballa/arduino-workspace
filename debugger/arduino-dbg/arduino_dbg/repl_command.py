@@ -590,6 +590,44 @@ def repl_split(cmdline, incomplete_ok=False):
                 return repl_split(cmdline.rstrip() + "'", False)
 
 
+def print_help_for_leading_keyword(debugger, cmd):
+    """
+    If we were asked for 'help foo' when there is a set of 'foo bar', 'foo baz', etc. commands,
+    print the set of commands with compound keywords that start with 'foo'.
+
+    @param cmd the "leader keyword" for this set of compound-keyword commands.
+    """
+    # Note that 'cmd' might be an alias for the canonical commands (e.g. 'bp' instead of
+    # 'breakpoint). In which case we won't see subcommands available in the command
+    # index. Start by getting the *canonical* keyword for the command: the first one in the kw1
+    # list of each @CompoundCommand decoration.
+
+    # Start with the map of all compound commands.
+    compound_cmd_map = CompoundCommand.getCommandMap()
+    # Find one or more with a leader keyword that matches 'cmd'.
+    compatible_compounds = list(filter(lambda kw1_kw2: kw1_kw2[0] == cmd, compound_cmd_map))
+    assert len(compatible_compounds) > 0  # (Otherwise cmd shouldn't be is_compound_leader())
+    # Get the first such compound keyword command as a 'reference' command.
+    leader_cmd_ref = compound_cmd_map[compatible_compounds[0]]
+    # ... and get its *first* alias in its first-keyword list. This is the canonical
+    # leader keyword for this set of compound-keyword commands.
+    canonical_leader = leader_cmd_ref.kw1[0]
+
+    # Now search the main command index for compound keywords that begin with that
+    # canonical leader keyword.
+    cmd_index = Command.getCommandIndex()
+    compound_cmds = list(filter(lambda full_cmd: full_cmd.startswith(canonical_leader + ' '),
+                                cmd_index))
+    debugger.msg_q(MsgLevel.INFO, f"'{canonical_leader}' Commands")
+    debugger.msg_q(MsgLevel.INFO, (len(canonical_leader) + 11) * "-")
+    for full_cmd in compound_cmds:
+        cmd_obj = cmd_index[full_cmd]
+        if cmd_obj.display_help:
+            debugger.msg_q(MsgLevel.INFO, cmd_obj.short_help)
+
+    debugger.msg_q(MsgLevel.INFO, f"\nType 'help {cmd} <subcommand>' for more details.")
+
+
 def print_command_help(debugger, argv):
     """
     Print help on available commands.
@@ -620,18 +658,13 @@ def print_command_help(debugger, argv):
         # Get help on single-keyword command.
         try:
             cmd = argv[0]
-            cmdMap = Command.getCommandMap()
-            cmdObj = cmdMap[cmd]
-            debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
+            cmd_map = Command.getCommandMap()
+            cmd_obj = cmd_map[cmd]
+            debugger.msg_q(MsgLevel.INFO, cmd_obj.long_help)
         except Exception:
             if CompoundCommand.is_compound_leader(cmd):
                 # List compound commands that start with this initial keyword.
-                compound_cmds = list(filter(lambda full_cmd: full_cmd.startswith(cmd + ' '),
-                                            Command.getCommandIndex()))
-                debugger.msg_q(MsgLevel.INFO, f"'{cmd}' Commands")
-                debugger.msg_q(MsgLevel.INFO, (len(cmd) + 11) * "-")
-                debugger.msg_q(MsgLevel.INFO, '\n'.join(compound_cmds))
-                debugger.msg_q(MsgLevel.INFO, f"\nType 'help {cmd} <subcommand>' for more details")
+                print_help_for_leading_keyword(debugger, cmd)
             else:
                 debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]}' found.")
                 debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
@@ -644,10 +677,10 @@ def print_command_help(debugger, argv):
     debugger.msg_q(MsgLevel.INFO, "Commands")
     debugger.msg_q(MsgLevel.INFO, "--------")
 
-    cmdIndex = Command.getCommandIndex()
-    for (keyword, cmdObj) in cmdIndex.items():  # iterate over sorted map.
-        if cmdObj.display_help:
-            debugger.msg_q(MsgLevel.INFO, cmdObj.short_help)
+    cmd_index = Command.getCommandIndex()
+    for (keyword, cmd_obj) in cmd_index.items():  # iterate over sorted map.
+        if cmd_obj.display_help:
+            debugger.msg_q(MsgLevel.INFO, cmd_obj.short_help)
 
     debugger.msg_q(MsgLevel.INFO, "")
     debugger.msg_q(
