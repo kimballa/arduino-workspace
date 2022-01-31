@@ -4,10 +4,9 @@
 import unittest
 
 import arduino_dbg.stack as stack
-import arduino_dbg.symbol as symbol
 import arduino_dbg.eval_location as el
-import arduino_dbg.types as types
-from dbg_testcase import *
+from dbg_testcase import DbgTestCase
+
 
 class TestImplicitPtr(DbgTestCase):
 
@@ -59,7 +58,7 @@ class TestImplicitPtr(DbgTestCase):
         # and #1 is the string itself, read fully despite no actual RAM address to retrieve it from;
         # the value was hallucinated from a DwarfProcedure in the .debug_info section.
         funcOrFile = var_values['funcOrFile']
-        self.assertEqual(len(funcOrFile), 2) # 2-tuple.
+        self.assertEqual(len(funcOrFile), 2)  # 2-tuple.
         implicit_ptr = funcOrFile[0]
         string_data = funcOrFile[1]
         self.assertTrue(isinstance(implicit_ptr, el.ImplicitPtr))

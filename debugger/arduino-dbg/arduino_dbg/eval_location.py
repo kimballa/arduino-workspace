@@ -14,40 +14,41 @@ import elftools.dwarf.dwarf_expr as dwarf_expr
 import arduino_dbg.debugger as dbg
 import arduino_dbg.types as types
 
+
 class LookupFlags(object):
     """
     Flags that provide info about the result returned by eval() or access().
     """
 
     # Top level messages.
-    OK                      =     0x1     # Successfully produced a value.
-    WARNED                  =     0x2     # Produced a value but with warnings.
+    OK                      =     0x1       # Successfully produced a value.
+    WARNED                  =     0x2       # Produced a value but with warnings.
 
     # Error codes
-    ERR_NO_LOCATION         =    0x10     # No location data available.
-    ERR_PC_OUT_OF_BOUNDS    =    0x20     # Location data available but PC is not in a range
-                                          # where the location expr for this var is valid;
-                                          # var is out of scope.
+    ERR_NO_LOCATION         =    0x10       # No location data available.
+    ERR_PC_OUT_OF_BOUNDS    =    0x20       # Location data available but PC is not in a range
+                                            # where the location expr for this var is valid;
+                                            # var is out of scope.
 
     # Warning codes (set WARNED in addition to one or more of these)
-    WARN_CLOBBERED_REG      =   0x100     # Warning: in addition to stack-unwinding, we rely
-                                          # on the value of a caller-save register which may
-                                          # be clobbered by the time we read the value.
+    WARN_CLOBBERED_REG      =   0x100       # Warning: in addition to stack-unwinding, we rely
+                                            # on the value of a caller-save register which may
+                                            # be clobbered by the time we read the value.
 
     # Information about how the location was calculated.
-    MULTIPART               =  0x1000     # The address is in multiple pieces
-    REGISTER_UNWIND         =  0x2000     # The result relies on processing the .debug_frame
-                                          # stack unwinding info
-    COMPILE_TIME_CONST      =  0x4000     # Value was embedded directly into the .debug_info
-                                          # as a compiler-deduced constant.
-    CONST_ADDR              =  0x8000     # Address provided by DW_OP_addr or addrx
-    FLASH_ADDR              = 0x10000     # Address retrieved from flash segment, not RAM.
-    IMPLICIT_PTR            = 0x20000     # 'Address' is an implicit pointer to a known value,
-                                          # but not actually stored at an address in memory.
+    MULTIPART               =  0x1000       # The address is in multiple pieces
+    REGISTER_UNWIND         =  0x2000       # The result relies on processing the .debug_frame
+                                            # stack unwinding info
+    COMPILE_TIME_CONST      =  0x4000       # Value was embedded directly into the .debug_info
+                                            # as a compiler-deduced constant.
+    CONST_ADDR              =  0x8000       # Address provided by DW_OP_addr or addrx
+    FLASH_ADDR              = 0x10000       # Address retrieved from flash segment, not RAM.
+    IMPLICIT_PTR            = 0x20000       # 'Address' is an implicit pointer to a known value,
+                                            # but not actually stored at an address in memory.
 
 
-    ERRORS_MASK             =    0xF0     # Errors fit under this mask
-    WARNINGS_MASK           =   0xF02     # Warnings fit under this mask
+    ERRORS_MASK             =    0xF0       # Errors fit under this mask
+    WARNINGS_MASK           =   0xF02       # Warnings fit under this mask
 
     @staticmethod
     def successful(flags):
@@ -91,6 +92,7 @@ class LookupFlags(object):
             messages += '(Flash data)'
         return messages
 
+
 def format_accessed_val(val, typ, class_indent=0):
     """
     Given 'val' as returned by the Memory.access_resolved_address() method
@@ -126,6 +128,7 @@ def format_accessed_val(val, typ, class_indent=0):
         # Invoke repr() explicitly to quote/escape strings.
         return f'{repr(val)}'
 
+
 class ObjField(object):
     """
     A single field within an ObjectFields.
@@ -144,13 +147,14 @@ class ObjField(object):
     def __repr__(self):
         return self.format(0)
 
+
 class ObjectFields(object):
     """
     Memory access scan of an object. Include all of its fields.
     """
     def __init__(self, class_type):
         self.class_type = class_type
-        self.obj_fields = [] # List of ObjField records.
+        self.obj_fields = []  # List of ObjField records.
 
     def add_field_val(self, obj_field):
         self.obj_fields.append(obj_field)
@@ -158,7 +162,7 @@ class ObjectFields(object):
     def format(self, indent=0):
         pad = indent * '  '
         field_list = self.obj_fields.copy()
-        field_list.sort(key=lambda field: field.offset) # Sort fields in ascending offset order.
+        field_list.sort(key=lambda field: field.offset)  # Sort fields in ascending offset order.
         strings = list(map(lambda field: field.format(indent), field_list))
         join_str = '\n  ' + pad
         return self.class_type.class_name +  ' {\n  ' + pad + join_str.join(strings) + pad + \
@@ -186,7 +190,7 @@ class ImplicitPtr(object):
             elif isinstance(val, list):
                 self.size = len(val)
             elif isinstance(val, str):
-                self.size = len(val);
+                self.size = len(val)
 
     def __repr__(self):
         s = '*(implicit ptr)'
@@ -277,10 +281,10 @@ class Memory(object):
             within an object, and the result word is retrieved from *(addrs + offset).
         @param expr_machine the invoking DWARFExprMachine, if any.
         """
-        out = 0 # scalar result
+        out = 0  # scalar result
         for (addr, piece_size) in addrs:
             if piece_size == DWARFExprMachine.ALL:
-                piece_size = size # There is only one piece, and it is the caller-decl'd size
+                piece_size = size  # There is only one piece, and it is the caller-decl'd size
             elif offset != 0:
                 raise Exception("Cannot access array/object offset with addr in multiple pieces")
 
@@ -335,7 +339,7 @@ class Memory(object):
         const_addr = flags & LookupFlags.CONST_ADDR
         arch = self._debugger.get_arch_conf('instruction_set')
 
-        out = 0 # for scalar result
+        out = 0  # for scalar result
         new_shift = 0
         existing_mask = 0
         for (addr, piece_size) in addrs:
@@ -350,13 +354,13 @@ class Memory(object):
                 data_seg_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
                 if isinstance(addr, int) and addr == addr & data_seg_mask:
                     # It's a constant address and it's not in .data (i.e., it's in .text).
-                    mem_fn = self.flash # Use self.flash() to load from .text
+                    mem_fn = self.flash  # Use self.flash() to load from .text
                     flags |= LookupFlags.FLASH_ADDR
                 elif isinstance(addr, int) and addr != addr & data_seg_mask:
-                    addr = addr & data_seg_mask # remove 0x800000 .data prefix from addr.
+                    addr = addr & data_seg_mask  # remove 0x800000 .data prefix from addr.
 
             if piece_size == DWARFExprMachine.ALL:
-                piece_size = size # There is only one piece, and it is the caller-decl'd size
+                piece_size = size  # There is only one piece, and it is the caller-decl'd size
             elif offset != 0:
                 raise Exception("Cannot access array/object offset with addr in multiple pieces")
 
@@ -388,15 +392,15 @@ class Memory(object):
                 existing_mask <<= 8
                 existing_mask |= 0xFF
 
-            new_shift += 8 * piece_size # next new bytes shl by piece_size * 8 more bits
-                                        # before slotting in
+            new_shift += 8 * piece_size  # next new bytes shl by piece_size * 8 more bits
+                                         # before slotting in
 
-        out &= existing_mask # Ensure we don't return data that's too wide for size.
+        out &= existing_mask  # Ensure we don't return data that's too wide for size.
         return out, flags
 
 
     def access_resolved_address(self, addrs, flags=0, typ=None, size=None, field_offset=0,
-            expr_machine=None):
+                                expr_machine=None):
         """
         Given an address list 'addrs' of the form returned by 'DWARFExprMachine.eval()', and
         associated flags, as well as datatype and/or size of data to retrieve, access the
@@ -427,7 +431,8 @@ class Memory(object):
                     # Read the value of the next field of the object.
                     field_t = field.parent_type()
                     field_sz = field_t.size
-                    (val, flags) = self.access_resolved_address(addrs, flags, field_t,
+                    (val, flags) = self.access_resolved_address(
+                        addrs, flags, field_t,
                         field_offset=field.offset, expr_machine=expr_machine)
                     field_val = ObjField(field, field.offset, field_sz, val)
                     obj.add_field_val(field_val)
@@ -459,7 +464,8 @@ class Memory(object):
             # Fetch exactly as many bytes as requested.
             access_size = size
             if typ and typ.size != size:
-                self._debugger.verboseprint('Warning: both type and size specified in access(); ',
+                self._debugger.verboseprint(
+                    'Warning: both type and size specified in access(); ',
                     'size=', size, ' but type width is ', typ.size, '. ',
                     'Using explicit size=', size, '.')
         elif typ and typ.is_array():
@@ -474,18 +480,19 @@ class Memory(object):
                 'Warning: No type or size specified to Memory.access(); ',
                 'defaulting to CPU word size of ', access_size)
 
-        outlist=[] # for array-based results
+        outlist = []  # for array-based results
         if access_count == types.VARIABLE_LEN_ARRAY:
             # We're reading a null-termianted string from the specified address. Continue reading
             # until we reach a null terminator.
             assert access_size > 0
             offset = 0
             while True:
-                (out, flags) = access_fn(addrs, flags, access_size, offset + field_offset,
+                (out, flags) = access_fn(
+                    addrs, flags, access_size, offset + field_offset,
                     expr_machine)
                 outlist.append(out)
                 if out == 0:
-                    break # Found null terminator.
+                    break  # Found null terminator.
                 offset += access_size
                 if offset == self.MAX_NULL_TERM_STRING_LEN:
                     # Don't run on in memory forever. Add an ellipse and call it a day.
@@ -495,7 +502,8 @@ class Memory(object):
             # If access_size == DWARFExprMachine.ALL (-1), don't actually use it as offset.
             stride = max(0, access_size)
             for i in range(0, access_count):
-                (out, flags) = access_fn(addrs, flags, access_size, i * stride + field_offset,
+                (out, flags) = access_fn(
+                    addrs, flags, access_size, i * stride + field_offset,
                     expr_machine)
                 outlist.append(out)
 
@@ -515,12 +523,13 @@ class Memory(object):
                 self._debugger.verboseprint(f'Resolved str={repr(out)} len={len(out)}')
             elif isinstance(out, list):
                 # It's an array.
-                self._debugger.verboseprint(f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} ' +
+                self._debugger.verboseprint(
+                    f'Resolved array={list(map(lambda x: f"0x{x:x}", out))} '
                     f'elem_size={access_size}, cnt={access_count}')
             else:
                 # Unsure what type this is, exactly.
-                self._debugger.verboseprint(f'Resolved value: {out} ' +
-                    f'(size={access_size}, cnt={access_count})')
+                self._debugger.verboseprint(
+                    f'Resolved value: {out} (size={access_size}, cnt={access_count})')
 
         return out, flags
 
@@ -587,17 +596,17 @@ class Memory(object):
                         deref_data = deref_data[val.offset:]
                     else:
                         # Can't access at offset +n within e.g. an int.
-                        raise Exception('Cannot dereference implicit ptr at offset within' +
-                          f' {deref_data.__class__}')
+                        raise Exception(
+                            f'Cannot dereference implicit ptr at offset within {deref_data.__class__}')
                 deref_out = self.interpret_typed_val(deref_data, deref_type)
-                val = (deref_addr, deref_out) # 'val' is the (implicit) "address" and its pointee.
+                val = (deref_addr, deref_out)  # 'val' is the (implicit) "address" and its pointee.
             else:
                 # We don't know exactly how to type-convert the result, but nonetheless
                 # we do have an implicit pointer to... some value. Show it without further
                 # processing.
-                val = (val, val.value) # 'val' is the (implicit) "address" and its pointee.
+                val = (val, val.value)  # 'val' is the (implicit) "address" and its pointee.
         elif typ is None:
-            pass # No type-specific conversions to do.
+            pass  # No type-specific conversions to do.
         elif typ.is_string() and isinstance(val, list):
             # Convert output from array to string.
             out_chars = list(map(lambda c: chr(c), val))
@@ -606,7 +615,7 @@ class Memory(object):
                 # Chomp at the first null terminator we see.
                 out_chars = out_chars[:null_idx]
             except ValueError:
-                pass # No null terminator to chomp.
+                pass  # No null terminator to chomp.
 
             val = ''.join(out_chars)
         elif typ.pointer_depth() > 0 and isinstance(val, int) and val != 0:
@@ -623,9 +632,10 @@ class Memory(object):
                 deref_addr = val
                 deref_addr_lst, deref_flags = Memory.__make_list_for_addr(deref_addr)
                 # Look up what it's dereferencing.
-                deref_out, _ = self.access_resolved_address(deref_addr_lst, deref_flags, deref_type,
+                deref_out, _ = self.access_resolved_address(
+                    deref_addr_lst, deref_flags, deref_type,
                     expr_machine=expr_machine)
-                val = (deref_addr, deref_out) # 'val' is the address and its pointee.
+                val = (deref_addr, deref_out)  # 'val' is the address and its pointee.
 
         # Return the (possibly-type-converted) value.
         return val
@@ -671,9 +681,9 @@ class DWARFExprMachine(object):
 
     def __init__(self, opcodes, regs, debugger, initial_stack=None):
         # Handle one-time setups for evaluation environment, if needed.
-        if DWARFExprMachine.__dispatch == None:
+        if DWARFExprMachine.__dispatch is None:
             DWARFExprMachine.__init_dispatch()
-        if DWARFExprMachine.__instruction_set == None:
+        if DWARFExprMachine.__instruction_set is None:
             # Set this up as a class value; assume arch is constant within debugger prgm lifetime
             # Use DWARFExprMachine.hard_reset_state() to purge if necessary.
             DWARFExprMachine.__instruction_set = debugger.get_arch_conf('instruction_set')
@@ -682,14 +692,14 @@ class DWARFExprMachine(object):
             DWARFExprMachine.__word_len = debugger.get_arch_conf('push_word_len')
 
 
-        self.opcodes = opcodes           # Set of parsed DWARF expression opcodes to evaluate
-        self.regs = regs                 # Registers for current stack frame.
-        self._debugger = debugger        # Debugger with access to running process SRAM
-        self.stack = initial_stack or [] # Initial stack machine state.
+        self.opcodes = opcodes            # Set of parsed DWARF expression opcodes to evaluate
+        self.regs = regs                  # Registers for current stack frame.
+        self._debugger = debugger         # Debugger with access to running process SRAM
+        self.stack = initial_stack or []  # Initial stack machine state.
         self._pieces = []
-        self._scope = None               # Containing scope (used for frame base calc)
-        self._frame = None               # Backtrace frame for current scope's dynamic state.
-        self._flags = 0                  # Flags built up during response evaluation.
+        self._scope = None                # Containing scope (used for frame base calc)
+        self._frame = None                # Backtrace frame for current scope's dynamic state.
+        self._flags = 0                   # Flags built up during response evaluation.
         self._memory = Memory(debugger, regs)
 
     def setScope(self, scope):
@@ -755,7 +765,7 @@ class DWARFExprMachine(object):
 
         Otherwise, the new non-None values replace the internal state.
         """
-        self.flags = 0 # clear flags on reset.
+        self.flags = 0  # clear flags on reset.
 
         if new_regs is not None:
             self.regs = new_regs
@@ -777,12 +787,12 @@ class DWARFExprMachine(object):
         raise Exception(f"Unimplemented DWARF expr op='{op.op_name}' ({op.op:x}) args={op.args}")
 
     def _addr(self, op):
-        self._flags |= LookupFlags.CONST_ADDR # Retrieved from a literal address. Result may thus
-                                            # be segment-aware in a segmented memory space.
-        self.push(op.args[0]) # Push address argument
+        self._flags |= LookupFlags.CONST_ADDR   # Retrieved from a literal address. Result may thus
+                                                # be segment-aware in a segmented memory space.
+        self.push(op.args[0])  # Push address argument
 
     def _const(self, op):
-        self.push(op.args[0]) # Push constant argument
+        self.push(op.args[0])  # Push constant argument
 
     def _deref(self, op):
         addr = self.pop()
@@ -880,13 +890,13 @@ class DWARFExprMachine(object):
 
         # For logical right shift, 'cast' the snd argument to unsigned
         # see https://realpython.com/python-bitwise-operators/#arithmetic-vs-logical-shift
-        unsigned_snd = snd % (1 << (DwarfMachineExpr.__addr_size * 8))
+        unsigned_snd = snd % (1 << (DWARFExprMachine.__addr_size * 8))
         self.push(unsigned_snd >> fst)
 
     def _shra(self, op):
         fst = self.pop()
         snd = self.pop()
-        self.push(snd >> fst) # Arithmetic right shift.
+        self.push(snd >> fst)  # Arithmetic right shift.
 
     def _xor(self, op):
         fst = self.pop()
@@ -968,7 +978,7 @@ class DWARFExprMachine(object):
     def _reg_lookup_internal(self, reg_num, offset=0):
         """ handle breg0...breg31 and bregx after args are decoded. """
         addr = self.reg(reg_num)
-        if DWARFExprMachine.__instruction_set == 'avr' and  0 <= reg_num and reg_num <= 31:
+        if DWARFExprMachine.__instruction_set == 'avr' and 0 <= reg_num and reg_num <= 31:
             # Addresses are 2-bytes wide but registers r0..r31 are 1 byte. (r32=SP is 2 bytes.)
             # Assume it's a register like X, Y, or Z and use two successive regs.
             addr_hi = self.reg(reg_num + 1)
@@ -1021,13 +1031,13 @@ class DWARFExprMachine(object):
         See DWARFv5 sec 2.5.1.7
         """
         self._flags |= LookupFlags.REGISTER_UNWIND
-        sub_location = op.args[0] # sub_location is a list of DWARFExprOp's.
+        sub_location = op.args[0]  # sub_location is a list of DWARFExprOp's.
         # It's either a single opcode identifying a register (DW_OP_regN)
         # or a full expression computing a more complex location. We evaluate this
         # location in a brand new dwarf expr machine.
         sub_machine = DWARFExprMachine(sub_location, self.regs, self._debugger)
         unwind_location_parts, sub_flags = sub_machine.eval()
-        self._flags |= (sub_flags & ~LookupFlags.OK) # Attach all subflags minus the final OK.
+        self._flags |= (sub_flags & ~LookupFlags.OK)  # Attach all subflags minus the final OK.
         if len(unwind_location_parts) != 1:
             raise Exception(
                 f"Cannot unwind ENTRY_LOCATION in multiple parts; got len={len(unwind_location_parts)}")
@@ -1054,7 +1064,7 @@ class DWARFExprMachine(object):
                 call_clobbers.index(unwind_location)
                 self._flags |= LookupFlags.WARN_CLOBBERED_REG | LookupFlags.WARNED
             except ValueError:
-                pass # This is the happy path.
+                pass  # This is the happy path.
             self.push(start_val)
 
     def _call_frame_cfa(self, op):
@@ -1108,7 +1118,7 @@ class DWARFExprMachine(object):
     _call_ref = _unimplemented_op
     _form_tls_address = _unimplemented_op
     _bit_piece = _unimplemented_op
-    _addrx = _unimplemented_op # Note: if implemented, remember to set flags.CONST_ADDR a la _addr().
+    _addrx = _unimplemented_op  # Note: if implemented, remember to set flags.CONST_ADDR a la _addr().
     _constx = _unimplemented_op
     _const_type = _unimplemented_op
     _regval_type = _unimplemented_op
@@ -1173,81 +1183,81 @@ class DWARFExprMachine(object):
         Initialize the opcode dispatch table the first time we're used.
         """
         d = {
-            0x03: cls._addr, # DW_OP_addr
-            0x06: cls._deref, # DW_OP_deref
-            0x08: cls._const, # DW_OP_const1u
-            0x09: cls._const, # DW_OP_const1s
-            0x0a: cls._const, # DW_OP_const2u
-            0x0b: cls._const, # DW_OP_const2s
-            0x0c: cls._const, # DW_OP_const4u
-            0x0d: cls._const, # DW_OP_const4s
-            0x0e: cls._const, # DW_OP_const8u
-            0x0f: cls._const, # DW_OP_const8s
-            0x10: cls._const, # DW_OP_constu
-            0x11: cls._const, # DW_OP_consts
-            0x12: cls._dup, # DW_OP_dup
-            0x13: cls._drop, # DW_OP_drop
-            0x14: cls._over, # DW_OP_over
-            0x15: cls._pick, # DW_OP_pick
-            0x16: cls._swap, # DW_OP_swap
-            0x17: cls._rot, # DW_OP_rot
-            0x18: cls._xderef, # DW_OP_xderef
-            0x19: cls._abs, # DW_OP_abs
-            0x1a: cls._and, # DW_OP_and
-            0x1b: cls._div, # DW_OP_div
-            0x1c: cls._minus, # DW_OP_minus
-            0x1d: cls._mod, # DW_OP_mod
-            0x1e: cls._mul, # DW_OP_mul
-            0x1f: cls._neg, # DW_OP_neg
-            0x20: cls._not, # DW_OP_not
-            0x21: cls._or, # DW_OP_or
-            0x22: cls._plus, # DW_OP_plus
-            0x23: cls._plus_uconst, # DW_OP_plus_uconst
-            0x24: cls._shl, # DW_OP_shl
-            0x25: cls._shr, # DW_OP_shr
-            0x26: cls._shra, # DW_OP_shra
-            0x27: cls._xor, # DW_OP_xor
-            0x28: cls._bra, # DW_OP_bra
-            0x29: cls._eq, # DW_OP_eq
-            0x2a: cls._ge, # DW_OP_ge
-            0x2b: cls._gt, # DW_OP_gt
-            0x2c: cls._le, # DW_OP_le
-            0x2d: cls._lt, # DW_OP_lt
-            0x2e: cls._ne, # DW_OP_ne
-            0x2f: cls._skip, # DW_OP_skip
-            0x90: cls._regx, # DW_OP_regx
-            0x91: cls._fbreg, # DW_OP_fbreg
-            0x92: cls._bregx, # DW_OP_bregx
-            0x93: cls._piece, # DW_OP_piece
-            0x94: cls._deref_size, # DW_OP_deref_size
-            0x95: cls._xderef_size, # DW_OP_xderef_size
-            0x96: cls._nop, # DW_OP_nop
-            0x97: cls._push_object_address, # DW_OP_push_object_address
-            0x98: cls._call2, # DW_OP_call2
-            0x99: cls._call4, # DW_OP_call4
-            0x9a: cls._call_ref, # DW_OP_call_ref
-            0x9b: cls._form_tls_address, # DW_OP_form_tls_address
-            0x9c: cls._call_frame_cfa, # DW_OP_call_frame_cfa
-            0x9d: cls._bit_piece, # DW_OP_bit_piece
-            0x9e: cls._implicit_value, # DW_OP_implicit_value
-            0x9f: cls._stack_value, # DW_OP_stack_value
-            0xa0: cls._implicit_pointer, # DW_OP_implicit_pointer
-            0xa1: cls._addrx, # DW_OP_addrx
-            0xa2: cls._constx, # DW_OP_constx
-            0xa3: cls._entry_value, # DW_OP_entry_value
-            0xa4: cls._const_type, # DW_OP_const_type
-            0xa5: cls._regval_type, # DW_OP_regval_type
-            0xa6: cls._deref_type, # DW_OP_deref_type
-            0xa7: cls._xderef_type, # DW_OP_xderef_type
-            0xa8: cls._convert, # DW_OP_convert
-            0xa9: cls._reinterpret, # DW_OP_reinterpret
-            0xf2: cls._implicit_pointer, # DW_OP_GNU_implicit_pointer
-            0xf3: cls._entry_value, # DW_OP_GNU_entry_value
-            0xf4: cls._const_type, # DW_OP_GNU_const_type
-            0xf5: cls._regval_type, # DW_OP_GNU_regval_type
-            0xf6: cls._deref_type, # DW_OP_GNU_deref_type
-            0xf7: cls._convert, # DW_OP_GNU_convert
-            0xfa: cls._parameter_ref, # DW_OP_GNU_parameter_ref
+            0x03: cls._addr,   # DW_OP_addr
+            0x06: cls._deref,  # DW_OP_deref
+            0x08: cls._const,  # DW_OP_const1u
+            0x09: cls._const,  # DW_OP_const1s
+            0x0a: cls._const,  # DW_OP_const2u
+            0x0b: cls._const,  # DW_OP_const2s
+            0x0c: cls._const,  # DW_OP_const4u
+            0x0d: cls._const,  # DW_OP_const4s
+            0x0e: cls._const,  # DW_OP_const8u
+            0x0f: cls._const,  # DW_OP_const8s
+            0x10: cls._const,  # DW_OP_constu
+            0x11: cls._const,  # DW_OP_consts
+            0x12: cls._dup,    # DW_OP_dup
+            0x13: cls._drop,   # DW_OP_drop
+            0x14: cls._over,   # DW_OP_over
+            0x15: cls._pick,   # DW_OP_pick
+            0x16: cls._swap,   # DW_OP_swap
+            0x17: cls._rot,    # DW_OP_rot
+            0x18: cls._xderef,     # DW_OP_xderef
+            0x19: cls._abs,    # DW_OP_abs
+            0x1a: cls._and,    # DW_OP_and
+            0x1b: cls._div,    # DW_OP_div
+            0x1c: cls._minus,  # DW_OP_minus
+            0x1d: cls._mod,    # DW_OP_mod
+            0x1e: cls._mul,    # DW_OP_mul
+            0x1f: cls._neg,    # DW_OP_neg
+            0x20: cls._not,    # DW_OP_not
+            0x21: cls._or,     # DW_OP_or
+            0x22: cls._plus,   # DW_OP_plus
+            0x23: cls._plus_uconst,  # DW_OP_plus_uconst
+            0x24: cls._shl,    # DW_OP_shl
+            0x25: cls._shr,    # DW_OP_shr
+            0x26: cls._shra,   # DW_OP_shra
+            0x27: cls._xor,    # DW_OP_xor
+            0x28: cls._bra,    # DW_OP_bra
+            0x29: cls._eq,     # DW_OP_eq
+            0x2a: cls._ge,     # DW_OP_ge
+            0x2b: cls._gt,     # DW_OP_gt
+            0x2c: cls._le,     # DW_OP_le
+            0x2d: cls._lt,     # DW_OP_lt
+            0x2e: cls._ne,     # DW_OP_ne
+            0x2f: cls._skip,   # DW_OP_skip
+            0x90: cls._regx,   # DW_OP_regx
+            0x91: cls._fbreg,  # DW_OP_fbreg
+            0x92: cls._bregx,  # DW_OP_bregx
+            0x93: cls._piece,  # DW_OP_piece
+            0x94: cls._deref_size,  # DW_OP_deref_size
+            0x95: cls._xderef_size,  # DW_OP_xderef_size
+            0x96: cls._nop,    # DW_OP_nop
+            0x97: cls._push_object_address,  # DW_OP_push_object_address
+            0x98: cls._call2,  # DW_OP_call2
+            0x99: cls._call4,  # DW_OP_call4
+            0x9a: cls._call_ref,  # DW_OP_call_ref
+            0x9b: cls._form_tls_address,  # DW_OP_form_tls_address
+            0x9c: cls._call_frame_cfa,    # DW_OP_call_frame_cfa
+            0x9d: cls._bit_piece,         # DW_OP_bit_piece
+            0x9e: cls._implicit_value,    # DW_OP_implicit_value
+            0x9f: cls._stack_value,       # DW_OP_stack_value
+            0xa0: cls._implicit_pointer,  # DW_OP_implicit_pointer
+            0xa1: cls._addrx,   # DW_OP_addrx
+            0xa2: cls._constx,  # DW_OP_constx
+            0xa3: cls._entry_value,  # DW_OP_entry_value
+            0xa4: cls._const_type,   # DW_OP_const_type
+            0xa5: cls._regval_type,  # DW_OP_regval_type
+            0xa6: cls._deref_type,   # DW_OP_deref_type
+            0xa7: cls._xderef_type,  # DW_OP_xderef_type
+            0xa8: cls._convert,      # DW_OP_convert
+            0xa9: cls._reinterpret,  # DW_OP_reinterpret
+            0xf2: cls._implicit_pointer,  # DW_OP_GNU_implicit_pointer
+            0xf3: cls._entry_value,       # DW_OP_GNU_entry_value
+            0xf4: cls._const_type,        # DW_OP_GNU_const_type
+            0xf5: cls._regval_type,       # DW_OP_GNU_regval_type
+            0xf6: cls._deref_type,        # DW_OP_GNU_deref_type
+            0xf7: cls._convert,           # DW_OP_GNU_convert
+            0xfa: cls._parameter_ref,     # DW_OP_GNU_parameter_ref
         }
 
         # Add lit0..lit31, reg0..reg31, breg0..breg31 to mappings
@@ -1257,7 +1267,7 @@ class DWARFExprMachine(object):
             d[i + 0x70] = cls._reg_lookup
 
         # Convert the map above into an array for fast lookups.
-        cls.__dispatch = (max(d.keys()) + 1) * [ cls._unimplemented_op ]
+        cls.__dispatch = (max(d.keys()) + 1) * [cls._unimplemented_op]
         for (idx, func) in d.items():
             cls.__dispatch[idx] = func
 

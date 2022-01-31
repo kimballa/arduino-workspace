@@ -10,9 +10,9 @@ import threading
 enable_colors = True
 
 COLOR_WHITE     = '\033[0m'
-COLOR_BOLD      = '\033[1m' # High-intensity white on black
+COLOR_BOLD      = '\033[1m'  # High-intensity white on black
 COLOR_UNDERLINE = '\033[4m'
-COLOR_INVERSE   = '\033[7m' # black on white
+COLOR_INVERSE   = '\033[7m'  # black on white
 
 COLOR_GRAY      = '\033[90m'
 COLOR_RED       = '\033[91m'
@@ -29,7 +29,7 @@ SUCCESS   = COLOR_GREEN
 WARN      = COLOR_YELLOW
 ERR       = COLOR_RED
 
-COLOR_OFF = COLOR_WHITE # Normal white on black
+COLOR_OFF = COLOR_WHITE  # Normal white on black
 
 # Repl prompt.
 #
@@ -43,14 +43,18 @@ COLOR_OFF = COLOR_WHITE # Normal white on black
 NO_CTRL_PROMPT = "(adbg) "              # The actual text we want to appear.
 PROMPT = f'\001\r\002{NO_CTRL_PROMPT}'  # The prompt for readline to use, with leading ctrl chars.
 
+
 def use_colors():
     """
     Return true if we should use color in formatting output.
     """
     return enable_colors
 
+
 def set_use_colors(do_use_colors):
+    global enable_colors
     enable_colors = do_use_colors
+
 
 def fmt(text, color_code=None):
     """
@@ -62,6 +66,7 @@ def fmt(text, color_code=None):
         return f'{color_code}{text}{COLOR_OFF}'
     else:
         return text
+
 
 def write(text, color_code=None):
     """
@@ -121,15 +126,16 @@ class ConsolePrinter(object):
     prompt.
     """
 
-    TIMEOUT = 0.100 # Blink when reading the queue every 100ms..
+    TIMEOUT = 0.100  # Blink when reading the queue every 100ms..
 
     def __init__(self):
         # Batched print performance tops out around n=32 dequeues/context switch.
         self.print_q = queue.Queue(maxsize=32)
         self._alive = True
         self._readline_enabled = False
-        self._thread = threading.Thread(target=self.service, name='Console print thread',
-            daemon=True) # This thread must not hold the process open.
+        self._thread = threading.Thread(
+            target=self.service, name='Console print thread',
+            daemon=True)  # This thread must not hold the process open.
 
     def start(self):
         self._thread.start()
@@ -173,7 +179,7 @@ class ConsolePrinter(object):
                         accepted += 1
                     except queue.Empty:
                         # Didn't actually have more to read.
-                        break # Break out of inner greedy-read loop.
+                        break  # Break out of inner greedy-read loop.
             except queue.Empty:
                 assert len(to_print) == 0
                 assert accepted == 0
@@ -200,6 +206,7 @@ class ConsolePrinter(object):
                 # Acknowledge all the messages we accepted at once.
                 self.print_q.task_done()
 
+
 class NullPrinter(ConsolePrinter):
     """
     ConsolePrinter implementation that just silently console all text it receives.
@@ -223,6 +230,7 @@ class NullPrinter(ConsolePrinter):
 # track this flag appropriately.
 _readline_input_on = False
 
+
 def readline_input():
     """
     Display readline-enabled prompt and return the input result.
@@ -237,5 +245,4 @@ def readline_input():
         return input(PROMPT)
     finally:
         _readline_input_on = False
-
 

@@ -5,24 +5,22 @@ import os
 import os.path
 import readline
 import signal
-from sortedcontainers import SortedDict, SortedList
-import time
 import traceback
 
 import arduino_dbg
-import arduino_dbg.binutils as binutils
-import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
 import arduino_dbg.io as io
 import arduino_dbg.protocol as protocol
-from arduino_dbg.repl_commands import *
+from arduino_dbg.repl_commands import Completions, Command, CompoundCommand, ReplAutoComplete, \
+    repl_split, print_command_help
 import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
 
 PROMPT = term.PROMPT
+
 
 def _softint(intstr, base=10):
     """
@@ -32,7 +30,6 @@ def _softint(intstr, base=10):
         return int(intstr, base)
     except ValueError:
         return None
-
 
 
 class Repl(object):
@@ -50,13 +47,13 @@ class Repl(object):
         self._last_sym_search = []   # results of most-recent symbol substr search.
         self._last_sym_used = None   # last symbol referenced by the user.
 
-        self._break_count = 0 # How many times has the user mashed ^C?
+        self._break_count = 0  # How many times has the user mashed ^C?
 
         self._completer = ReplAutoComplete(self._debugger)
         readline.parse_and_bind('set editing-mode vi')
         readline.parse_and_bind('set bell-style none')
         readline.parse_and_bind('tab: complete')
-        readline.set_completer_delims(" \t\r\n'\"") # We want chunkier tokens than RL default.
+        readline.set_completer_delims(" \t\r\n'\"")  # We want chunkier tokens than RL default.
         readline.set_completer(self._completer.complete)
 
         # load history from file as indicated in debugger conf and monitor debugger conf for changes
@@ -104,10 +101,12 @@ class Repl(object):
         if self._history_filename is not None:
             try:
                 readline.append_history_file(1, self._history_filename)
-            except e:
-                self._debugger.msg_q(MsgLevel.WARN,
+            except Exception as e:
+                self._debugger.msg_q(
+                    MsgLevel.WARN,
                     f'Error writing to history file: {e}. Disabling history file recording.')
-                self._debugger.msg_q(MsgLevel.WARN,
+                self._debugger.msg_q(
+                    MsgLevel.WARN,
                     f'You can try a new file with: set dbg.historyfile = <filename>')
                 self._history_filename = None
 
@@ -150,13 +149,13 @@ class Repl(object):
                     # no-warning result, so that's what we'll use.
                     break
             elif flags & el.LookupFlags.ERR_PC_OUT_OF_BOUNDS:
-                best_flags = flags # We'd rather report PC_OUT_OF_BOUNDS than NO_LOCATION.
-                                   # The former simply means "not valid at this breakpoint" vs
-                                   # "this VariableInfo is useless".
+                best_flags = flags  # We'd rather report PC_OUT_OF_BOUNDS than NO_LOCATION.
+                                    # The former simply means "not valid at this breakpoint" vs
+                                    # "this VariableInfo is useless".
                 best_val = None
                 best_var = var_or_formal
             elif best_flags is None:
-                best_flags = flags # Whatever error we got, let's track that.
+                best_flags = flags  # Whatever error we got, let's track that.
                 best_val = None
                 best_var = var_or_formal
 
@@ -166,7 +165,7 @@ class Repl(object):
         # VariableInfo is in best_var.
         assert best_var is not None
         assert best_flags is not None
-        self._console_printer.join_q() # sync printer after doing all the eval_location work.
+        self._console_printer.join_q()  # sync printer after doing all the eval_location work.
 
         if is_formal:
             assert isinstance(best_var, types.FormalArg)
@@ -226,46 +225,49 @@ class Repl(object):
         if frameScopes is None or len(frameScopes) == 0:
             return None
 
-        nested_methods = { 'next': None } # Create a linked list of containers for vars/formals.
+        nested_methods = {'next': None}  # Create a linked list of containers for vars/formals.
         cur = None
 
         def __add_to_locals(locals_list, var, var_name):
-            # Helper method for use in the loop below.
-            #
-            # locals_list is one of cur['formals'] or cur['locals'] - a list of lists of
-            # identically-named vars.
-            #
-            # 'var' is the formal/local to either add as a new list entry, or
-            # append to a sublist of other identically-named entries.
+            """
+            Helper method for use in the loop below.
+
+            locals_list is one of cur['formals'] or cur['locals'] - a list of lists of
+            identically-named vars.
+
+            'var' is the formal/local to either add as a new list entry, or
+            append to a sublist of other identically-named entries.
+            """
             found_idx = None
             for cur_idx in range(0, len(locals_list)):
                 item_list = locals_list[cur_idx]
                 if len(item_list) and item_list[0].name == var_name:
-                    found_idx = cur_idx # We found a list of formals/locals w/ the same name
+                    found_idx = cur_idx  # We found a list of formals/locals w/ the same name
                     break
 
             if found_idx is not None:
-                locals_list[found_idx].append(var) # append to identically-named list.
+                locals_list[found_idx].append(var)  # append to identically-named list.
             else:
-                locals_list.append([var]) # Start a new list
+                locals_list.append([var])  # Start a new list
 
         for scope in frameScopes:
             if isinstance(scope, types.MethodInfo):
                 if cur is None:
-                    cur = nested_methods # Use first scope
+                    cur = nested_methods  # Use first scope
                 else:
                     # New nested inline method. Create a new nested scope.
-                    new_method = { 'next': None }
+                    new_method = {'next': None}
                     cur['next'] = new_method
                     cur = new_method
 
                 # Initialize the new scope.
-                cur['formals'] = [] # Each of these lists contains *lists* of FormalArgs or
-                                    # VariableInfos. All args/infos with the same `name` field are
-                                    # in the same list. They are ordered widest-scope to narrowest.
-                                    # Only one arg/info per list will be presented to the user; we
-                                    # choose the narrowest-scope definition with a valid location,
-                                    # or if none have a valid location, report that fact once.
+
+                # Each of these lists contains *lists* of FormalArgs or VariableInfos. All
+                # args/infos with the same `name` field are in the same list. They are ordered
+                # widest-scope to narrowest.  Only one arg/info per list will be presented to the
+                # user; we choose the narrowest-scope definition with a valid location, or if none
+                # have a valid location, report that fact once.
+                cur['formals'] = []
                 cur['locals'] = []
                 cur['scope'] = scope
             elif isinstance(scope, types.LexicalScope):
@@ -278,8 +280,8 @@ class Repl(object):
             for formal in scope.getFormals():
                 name = formal.name
                 if name is None:
-                    cur['formals'].append([formal]) # type-only formals are always singleton lists
-                                                    # that honor arg order position.
+                    # Type-only formals are always singleton lists that honor arg order position.
+                    cur['formals'].append([formal])
                 else:
                     # Check if any other formals encountered thus far in the method scope
                     # have the same name as the current one.
@@ -287,7 +289,8 @@ class Repl(object):
 
             for name, local_var in scope.getVariables():
                 if name is None:
-                    continue # We don't bother with anonymous local vars; (phantom entries?)
+                    # We don't bother with anonymous local vars; (phantom entries?)
+                    continue
                 __add_to_locals(cur['locals'], local_var, name)
 
             # Sort the locals by alphabetical order of names.
@@ -334,17 +337,19 @@ class Repl(object):
         cur = nested_methods
         while cur is not None:
             nest_str = nest * ' '
-            scope = cur['scope'] # Relevant MethodInfo
+            scope = cur['scope']  # Relevant MethodInfo
             printed_formals = False
             if not scope.is_decl and not scope.is_def:
                 inl_str = 'Inlined method'
             else:
                 inl_str = 'Method'
-            self._debugger.msg_q(MsgLevel.INFO,
+            self._debugger.msg_q(
+                MsgLevel.INFO,
                 f'{nest_str}{inl_str} scope: {scope.make_signature(include_class=True)}')
             die = scope.get_die()
             if die is not None:
-                self._debugger.verboseprint(nest_str, 'Method DIE at offset 0x',
+                self._debugger.verboseprint(
+                    nest_str, 'Method DIE at offset 0x',
                     dbg.VHEX4, die.offset)
 
             formals = cur['formals']
@@ -353,7 +358,7 @@ class Repl(object):
                 self._debugger.msg_q(MsgLevel.INFO, f"{nest_str}  Formals:")
                 for formal_lst in formals:
                     # formal_lst contains a list of FormalArg entries w/ the same name.
-                    formal_lst.reverse() # re-sort so its narrowest scope def first.
+                    formal_lst.reverse()  # re-sort so its narrowest scope def first.
                     local_str = self._format_local(frame, frameRegs, formal_lst, is_formal=True)
                     self._debugger.msg_q(MsgLevel.INFO, f'{nest_str}  {local_str}')
 
@@ -365,11 +370,11 @@ class Repl(object):
                 self._debugger.msg_q(MsgLevel.INFO, f"{nest_str}  Locals:")
                 for local_var_lst in locals_list:
                     # local_var_lst contains a list of VariableInfo entries w/ the same name
-                    local_var_lst.reverse() # re-sort so its narrowest scope def first.
+                    local_var_lst.reverse()  # re-sort so its narrowest scope def first.
                     local_str = self._format_local(frame, frameRegs, local_var_lst, is_formal=False)
                     self._debugger.msg_q(MsgLevel.INFO, f'{nest_str}  {local_str}')
 
-            cur = cur['next'] # advance linked list ptr.
+            cur = cur['next']  # advance linked list ptr.
             nest += 2
 
 
@@ -515,7 +520,8 @@ class Repl(object):
 
             num_pins = self._debugger.get_platform_conf("gpio_pins")
             if pin < 0 or pin >= num_pins:
-                self._debugger.msg_q(MsgLevel.ERR,
+                self._debugger.msg_q(
+                    MsgLevel.ERR,
                     f"Error: available gpio pins are between [0, {num_pins}).")
 
             v = self._debugger.get_gpio_value(pin)
@@ -541,7 +547,8 @@ class Repl(object):
 
             num_pins = self._debugger.get_platform_conf("gpio_pins")
             if pin < 0 or pin >= num_pins:
-                self._debugger.msg_q(MsgLevel.ERR,
+                self._debugger.msg_q(
+                    MsgLevel.ERR,
                     f"Error: available gpio pins are between [0, {num_pins}).")
 
             self._debugger.set_gpio_value(pin, val)
@@ -560,14 +567,16 @@ class Repl(object):
         if mem_map["HeapEnd"] != 0:
             heap_size = mem_map["HeapEnd"] - mem_map["HeapStart"]
         else:
-            heap_size = 0 # No allocation performed
+            heap_size = 0  # No allocation performed
 
         global_size = mem_map["HeapStart"] - ram_start
         free_ram = total_ram - stack_size - heap_size - global_size
 
-        self._debugger.msg_q(MsgLevel.INFO,
+        self._debugger.msg_q(
+            MsgLevel.INFO,
             f'   Total RAM:  {total_ram:>4}  RAMEND={ram_end:04x} .. RAMSTART={ram_start:04x}')
-        self._debugger.msg_q(MsgLevel.INFO,
+        self._debugger.msg_q(
+            MsgLevel.INFO,
             f'  Stack size:  {stack_size:>4}      SP={mem_map["SP"]:04x}')
         self._debugger.msg_q(MsgLevel.INFO, f'      (free):  {free_ram:>4}')
         self._debugger.msg_q(MsgLevel.INFO, f'   Heap size:  {heap_size:>4}')
@@ -607,7 +616,8 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, f"{v:08x}")
 
 
-    @Command(keywords=['poke'],
+    @Command(
+        keywords=['poke'],
         completions=[Completions.NONE, Completions.NONE, Completions.WORD_SIZE, Completions.BASE])
     def _poke(self, argv):
         """
@@ -635,7 +645,8 @@ class Repl(object):
             try:
                 base = int(argv[3])
             except ValueError:
-                self._debugger.msg_q(MsgLevel.WARN,
+                self._debugger.msg_q(
+                    MsgLevel.WARN,
                     f"Warning: could not set base={argv[3]}. Using base 10")
                 base = 10
 
@@ -643,7 +654,8 @@ class Repl(object):
         try:
             val = int(val, base=base)
         except ValueError:
-            self._debugger.msg_q(MsgLevel.ERR,
+            self._debugger.msg_q(
+                MsgLevel.ERR,
                 f"Error: Cannot parse integer value {val} in base {base}")
             return
 
@@ -651,7 +663,8 @@ class Repl(object):
         try:
             addr = int(addr, base=16)
         except ValueError:
-            self._debugger.msg_q(MsgLevel.ERR,
+            self._debugger.msg_q(
+                MsgLevel.ERR,
                 f"Error: Cannot parse memory address {addr} in base 16")
             return
 
@@ -669,7 +682,8 @@ class Repl(object):
         data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
         if data_addr_mask and (addr & data_addr_mask) == addr:
             # We're trying to update something in flash.
-            self._debugger.msg_q(MsgLevel.ERR,
+            self._debugger.msg_q(
+                MsgLevel.ERR,
                 f"Error: Cannot write to flash segment at address {addr:x}")
         else:
             # We're trying to update something in SRAM:
@@ -695,7 +709,7 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.WARN, f"No symbol found: {argv[0]}")
             return
 
-        self._last_sym_used = argv[0] # Symbol argument saved as last symbol used.
+        self._last_sym_used = argv[0]  # Symbol argument saved as last symbol used.
 
         addr = sym.addr
         if sym.type_info:
@@ -709,9 +723,9 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, el.format_accessed_val(val, sym.type_info))
         else:
             # No type information. Just print raw read as hex-formatted int.
-            size = 1 # set default...
+            size = 1  # set default...
             try:
-                size = sym.size # override if available.
+                size = sym.size  # override if available.
             except KeyError:
                 pass
 
@@ -782,7 +796,8 @@ class Repl(object):
         self._debugger.msg_q(MsgLevel.INFO, "Resetting sketch...")
         self._debugger.reset_sketch()
         if len(self._debugger.breakpoints().breakpoints()) > 0:
-            self._debugger.msg_q(MsgLevel.INFO,
+            self._debugger.msg_q(
+                MsgLevel.INFO,
                 "Disabled breakpoints will be reset. You may want to run `breakpoint sync`.")
 
 
@@ -835,7 +850,7 @@ class Repl(object):
                 else:
                     return v
             elif isinstance(v, list):
-                items = [ _fmt_value(v2, in_hex, True, level+1) for v2 in v ]
+                items = [_fmt_value(v2, in_hex, True, level+1) for v2 in v]
 
                 # Should we put these on a comma-delimited single line? Or wrap item-by-item onto
                 # one line each? Depends on the max length of a single item.
@@ -854,7 +869,8 @@ class Repl(object):
                 items = []
                 for (k2, v2) in v.items():
                     in_hex2 = in_hex or (isinstance(k2, str) and k2 == k2.upper())
-                    items.append(f"{_fmt_value(k2, in_hex2, True, level+1)}: " +
+                    items.append(
+                        f"{_fmt_value(k2, in_hex2, True, level+1)}: "
                         f"{_fmt_value(v2, in_hex2, True, level+1)}")
 
                 # Should we put these on a comma-delimited single line? Or wrap item-by-item onto
@@ -875,7 +891,7 @@ class Repl(object):
 
 
         def _print_kv_pair(k, v):
-            in_hex = isinstance(k, str) and k == k.upper() # CAPS keys are printed in hex.
+            in_hex = isinstance(k, str) and k == k.upper()  # CAPS keys are printed in hex.
             self._debugger.msg_q(MsgLevel.INFO, f"{k} = {_fmt_value(v, in_hex)}")
 
 
@@ -891,7 +907,8 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, "-------------------------------")
             platform = self._debugger.get_full_platform_config()
             if len(platform) == 0:
-                self._debugger.msg_q(MsgLevel.WARN,
+                self._debugger.msg_q(
+                    MsgLevel.WARN,
                     "No platform set; configure with 'set arduino.platform ...'.")
             else:
                 for (k, v) in platform:
@@ -902,8 +919,9 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, "-------------------------------")
             arch = self._debugger.get_full_arch_config()
             if len(arch) == 0:
-                self._debugger.msg_q(MsgLevel.WARN,
-                    "No architecture set; configure 'set arduino.platform ...' or " +
+                self._debugger.msg_q(
+                    MsgLevel.WARN,
+                    "No architecture set; configure 'set arduino.platform ...' or "
                     "'set arduino.arch ...' directly.")
             else:
                 for (k, v) in arch:
@@ -926,7 +944,7 @@ class Repl(object):
             else:
                 k = argv[0]
                 start = 1
-                if argv[start] == "=": # allow 'set x y' or 'set x = y' format.
+                if argv[start] == "=":  # allow 'set x y' or 'set x = y' format.
                     start = start + 1
                 v = " ".join(argv[start:])
 
@@ -966,7 +984,7 @@ class Repl(object):
         * data printing starts at ($SP + offset).
         * If offset is omitted or -1, then "auto-skip" stack frames added by the debugger.
         """
-        offset = -1 # auto
+        offset = -1  # auto
         length = 16
         if len(argv) == 1:
             length = int(argv[0])
@@ -1051,27 +1069,29 @@ class Repl(object):
 
         frame = self.__get_frame(frame_num)
         if frame is None:
-            self._debugger.msg_q(MsgLevel.ERR, f"Error: could only identify {len(frames)} stack frames")
+            self._debugger.msg_q(MsgLevel.ERR, f"Error: No such stack frame #{frame_num}")
             return
 
         sp = frame.sp
         frame_size = frame.frame_size
         if frame_size < 0:
             frame_size = 16
-            self._debugger.msg_q(MsgLevel.WARN,
+            self._debugger.msg_q(
+                MsgLevel.WARN,
                 f"Warning: could not identify size of stack frame. Defaulting to {frame_size}.")
 
-        self._debugger.msg_q(MsgLevel.INFO,
+        self._debugger.msg_q(
+            MsgLevel.INFO,
             f'Frame {frame_num} at PC {frame.addr:#04x} in method {frame.demangled}')
 
-        ret_addr_size = self._debugger.get_arch_conf("ret_addr_size")
         ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size + 1)
         ret_fn_sym = self._debugger.function_sym_by_pc(ret_addr)
         if ret_fn_sym:
             ret_fn = ret_fn_sym.demangled or ret_fn_sym.name
         else:
             ret_fn = '???'
-        self._debugger.msg_q(MsgLevel.INFO,
+        self._debugger.msg_q(
+            MsgLevel.INFO,
             f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
         for addr in range(sp + frame_size, sp, -1):
@@ -1079,7 +1099,7 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, f'{addr:04x}: {b:02x}')
 
         if frame_size == 0:
-            addr = sp + frame_size + 1 # Ensure `addr` initialized in case frame_size == 0.
+            addr = sp + frame_size + 1  # Ensure `addr` initialized in case frame_size == 0.
 
         self._debugger.msg_q(MsgLevel.INFO, f'{addr-1:04x} <-- $SP')
 
@@ -1090,7 +1110,7 @@ class Repl(object):
 
 
 
-    @Command(keywords=['time'], help_keywords=['tm','tu'], completions=[['millis', 'micros']])
+    @Command(keywords=['time'], help_keywords=['tm', 'tu'], completions=[['millis', 'micros']])
     def _print_time(self, argv):
         """
         Read the time from the device in milli- or microseconds
@@ -1118,7 +1138,8 @@ class Repl(object):
         """
         Print time since device startup (or rollover) in milliseconds.
         """
-        self._debugger.msg_q(MsgLevel.INFO,
+        self._debugger.msg_q(
+            MsgLevel.INFO,
             self._debugger.send_cmd(protocol.DBG_OP_TIME_MILLIS, self._debugger.RESULT_ONELINE))
 
 
@@ -1127,7 +1148,8 @@ class Repl(object):
         """
         Print time since device startup (or rollover) in microseconds.
         """
-        self._debugger.msg_q(MsgLevel.INFO,
+        self._debugger.msg_q(
+            MsgLevel.INFO,
             self._debugger.send_cmd(protocol.DBG_OP_TIME_MICROS, self._debugger.RESULT_ONELINE))
 
 
@@ -1147,7 +1169,7 @@ class Repl(object):
         See also: 'print <symbol_name>' to read the value of a variable in RAM.
         """
         base = 10
-        hwm = 0 # high-water mark for tokens consumed
+        hwm = 0  # high-water mark for tokens consumed
         if len(argv) == 0:
             self._debugger.msg_q(MsgLevel.INFO, "Syntax: setv <symbol_name> [=] <value> [base=10]")
             return
@@ -1175,7 +1197,8 @@ class Repl(object):
             try:
                 base = int(argv[hwm])
             except ValueError:
-                self._debugger.msg_q(MsgLevel.WARN,
+                self._debugger.msg_q(
+                    MsgLevel.WARN,
                     f"Warning: could not set base={argv[hwm]}. Using base 10")
                 base = 10
 
@@ -1185,7 +1208,7 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.WARN, f"No symbol found: {name}")
             return
 
-        self._last_sym_used = name # Symbol argument saved as last symbol used.
+        self._last_sym_used = name  # Symbol argument saved as last symbol used.
 
         # Convert argument to integer. (TODO(aaron): Handle floating point some day?)
         try:
@@ -1196,9 +1219,9 @@ class Repl(object):
 
         # Resolve symbol to memory address
         addr = sym.addr
-        size = 1 # set default...
+        size = 1  # set default...
         try:
-            size = sym.size # override if available.
+            size = sym.size  # override if available.
         except KeyError:
             pass
 
@@ -1210,7 +1233,8 @@ class Repl(object):
         data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
         if data_addr_mask and (addr & data_addr_mask) == addr:
             # We're trying to update something in flash.
-            self._debugger.msg_q(MsgLevel.ERR,
+            self._debugger.msg_q(
+                MsgLevel.ERR,
                 f"Error: Cannot write to flash segment at address {addr:x}")
         else:
             # We're trying to update something in SRAM:
@@ -1263,7 +1287,7 @@ class Repl(object):
         elif len(self._last_sym_search) == 1:
             # Found a unique hit.
             self._debugger.msg_q(MsgLevel.INFO, self._last_sym_search[0])
-            self._last_sym_used = self._last_sym_search[0] # last-used symbol is the unique match.
+            self._last_sym_used = self._last_sym_search[0]  # last-used symbol is the unique match.
         else:
             # Multiple results
             for i in range(0, len(self._last_sym_search)):
@@ -1321,7 +1345,7 @@ class Repl(object):
             return
 
         self._debugger.msg_q(MsgLevel.INFO, f'{sym.demangled}: {sym.addr:08x} ({sym.size})')
-        self._last_sym_used = argv[0] # Looked-up symbol is last symbol used.
+        self._last_sym_used = argv[0]  # Looked-up symbol is last symbol used.
 
 
     @Command(keywords=['type'], completions=[Completions.SYM_OR_TYPE])
@@ -1396,7 +1420,8 @@ class Repl(object):
         if not len(argv):
             # Whether or not we parsed some flags, we don't have a symbol name
             # to work with.
-            self._debugger.msg_q(MsgLevel.INFO,
+            self._debugger.msg_q(
+                MsgLevel.INFO,
                 "Syntax: die [-r[d]] [-ro] [-rt] [frameId] {<symbol_name> | <DIE_offset>}")
             return
 
@@ -1423,16 +1448,19 @@ class Repl(object):
             # Get local variable(s) with the specified name.
             frameScopes = self._debugger.get_frame_vars(frame_id)
             if frameScopes is None:
-                self._debugger.msg_q(MsgLevel.WARN, f'No such stack frame {frameId}')
+                self._debugger.msg_q(MsgLevel.WARN, f'No such stack frame {frame_id}')
                 return
 
             nested_methods = self.__get_scoped_locals(frameScopes)
 
             # Walk through nested methods and filter down to locals / args with the specified name.
             cur = nested_methods
-            last_found_scope = None # How far thru the nested scopes should we print method sigs
-                                    # and look for a formal/local with the target name?
-            target_name_filter = lambda arglist: arglist[0].name == sym_name
+            last_found_scope = None     # How far thru the nested scopes should we print method sigs
+                                        # and look for a formal/local with the target name?
+
+            def target_name_filter(arglist):
+                return arglist[0].name == sym_name
+
             i = 0
             while cur is not None:
                 cur['formals'] = list(filter(target_name_filter, cur['formals']))
@@ -1458,18 +1486,20 @@ class Repl(object):
                 if printed_formals or printed_locals:
                     self._debugger.msg_q(MsgLevel.INFO, '')
 
-                scope = cur['scope'] # Relevant MethodInfo
+                scope = cur['scope']  # Relevant MethodInfo
                 printed_formals = False
                 printed_locals = False
                 if not scope.is_decl and not scope.is_def:
                     inl_str = 'Inlined method'
                 else:
                     inl_str = 'Method'
-                self._debugger.msg_q(term.COLOR_GRAY,
+                self._debugger.msg_q(
+                    term.COLOR_GRAY,
                     f'{inl_str} scope: {scope.make_signature(include_class=True)}')
                 method_die = scope.get_die()
                 if method_die is not None:
-                    self._debugger.msg_q(term.COLOR_GRAY,
+                    self._debugger.msg_q(
+                        term.COLOR_GRAY,
                         f'Method DIE at offset 0x{method_die.offset:x}')
 
                 formals = cur['formals']
@@ -1479,9 +1509,10 @@ class Repl(object):
                     for formal_lst in formals:
                         # formal_lst contains a list of FormalArg entries w/ the same name.
                         for formal in formal_lst:
-                            self._debugger.msg_q(MsgLevel.INFO,
+                            self._debugger.msg_q(
+                                MsgLevel.INFO,
                                 formal.die_to_str(recurse_die_children, recurse_origin,
-                                recurse_types))
+                                                  recurse_types))
 
                 locals_list = cur['locals']
                 if len(locals_list) > 0:
@@ -1492,11 +1523,12 @@ class Repl(object):
                     self._debugger.msg_q(MsgLevel.INFO, f"  Locals:")
                     for local_var_lst in locals_list:
                         for local in local_var_lst:
-                            self._debugger.msg_q(MsgLevel.INFO,
+                            self._debugger.msg_q(
+                                MsgLevel.INFO,
                                 local.die_to_str(recurse_die_children, recurse_origin,
-                                recurse_types))
+                                                 recurse_types))
 
-                cur = cur['next'] # advance linked list ptr.
+                cur = cur['next']  # advance linked list ptr.
                 i += 1
         else:
             # Look up a global symbol and print its DIE.
@@ -1518,7 +1550,8 @@ class Repl(object):
                 self._debugger.msg_q(MsgLevel.INFO, f'{sym_name}: <unknown>')
                 return
 
-            self._debugger.msg_q(MsgLevel.INFO,
+            self._debugger.msg_q(
+                MsgLevel.INFO,
                 typ.die_to_str(recurse_die_children, recurse_origin, recurse_types))
 
 
@@ -1584,7 +1617,8 @@ class Repl(object):
 
         filename = argv[0]
         self._debugger.msg_q(MsgLevel.INFO, f"Loading memory image from {filename}...")
-        (debugger, hosted_dbg_serv) = dump.load_dump(filename, self._console_printer.print_q,
+        (debugger, hosted_dbg_serv) = dump.load_dump(
+            filename, self._console_printer.print_q,
             history_change_hook=self._history_change_callback)
 
         # If we were already hosting a debug service for a dump file, remove it and
@@ -1595,10 +1629,10 @@ class Repl(object):
 
         # Swap out the active debugger instance for one attached to the specified file.
         self._debugger.close()
-        self._debugger.release_cmd_lock() # We hold the cmd lock coming into this method.
-                                          # Release it as we close the debugger
-        self._debugger = debugger  # Starts locked. The release() in loop_input_body() will
-                                   # release this lock.
+        self._debugger.release_cmd_lock()   # We hold the cmd lock coming into this method.
+                                            # Release it as we close the debugger.
+        self._debugger = debugger   # Starts locked. The release() in loop_input_body() will
+                                    # release this lock.
 
     @Command(keywords=['version'])
     def print_version(self, argv):
@@ -1620,7 +1654,7 @@ class Repl(object):
         If given a specific command name, will print the usage info for that command.
         Otherwise, this help message lists all available commands.
         """
-        print_command_help(self._debugger, argv) # call method imported from repl_commands module.
+        print_command_help(self._debugger, argv)  # call method imported from repl_commands module.
 
 
     @Command(keywords=['quit', '\\q'])
@@ -1633,20 +1667,8 @@ class Repl(object):
         # `help quit`.
         pass
 
-        def __strip_quotes(token):
-            if len(token) >= 2 and token.startswith("'") and token.endswith("'"):
-                return token[1:-1]
-            elif len(token) >= 2 and token.startswith('"') and token.endswith('"'):
-                return token[1:-1]
-            else:
-                return token
-
-        return list(map(__strip_quotes, tokens))
-
-
     def reconnect(self):
         return self._debugger.reconnect()
-
 
     def loop_input_body(self):
         """
@@ -1657,16 +1679,16 @@ class Repl(object):
         compoundCommandMap = CompoundCommand.getCommandMap()
 
         try:
-            self._completer.clear_cache() # Don't accidentally use suggestions from last input line.
+            self._completer.clear_cache()  # Don't accidentally use suggestions from last input line.
             cmdline = term.readline_input()
         except KeyboardInterrupt:
             # Received '^C'; call the break function
-            print('') # Terminate line after visible '^C' in input.
+            print('')  # Terminate line after visible '^C' in input.
             self._debugger.get_cmd_lock()
             try:
                 self._break()
             except dbg.NoServerConnException:
-                pass # Just go to a clean new line
+                pass  # Just go to a clean new line
             finally:
                 self._debugger.release_cmd_lock()
             self._break_count += 1
@@ -1682,7 +1704,7 @@ class Repl(object):
             print('')
             return True
 
-        self._break_count = 0 # User typed a real non-^C command.
+        self._break_count = 0  # User typed a real non-^C command.
 
         if len(cmdline) > 0:
             self._append_history()
@@ -1693,14 +1715,14 @@ class Repl(object):
             print("Error: Unclosed quoted string")
 
         tokens = []
-        for t in raw_tokens: # Filter extra empty-whitespace tokens
+        for t in raw_tokens:  # Filter extra empty-whitespace tokens
             if t == "$":
                 if self._last_sym_used:
                     # Replace '$' with last-referenced symbol.
                     tokens.append(self._last_sym_used)
                 else:
                     term.write("Warning: no prior symbol reference for '$'", term.WARN)
-                    tokens.append("$") # try it raw...
+                    tokens.append("$")  # try it raw...
             elif isinstance(t, str) and t.startswith("#") and len(t) > 1 and t[1:] == str(_softint(t[1:])):
                 idx = _softint(t[1:])
                 try:
@@ -1709,7 +1731,7 @@ class Repl(object):
                     tokens.append(sym)
                 except IndexError:
                     term.write(f"Warning: no symbol for index {t}", term.WARN)
-                    tokens.append(t) # try it raw...
+                    tokens.append(t)  # try it raw...
             elif t is not None and t != "":
                 tokens.append(t)
 
@@ -1722,7 +1744,7 @@ class Repl(object):
         pretty_cmd = cmd
 
         if cmd == "quit" or cmd == "exit" or cmd == "\\q":
-            return True # Actually quit.
+            return True  # Actually quit.
         elif cmd in commandMap:
             cmd_obj = commandMap[cmd]
             cmd_args = tokens[1:]
@@ -1757,7 +1779,7 @@ class Repl(object):
                 self._console_printer.join_q()
         except dbg.NoServerConnException as e:
             term.write(f"Error running '{pretty_cmd}': {str(e)}", term.ERR)
-        except dbg.DisconnectedException as e:
+        except dbg.DisconnectedException:
             term.write(f"Error: Disconnected from device", term.ERR)
             if not self.reconnect():
                 term.write(f"Error: Could not reconnect to device", term.ERR)
@@ -1794,12 +1816,12 @@ class Repl(object):
             # Regardless of process state, we also accept input from the user.
             try:
                 quit = self.loop_input_body()
-            except KeyboardInterrupt as ki:
+            except KeyboardInterrupt:
                 # Received '^C'; call the break function
-                print('') # Terminate line after visible '^C' in input.
+                print('')  # Terminate line after visible '^C' in input.
                 self._debugger.get_cmd_lock()
                 try:
-                    self._break() # This will update the process_state to BREAK.
+                    self._break()  # This will update the process_state to BREAK.
                 finally:
                     self._debugger.release_cmd_lock()
             finally:

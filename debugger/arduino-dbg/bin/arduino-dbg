@@ -4,7 +4,7 @@
 #
 # arduino-dbg: Arduino debug console client that works with `dbglib`.
 #
-# Usage: arduino-dbg -p <port> [<imageName.elf>]
+# Usage: arduino-dbg -p <port> [-f <imageName.elf>]
 
 PY3=`which python3`
 PY3=`readlink -f "${PY3}"`

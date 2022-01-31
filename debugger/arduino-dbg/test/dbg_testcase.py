@@ -1,10 +1,10 @@
 # (c) Copyright 2022 Aaron Kimball
 
-import arduino_dbg.debugger as debugger
 import arduino_dbg.dump as dump
 import arduino_dbg.term as term
 
 import unittest
+
 
 class DbgTestCase(unittest.TestCase):
     """
@@ -59,16 +59,17 @@ class DbgTestCase(unittest.TestCase):
             # No fixture setup required.
             return
 
-        #cls.console_printer = term.ConsolePrinter()
         cls.console_printer = term.NullPrinter()
         cls.console_printer.start()
 
         (debugger, dbg_service) = dump.load_dump(filename, cls.console_printer.print_q,
-            config=DbgTestCase.get_debug_config())
+                                                 config=DbgTestCase.get_debug_config())
         cls.debugger = debugger
         cls.dbg_service = dbg_service
+        
+        # Note: We do not need to call debugger.get_cmd_lock() as this is now performed
+        # automatically within load_dump() before returning a debugger to us.
 
-        debugger.get_cmd_lock() # We'll be sending commands throughout.
 
 
     @classmethod
@@ -77,7 +78,7 @@ class DbgTestCase(unittest.TestCase):
             cls.dbg_service.shutdown()
 
         if cls.debugger:
-            cls.debugger.release_cmd_lock() # Done.
+            cls.debugger.release_cmd_lock()  # Done.
             cls.debugger.close()
 
         if cls.console_printer:

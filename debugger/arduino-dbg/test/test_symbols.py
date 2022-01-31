@@ -4,7 +4,8 @@
 import unittest
 
 import arduino_dbg.types as types
-from dbg_testcase import *
+from dbg_testcase import DbgTestCase
+
 
 class TestSymbols(DbgTestCase):
 
@@ -24,7 +25,7 @@ class TestSymbols(DbgTestCase):
     def test_sym_substr(self):
         twi_syms = self.debugger.syms_by_substr("twi_")
         self.assertIsInstance(twi_syms, list)
-        self.assertEqual(len(twi_syms), 22) # core defines 22 twi_* methods
+        self.assertEqual(len(twi_syms), 22)  # core defines 22 twi_* methods
 
 
     def test_c_func_datatype(self):
@@ -42,6 +43,7 @@ class TestSymbols(DbgTestCase):
         self.assertEqual(kind, types.KIND_VARIABLE)
         self.assertEqual(typ.var_name, 'debug_status')
         self.assertEqual(typ.var_type.name, 'uint8_t')
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

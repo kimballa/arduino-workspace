@@ -4,10 +4,9 @@
 import unittest
 
 import arduino_dbg.stack as stack
-import arduino_dbg.symbol as symbol
 import arduino_dbg.eval_location as el
-import arduino_dbg.types as types
-from dbg_testcase import *
+from dbg_testcase import DbgTestCase
+
 
 class TestCharPtr(DbgTestCase):
 
@@ -58,6 +57,7 @@ class TestCharPtr(DbgTestCase):
         # and #1 is the string itself, read fully despite no static knowledge of the length of
         # the pointed-to char array. (The debugger should stop at the null terminator.)
         self.assertEqual(var_values['msg'], (0x14C, "This is a message from mission control."))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

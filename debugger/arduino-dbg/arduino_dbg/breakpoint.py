@@ -45,15 +45,15 @@ class BreakpointDatabase(object):
         self._sig_to_bp = {}
 
     def __repr__(self):
-        bp_strs = list(map(repr, self._breakpoints)) # Format breakpoint strs
+        bp_strs = list(map(repr, self._breakpoints))  # Format breakpoint strs
 
         # Mark enabled breakpoints with '[*]', disabled with '[ ]'
         bp_enables = map(lambda bp: bp.enabled, self._breakpoints)
         bp_enable_strs = list(map(lambda flag: '[' + (flag * '*') + ((not flag) * ' ') + '] ',
-            bp_enables))
+                                  bp_enables))
 
-        nums = list(map(lambda i: f'#{i}. ', range(0, len(bp_strs)))) # Format "#0. ", "#1. ", ...
-        lines = list(map(''.join, zip(nums, bp_enable_strs, bp_strs))) # connect those into 1 str/line.
+        nums = list(map(lambda i: f'#{i}. ', range(0, len(bp_strs))))   # Format "#0. ", "#1. ", ...
+        lines = list(map(''.join, zip(nums, bp_enable_strs, bp_strs)))  # connect those into 1 str/line.
 
         lines.insert(0, "id  en  breakpoint")
         lines.insert(1, "------------------")
@@ -67,7 +67,7 @@ class BreakpointDatabase(object):
         """
 
         if pc in self._pc_to_bp:
-            return self._pc_to_bp[pc] # Already registered.
+            return self._pc_to_bp[pc]  # Already registered.
 
         bp = Breakpoint(self._debugger, pc, signature, is_dynamic)
         self._breakpoints.append(bp)
@@ -140,11 +140,11 @@ class Breakpoint(object):
 
 
     def __init__(self, debugger, pc, signature, is_dynamic=False):
-        self.pc = pc                 # Program counter @ breakpoint.
-        self.is_dynamic = is_dynamic # True if we created from client; False if static in prgm.
+        self.pc = pc                    # Program counter @ breakpoint.
+        self.is_dynamic = is_dynamic    # True if we created from client; False if static in prgm.
 
-        self.signature = signature   # A unique server-side id for the breakpoint.
-                                     # We see this as a (bitnumber, bitflags_addr) pair.
+        self.signature = signature      # A unique server-side id for the breakpoint.
+                                        # We see this as a (bitnumber, bitflags_addr) pair.
 
         self._debugger = debugger
 
@@ -186,7 +186,7 @@ class Breakpoint(object):
         bit_num, flag_bits_addr = self.signature
         if flag_bits_addr == 0:
             self._debugger.msg_q(MsgLevel.ERR,
-                'Error: Breakpoint has null bitfield addr, cannot enable')
+                                 'Error: Breakpoint has null bitfield addr, cannot enable')
 
         self.enabled = True
         self._debugger.set_bit_flag(flag_bits_addr, bit_num, 1)
@@ -198,7 +198,7 @@ class Breakpoint(object):
         bit_num, flag_bits_addr = self.signature
         if flag_bits_addr == 0:
             self._debugger.msg_q(MsgLevel.ERR,
-                'Error: Breakpoint has null bitfield addr, cannot disable')
+                                 'Error: Breakpoint has null bitfield addr, cannot disable')
 
         self.enabled = False
         self._debugger.set_bit_flag(flag_bits_addr, bit_num, 0)
@@ -209,7 +209,7 @@ class Breakpoint(object):
         """
         bit_num, flag_bits_addr = self.signature
         if flag_bits_addr == 0:
-            return # Cannot sync this breakpoint
+            return  # Cannot sync this breakpoint
 
         self._debugger.set_bit_flag(flag_bits_addr, bit_num, int(self.enabled))
 

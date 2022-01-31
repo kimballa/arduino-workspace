@@ -5,6 +5,7 @@
 import unittest
 import sys
 
+
 def main(argv):
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(unittest.defaultTestLoader.discover(start_dir='.', pattern='test*.py'))
@@ -13,7 +14,7 @@ def main(argv):
         return 0
     else:
         return 1
-    
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))

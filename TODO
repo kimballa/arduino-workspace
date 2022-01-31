@@ -9,6 +9,9 @@ Debugger:
 On-device service capabilities:
 
 Client:
+  * Use setuptools' pkg_resources.resource_string within .conf file loader.
+  * Test setuptools packaging
+    ... declare as a requirements.txt dependency, first?
 
   --------
 

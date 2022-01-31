@@ -20,9 +20,9 @@ def demangle(name, hide_params=False):
         return None
     args = ['c++filt', name]
     if hide_params:
-        args.append('-p') # Suppress method arguments in output.
+        args.append('-p')  # Suppress method arguments in output.
     pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
-        encoding=locale.getpreferredencoding())
+                            encoding=locale.getpreferredencoding())
     stdout, _ = pipe.communicate()
     demangled_list = stdout.split("\n")
     demangled = demangled_list[0].strip()
@@ -30,7 +30,7 @@ def demangle(name, hide_params=False):
     # Remove any '[clone .constprop.NN]', etc suffixes.
     demangled = _clone_regex.sub('', demangled)
 
-    #print(f"Demangled: {name} -> {demangled}")
+    # print(f"Demangled: {name} -> {demangled}")
     return demangled
 
 
@@ -42,7 +42,7 @@ def pc_to_source_line(elf_file, addr):
         return None
     args = ["addr2line", "-s", "-e", elf_file, ("%x" % addr)]
     pipe = subprocess.Popen(args, stdin=None, stdout=subprocess.PIPE,
-        encoding=locale.getpreferredencoding())
+                            encoding=locale.getpreferredencoding())
     stdout, _ = pipe.communicate()
     source_lines = stdout.split("\n")
     src_line = source_lines[0]

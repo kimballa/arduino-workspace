@@ -4,17 +4,18 @@ import arduino_dbg.term as term
 
 DBG_CONF_FMT_VERSION = 1
 
+
 def load_config_file(print_q, filename, map_name='config', defaults=None):
     """
-        Read a debugger configuration file map.
-        This is actually a python file that will be evaluated in a sterile environment.
-        It should contain two variables afterward:
-        - `formatversion` specifies this serialization version
-        - `{map_name}` is a dict of k-v pairs.
+    Read a debugger configuration file map.
+    This is actually a python file that will be evaluated in a sterile environment.
+    It should contain two variables afterward:
+    - `formatversion` specifies this serialization version
+    - `{map_name}` is a dict of k-v pairs.
 
-        If `defaults` is a map, then its values populate anything omitted from the loaded map.
+    If `defaults` is a map, then its values populate anything omitted from the loaded map.
 
-        TODO(aaron): This is insecure.
+    TODO(aaron): This is insecure.
     """
     if defaults is None:
         defaults = {}
@@ -28,8 +29,9 @@ def load_config_file(print_q, filename, map_name='config', defaults=None):
         conf_text = f.read()
         try:
             exec(conf_text, init_env, init_env)
-        except:
-            # error parsing or executing the config file.
+        except BaseException:
+            # Error parsing or executing the config file.
+            # Catch BaseException to prevent e.g. sys.exit() triggers from within conf file.
             print_q.put((("Warning: error parsing config file '%s'" % filename), term.MsgLevel.WARN))
             init_env[map_name] = {}
             init_env['formatversion'] = DBG_CONF_FMT_VERSION
@@ -37,12 +39,12 @@ def load_config_file(print_q, filename, map_name='config', defaults=None):
     try:
         fmtver = init_env['formatversion']
         if not isinstance(fmtver, int) or fmtver > DBG_CONF_FMT_VERSION:
-            print_q.put((f"Error: Cannot read config file '{filename}' with version {fmtver}",
-                term.MsgLevel.ERR))
-            init_env[map_name] = {} # Disregard the unsupported configuration data.
+            print_q.put(
+                (f"Error: Cannot read config file '{filename}' with version {fmtver}", term.MsgLevel.ERR))
+            init_env[map_name] = {}  # Disregard the unsupported configuration data.
 
         loaded_conf = init_env[map_name]
-    except:
+    except Exception:
         print_q.put((f"Error in format for config file '{filename}'", term.MsgLevel.ERR))
         loaded_conf = {}
 
@@ -55,11 +57,12 @@ def load_config_file(print_q, filename, map_name='config', defaults=None):
 
 MAX_BYTES_PER_LINE = 40
 
+
 def __persist_conf_var(f, k, v):
     """
-        Persist k=v in serialized form to the file handle 'f'.
+    Persist k=v in serialized form to the file handle 'f'.
 
-        Can be called with k=None to serialize a nested value in a complex type.
+    Can be called with k=None to serialize a nested value in a complex type.
     """
 
     if k is not None:
@@ -91,7 +94,7 @@ def __persist_conf_var(f, k, v):
         f.write("{\n")
         for (dirK, dirV) in v.items():
             f.write('    ')
-            __persist_conf_var(f, None, dirK) # keys in a dir can be any type, not just str
+            __persist_conf_var(f, None, dirK)  # keys in a dir can be any type, not just str
             f.write(": ")
             __persist_conf_var(f, None, dirV)
             f.write(",\n")
@@ -99,9 +102,9 @@ def __persist_conf_var(f, k, v):
     else:
         print("Warning: unknown type serialization '%s'" % str(type(v)))
         # Serialize it as an abstract map; filter out python internals and methods
-        objdir = dict([(dirK, dirV) for (dirK, dirV) in dir(v).items() if \
-            (not dirK.startswith("__") and not dirK.endswith("__") and \
-            not callable(getattr(v, dirK))) ])
+        objdir = dict(
+            [(dirK, dirV) for (dirK, dirV) in dir(v).items() if
+             (not dirK.startswith("__") and not dirK.endswith("__") and not callable(getattr(v, dirK)))])
 
         __persist_conf_var(f, None, objdir)
 
@@ -111,7 +114,7 @@ def __persist_conf_var(f, k, v):
 
 def persist_config_file(filename, map_name, data):
     """
-        Write configuration information out to a file.
+    Write configuration information out to a file.
     """
 
     with open(filename, "w") as f:

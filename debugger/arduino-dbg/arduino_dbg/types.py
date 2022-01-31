@@ -33,9 +33,9 @@ class PCRange(object):
     def __init__(self, pc_lo, pc_hi, cuns, variable_scope=None, method_name=None):
         self.pc_lo = pc_lo
         self.pc_hi = pc_hi
-        self.cuns = cuns # associated CompilationUnitNamespace
-        self.method_name = method_name # Method represented by this PCRange, if any.
-        self.variable_scope = variable_scope # a MethodInfo or LexicalScope that holds Variables.
+        self.cuns = cuns  # associated CompilationUnitNamespace
+        self.method_name = method_name  # Method represented by this PCRange, if any.
+        self.variable_scope = variable_scope  # A MethodInfo or LexicalScope that holds Variables.
 
     def includes_pc(self, pc):
         return self.pc_lo <= pc and self.pc_hi >= pc
@@ -71,10 +71,10 @@ class CompilationUnitNamespace(object):
     """
 
     def __init__(self, die_offset, cu, range_lists, debugger):
-        self._named_entries = SortedDict() # name -> entry
+        self._named_entries = SortedDict()  # name -> entry
         self._addr_entries = {}  # DIE offset -> entry
-        self._pc_ranges = SortedList() # Range intervals held by methods, etc. within this CU.
-        self._range_lists = range_lists # Complete .debug_range data from DWARFInfo object.
+        self._pc_ranges = SortedList()   # Range intervals held by methods, etc. within this CU.
+        self._range_lists = range_lists  # Complete .debug_range data from DWARFInfo object.
 
         self._die_offset = die_offset
         self._cu = cu
@@ -83,7 +83,7 @@ class CompilationUnitNamespace(object):
 
         top_die = cu.get_top_DIE()
         try:
-            self._cu_ranges = None # PCRange objects defining the CU itself, if any.
+            self._cu_ranges = None  # PCRange objects defining the CU itself, if any.
             self._low_pc = top_die.attributes['DW_AT_low_pc'].value
             self._high_pc = top_die.attributes['DW_AT_high_pc'].value
         except KeyError:
@@ -95,7 +95,8 @@ class CompilationUnitNamespace(object):
 
             # Compilation unit covers noncontiguous range or otherwise unknown extent.
             # CU may have multiple intervals in DW_AT_ranges.
-            #print(top_die)
+
+            # print(top_die)
             range_data_offset = None
             range_attr = top_die.attributes.get('DW_AT_ranges')
             if range_attr:
@@ -104,8 +105,8 @@ class CompilationUnitNamespace(object):
                 rangelist = range_lists.get_range_list_at_offset(range_data_offset)
                 self._cu_ranges = SortedList()
                 for r in rangelist:
-                    #debugger.verboseprint(f'Extracted range for CU: {r.begin_offset:04x}' +
-                    #    f' -- {r.end_offset:04x}')
+                    # debugger.verboseprint(f'Extracted range for CU: {r.begin_offset:04x}' +
+                    #     f' -- {r.end_offset:04x}')
                     self._cu_ranges.add(PCRange(r.begin_offset, r.end_offset, self))
 
         self.expr_parser = dwarf_expr.DWARFExprParser(cu.structs)
@@ -288,7 +289,8 @@ class DieBase(object):
         if typ and typ.get_die():
             typ_die = typ.get_die()
             lines.append('')
-            lines.append(term.fmt(f'Type for 0x{die.offset:04x} at 0x{typ_die.offset:04x}:',
+            lines.append(term.fmt(
+                f'Type for 0x{die.offset:04x} at 0x{typ_die.offset:04x}:',
                 term.COLOR_CYAN))
             lines.append(term.fmt(f'{typ}', term.COLOR_GRAY))
             lines.extend(DieBase.__die_to_str_inner(typ_die, recursive, None, typ.get_type()))
@@ -296,7 +298,8 @@ class DieBase(object):
 
         if origin_die:
             lines.append('')
-            lines.append(term.fmt(f'Origin for 0x{die.offset:04x} at 0x{origin_die.offset:04x}:',
+            lines.append(term.fmt(
+                f'Origin for 0x{die.offset:04x} at 0x{origin_die.offset:04x}:',
                 term.COLOR_CYAN))
             lines.extend(DieBase.__die_to_str_inner(origin_die, recursive))
 
@@ -489,6 +492,7 @@ class PrgmType(DieBase):
     def __repr__(self):
         return f'{self.name}'
 
+
 class PrimitiveType(PrgmType):
     """
     A fundamental type in the programming language (int, long, float, etc).
@@ -555,7 +559,8 @@ class ConstType(PrgmType):
         return self.name
 
 
-VARIABLE_LEN_ARRAY = -1 # returned in NullTermString.get_array_len()
+VARIABLE_LEN_ARRAY = -1  # returned in NullTermString.get_array_len()
+
 
 class NullTermString(PrgmType):
     """
@@ -579,7 +584,7 @@ class NullTermString(PrgmType):
         return True
 
     def get_array_elem_size(self):
-        return 1 # char size.
+        return 1  # char size.
 
     def get_array_len(self):
         return VARIABLE_LEN_ARRAY
@@ -606,6 +611,7 @@ class PointerType(PrgmType):
     def __repr__(self):
         return f'{self.name}'
 
+
 class ReferenceType(PrgmType):
     """
     A reference to an item of type T.
@@ -623,6 +629,7 @@ class ReferenceType(PrgmType):
 
     def __repr__(self):
         return f'{self.name}'
+
 
 class EnumType(PrgmType):
     """
@@ -663,6 +670,7 @@ class EnumType(PrgmType):
         s += f'\n}}'
         return s
 
+
 class ArrayType(PrgmType):
     """
     An array of items.
@@ -696,7 +704,7 @@ class ArrayType(PrgmType):
         return self.parent_type().is_char()
 
     def is_char(self):
-        return False # Definitionally it's not a single character, it's an array.
+        return False  # Definitionally it's not a single character, it's an array.
 
     def __repr__(self):
         return f'{self.parent_type()}[{self.length}]'
@@ -791,18 +799,16 @@ class MethodPtrType(PrgmType):
         else:
             member = ''
 
-        name = self.name # ptr-to-method doesn't need to have a name assigned.
+        name = self.name  # ptr-to-method doesn't need to have a name assigned.
         if name is None:
             name = ''
 
         return f'{self.return_type.name}({member}*{name})({formals})'
 
 
-
-
 class MethodInfo(PrgmType):
     def __init__(self, method_name, return_type, cuns, member_of=None, virtual=0,
-            accessibility=1, is_decl=False, is_def=False, origin=None, die=None):
+                 accessibility=1, is_decl=False, is_def=False, origin=None, die=None):
 
         if method_name is None:
             name = None
@@ -829,8 +835,8 @@ class MethodInfo(PrgmType):
         # An inline-defined method in a class { ... } can be is_decl and is_def=True.
         # An inline instance of a method will have both set to False.
         # _origin should point back to the canonical declaration instance of the method.
-        self.is_decl = is_decl # Is this the _declaration_ of the method?
-        self.is_def = is_def   # Is this the _definition_ of the method?
+        self.is_decl = is_decl  # Is this the _declaration_ of the method?
+        self.is_def = is_def    # Is this the _definition_ of the method?
 
         self._variables = {}
         self._origin = origin
@@ -846,7 +852,7 @@ class MethodInfo(PrgmType):
             # this is a redundant arg definition and should be flagged as such.
             # (See comments in FormalArg.__init__() for definition of 'redundant')
             existing = list(filter(lambda nm: nm == arg.name, map(lambda f: f.name, self.formal_args)))
-            arg.redundant = (len(existing) > 0) # set redundant flag if we found arg w/ same name.
+            arg.redundant = (len(existing) > 0)  # set redundant flag if we found arg w/ same name.
 
         self.formal_args.append(arg)
 
@@ -878,7 +884,7 @@ class MethodInfo(PrgmType):
         for the current method. Used in the FBREG operation for a framebase-relative
         variable storage location.
         """
-        loc = self._location # TODO - or self.getOrigin()._location??
+        loc = self._location  # TODO(aaron): or self.getOrigin()._location??
         if loc is None:
             return None
 
@@ -941,6 +947,7 @@ class MethodInfo(PrgmType):
         details += '\n'.join(arg_lines)
         return details
 
+
 class FormalArg(DieBase):
 
     @staticmethod
@@ -953,7 +960,7 @@ class FormalArg(DieBase):
 
 
     def __init__(self, name, arg_type, cuns, origin=None, location=None, const_val=None, scope=None,
-            artificial=False, redundant=False):
+                 artificial=False, redundant=False):
         super().__init__()
         self.name = name
         if arg_type is None:
@@ -965,9 +972,9 @@ class FormalArg(DieBase):
         self._const_val = const_val
         self._scope = scope
 
-        self.artificial = artificial # arg is declared 'artificial' in debug info; created by the
-                                     # compiler, not the programmer. e.g. 'this' ptr in C++ member
-                                     # methods. Do not show in method signature.
+        self.artificial = artificial  # arg is declared 'artificial' in debug info; created by the
+                                      # compiler, not the programmer. e.g. 'this' ptr in C++ member
+                                      # methods. Do not show in method signature.
 
         self.redundant = redundant   # this is a redundant DIE for an argument of the same name.
                                      # in foo(int bar) {... } there may be multiple DIEs for 'bar',
@@ -1087,7 +1094,7 @@ class FieldType(PrgmType):
         elif self.accessibility == PRIVATE:
             acc = 'private'
         else:
-            acc = 'public' # Assume public by default.
+            acc = 'public'  # Assume public by default.
 
         return f'{acc} {self.parent_type().name} {self.field_name} ' + \
             f'[size={self.parent_type().size}, offset={self.offset:#x}]'
@@ -1224,6 +1231,7 @@ class DwarfProcedure(DieBase):
         """
         self._const_val = val
 
+
 class VariableInfo(PrgmType):
     """
     Info record for a variable (not struct field) defined globally/statically in a file or
@@ -1234,7 +1242,7 @@ class VariableInfo(PrgmType):
     inlined to multiple locations may also have multiple definitions.
     """
     def __init__(self, var_name, var_type, cuns, location=None, is_decl=False, is_def=False,
-            origin=None, scope=None):
+                 origin=None, scope=None):
 
         PrgmType.__init__(self, var_name, var_type.size)
         self.var_name = var_name
@@ -1247,7 +1255,7 @@ class VariableInfo(PrgmType):
         self.is_decl = is_decl      # See MethodInfo for definitions of these two flags.
         self.is_def = is_def
 
-        self._origin = origin        # Resolved DW_AT_abstract_origin, if any, poiting decl->def
+        self._origin = origin       # Resolved DW_AT_abstract_origin, if any, poiting decl->def
         self._scope = scope
 
     def __repr__(self):
@@ -1342,19 +1350,20 @@ class ParsedDebugInfo(object):
 
     # List of 'context' keys for .debug_info DIE parsing that should always be in the `context`
     # map. Keep this in sync with the fields populated in context in parseTypeInfo()
-    _default_context_keys = [ 'debugger', 'int_size', 'range_lists', 'loc_lists', 'dwarf_ver',
-        'nesting', 'print_full_die' ]
+    _default_context_keys = [
+        'debugger', 'int_size', 'range_lists', 'loc_lists', 'dwarf_ver',
+        'nesting', 'print_full_die']
 
     def __init__(self, debugger):
         self._debugger = debugger
 
-        self._encodings = {} # Global encodings table (encodingId -> PrgmTypE)
-        self._cu_namespaces = [] # Set of CompilationUnitNamespace objects.
-        self._global_syms = GlobalScope(debugger) # vars/methods tagged DW_AT_external visible from any CU.
+        self._encodings = {}  # Global encodings table (encodingId -> PrgmTypE)
+        self._cu_namespaces = []  # Set of CompilationUnitNamespace objects.
+        self._global_syms = GlobalScope(debugger)  # vars/methods tagged DW_AT_external visible from any CU.
 
         self.int_size = debugger.get_arch_conf("int_size")
         self.addr_size = debugger.get_arch_conf("ret_addr_size")
-        self._populateEncodings() # Get base types in the encodings map.
+        self._populateEncodings()  # Get base types in the encodings map.
 
     def types(self, prefix=None):
         """
@@ -1363,7 +1372,7 @@ class ParsedDebugInfo(object):
         If prefix is specified, returns all type names that begin with 'prefix'.
         """
         if prefix is None or len(prefix) == 0:
-            nextfix = None # Empty str prefix means return all types.
+            nextfix = None  # Empty str prefix means return all types.
             prefix = None
         else:
             # Increment the last char of the string to get the first possible type
@@ -1417,7 +1426,7 @@ class ParsedDebugInfo(object):
                     break
 
         if search_cuns is None:
-            return None # We fell off the edge into outer space?
+            return None  # We fell off the edge into outer space?
 
         # search_cuns is the CompilationUnitNamespace that encloses the $PC.
 
@@ -1473,7 +1482,7 @@ class ParsedDebugInfo(object):
             if pcr.method_name:
                 out.append(pcr.method_name)
 
-        #print(f"inline chains: {pc:x} -> {out}")
+        # print(f"inline chains: {pc:x} -> {out}")
         out.reverse()
         return out
 
@@ -1565,14 +1574,14 @@ class ParsedDebugInfo(object):
         # Hack for debugging the debugger: if the die.offset is in this list, then verboseprint()
         # the entire DIE data structure, as well as that of any child DIEs, recursively.
         # e.g.: PRINT_DIE_TREE_OFFSETS = [ 0x11b6, 0x47dc, 0x4843 ]
-        PRINT_DIE_TREE_OFFSETS = [ ]
+        PRINT_DIE_TREE_OFFSETS = []
         # You can also field-configure a specific DIE offset to dump it + its subtree.
         PRINT_DIE_TREE_OFFSETS.append(debugger.get_conf('dbg.print_die.offset'))
         try:
             PRINT_DIE_TREE_OFFSETS.index(die.offset)
-            context['print_full_die'] = nesting # Enable super-verbose DIE debugging.
-        except:
-            pass # We don't need to print the entire DIE tree below here.
+            context['print_full_die'] = nesting  # Enable super-verbose DIE debugging.
+        except Exception:
+            pass  # We don't need to print the entire DIE tree below here.
 
         # Declare various helper methods needed internally within DIE-parsing process.
 
@@ -1599,7 +1608,7 @@ class ParsedDebugInfo(object):
             # to elements of our address-oriented lookup table which is global across
             # all addresses/offsets within the .dwarf_info.
             if ('DW_AT_' + param) not in die.attributes:
-                return None # No 'type' field for this DIE.
+                return None  # No 'type' field for this DIE.
 
             addr = die.attributes['DW_AT_' + param].value + cu_offset
 
@@ -1661,9 +1670,9 @@ class ParsedDebugInfo(object):
 
 
         if not die.tag:
-            return # null DIE to terminate nested set.
+            return  # null DIE to terminate nested set.
         elif cuns.has_addr_entry(die.offset):
-            return # Our seek-driven parsing has already parsed this entry, don't double-process.
+            return  # Our seek-driven parsing has already parsed this entry, don't double-process.
 
         ### In verbose mode, print the DIE tree as we parse it.
         if debugger.get_conf('dbg.verbose'):
@@ -1672,7 +1681,8 @@ class ParsedDebugInfo(object):
                 abs_origin = _resolve_abstract_origin()
             if not abs_origin and hasattr('specification'):
                 abs_origin = _resolve_abstract_origin('specification')
-            debugger.verboseprint(dbg.VHEX4, die.offset, ':  ', nesting, '  ', nesting * '  ',
+            debugger.verboseprint(
+                dbg.VHEX4, die.offset, ':  ', nesting, '  ', nesting * '  ',
                 die.tag, ': ', dieattr('name', None) or (abs_origin and abs_origin.name))
 
             if context['print_full_die'] is not None:
@@ -1737,13 +1747,14 @@ class ParsedDebugInfo(object):
             # type
             base = _lookup_type()
             arr = ArrayType(base)
-            _add_entry(arr, arr.name, die.offset) # TODO: if this causes collision problems, remove arr.name.
+            # TODO(aaron): if this causes collision problems, remove arr.name below.
+            _add_entry(arr, arr.name, die.offset)
             ctxt = context.copy()
             ctxt['nesting'] += 1
             ctxt['array'] = arr
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
-        elif die.tag == 'DW_TAG_subrange_type': # Size of array
+        elif die.tag == 'DW_TAG_subrange_type':  # Size of array
             # [lower_bound=0], upper_bound
             lower = dieattr("lower_bound", 0)
             upper = dieattr("upper_bound")
@@ -1760,14 +1771,14 @@ class ParsedDebugInfo(object):
             ctxt['enum'] = enum
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
-        elif die.tag == 'DW_TAG_enumerator': # Member of enumeration
+        elif die.tag == 'DW_TAG_enumerator':  # Member of enumeration
             # name, const_value
             name = dieattr('name')
             val = dieattr('const_value')
             context['enum'].addEnum(name, val)
-        elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type': # class or struct
+        elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type':  # class or struct
             # name, byte_size, containing_type
-            # TODO: can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
+            # TODO(aaron): can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
             name = dieattr('name')
             size = dieattr('byte_size')
 
@@ -1810,7 +1821,8 @@ class ParsedDebugInfo(object):
             if el.LookupFlags.successful(flags):
                 (offset, _) = offset_list[0]
             else:
-                cuns.getDebugger.verboseprint("Error decoding data member location for field ",
+                cuns.getDebugger.verboseprint(
+                    "Error decoding data member location for field ",
                     context.get("class").class_name, "::", name, " - ",
                     el.LookupFlags.get_message(flags))
                 offset = None
@@ -1848,7 +1860,7 @@ class ParsedDebugInfo(object):
                     # No ':' in string; nothing to do.
                     pass
 
-                name = demangled # Use demangled format for name.
+                name = demangled  # Use demangled format for name.
 
             virtual = dieattr('virtuality', dwarf_constants.DW_VIRTUALITY_none)
             accessibility = dieattr('accessibility', dwarf_constants.DW_ACCESS_public)
@@ -1884,8 +1896,8 @@ class ParsedDebugInfo(object):
                 is_decl = False
                 is_def = False
             else:
-                is_decl = origin is None # If it has no abstract origin, it's also the declaration.
-                is_def = True # It has a PC range... concrete method definition.
+                is_decl = origin is None  # If it has no abstract origin, it's also the declaration.
+                is_def = True  # It has a PC range... concrete method definition.
 
             if hasattr('inline') and dieattr('inline') != dwarf_constants.DW_INL_inlined:
                 # DWARFv5 3.3.8.1: This is an inline function but not actually an inline instance.
@@ -1904,7 +1916,8 @@ class ParsedDebugInfo(object):
                 if enclosing_class is None:
                     enclosing_class = origin.member_of
 
-            method = MethodInfo(name, return_type, cuns, enclosing_class, virtual, accessibility,
+            method = MethodInfo(
+                name, return_type, cuns, enclosing_class, virtual, accessibility,
                 is_decl, is_def, origin, die)
 
             if enclosing_class:
@@ -1942,14 +1955,15 @@ class ParsedDebugInfo(object):
                 # which we can populate data we need. (DWARFv5 2.13.2)
                 definition = _resolve_abstract_origin('specification')
 
-            name = definition.method_name or dieattr('name') # try demangled name from def'n first
+            name = definition.method_name or dieattr('name')  # try demangled name from def'n first
             return_type = definition.return_type or _lookup_type() or _VOID
 
             # inline instance of a method is neither declaration nor definition.
             is_decl = False
             is_def = False
 
-            method = MethodInfo(name, return_type, cuns, definition.member_of, definition.virtual,
+            method = MethodInfo(
+                name, return_type, cuns, definition.member_of, definition.virtual,
                 definition.accessibility, is_decl, is_def, definition, die)
 
             if dieattr('low_pc') and dieattr('high_pc'):
@@ -2044,7 +2058,7 @@ class ParsedDebugInfo(object):
                 base = origin.var_type
             location = _get_locations()
             is_decl = dieattr('declaration') and True
-            is_def = not is_decl # Variables are one or the other of decl and def.
+            is_def = not is_decl  # Variables are one or the other of decl and def.
 
             if context.get('method'):
                 enclosing_scope = context['method']
@@ -2109,7 +2123,8 @@ class ParsedDebugInfo(object):
             context['dwarf_ver'] = compile_unit.header['version']
             self._debugger.verboseprint(f'Parsing compile unit (0x{compile_unit.cu_offset:04x})')
 
-            cuns = CompilationUnitNamespace(compile_unit.cu_offset, compile_unit, range_lists,
+            cuns = CompilationUnitNamespace(
+                compile_unit.cu_offset, compile_unit, range_lists,
                 self._debugger)
             self._cu_namespaces.append(cuns)
             self.parseTypesFromDIE(compile_unit.get_top_DIE(), cuns, context)

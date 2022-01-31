@@ -17,6 +17,7 @@ import traceback
 import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
 
+
 class Completions(object):
     """
     Enumeration of valid autocomplete token classes.
@@ -34,7 +35,6 @@ class Completions(object):
     BASE = 'base'               # integer base: 2, 8, 10, 16.
     CONF_KEY = 'conf_key'       # A configuration key.
     PATH = 'path'               # A file path.
-
 
 
 class Command(object):
@@ -55,12 +55,12 @@ class Command(object):
                                   # each keyword, for use in tab autocompletion.
 
     def __init__(self, keywords, help_keywords=None, display_help=True, completions=None):
-        self.keywords = keywords # Set of keywords that activate this command.
-        self.help_keywords = help_keywords or [] # Additional keywords to display in cmd summary.
-        self.command_func = None # The function to call (memoized in __call__)
-        self.short_help = ''     # 1-line help summary extracted from fn docstring.
-        self.long_help = ''      # Full help summary extracted from fn docstring.
-        self.display_help = display_help # Does this show up in the command summary?
+        self.keywords = keywords  # Set of keywords that activate this command.
+        self.help_keywords = help_keywords or []  # Additional keywords to display in cmd summary.
+        self.command_func = None  # The function to call (memoized in __call__)
+        self.short_help = ''      # 1-line help summary extracted from fn docstring.
+        self.long_help = ''       # Full help summary extracted from fn docstring.
+        self.display_help = display_help  # Does this show up in the command summary?
 
         if not isinstance(keywords, list):
             raise Exception("Expected syntax @Command(keywords=[...])")
@@ -87,7 +87,7 @@ class Command(object):
         @param args the arg array to pass to the method.
         """
 
-        return self.command_func(repl, args) # repl is 'self' from pov of called method.
+        return self.command_func(repl, args)  # repl is 'self' from pov of called method.
 
     def __call__(self, *args, **kwargs):
         """
@@ -115,14 +115,14 @@ class Command(object):
         """
 
         fn = args[0]
-        self.command_func = fn # The function argument is what we'll call to run the command.
+        self.command_func = fn  # The function argument is what we'll call to run the command.
 
         # The long help (shown in `help <kwd>`) is the entire cleanly-reformatted docstring,
         # along with the list of keyword synonyms to invoke it.
         all_keywords = []
         all_keywords.extend(self.keywords)
-        all_keywords.extend(self.help_keywords) # Some keywords like 'tm' show up as synonyms
-                                                # for <X> without activating <X> directly.
+        all_keywords.extend(self.help_keywords)  # Some keywords like 'tm' show up as synonyms
+                                                 # for <X> without activating <X> directly.
 
         if len(all_keywords) > 1:
             keywordsIntro = f"{all_keywords[0]} ({', '.join(all_keywords[1:])})"
@@ -137,7 +137,7 @@ class Command(object):
             if docstr_lines[i].strip().startswith("Syntax:"):
                 # Replace this line with *bold*
                 docstr_lines[i] = term.fmt(docstr_lines[i], term.BOLD)
-                break # Only need to bold one syntax line.
+                break  # Only need to bold one syntax line.
         docstring = "\n".join(docstr_lines)
 
         helptext = f"    {keywordsIntro}\n\n{docstring}"
@@ -199,8 +199,9 @@ def CompoundHost(cls):
     Used to pull the class name into the namespace of the repl_commands module, so we can
     do lazy-instantiation of instances of this class to use for 'self' in CompoundCommand.invoke().
     """
-    globals()[cls.__name__] = cls # Pull this class into our namespace.
-    return cls # return class unmodified.
+    globals()[cls.__name__] = cls  # Pull this class into our namespace.
+    return cls  # return class unmodified.
+
 
 class CompoundCommand(object):
     """
@@ -229,10 +230,10 @@ class CompoundCommand(object):
                         # class will be created w/ repl as c'tor arg by make_self() at command
                         # invocation time.
 
-        self.command_func = None # The function to call (memoized in __call))
-        self.short_help = ''     # 1 line help summary from docstring
-        self.long_help = ''      # Full help summary from docstring.
-        self.display_help = True # Does this show up in the command summary?
+        self.command_func = None  # The function to call (memoized in __call))
+        self.short_help = ''      # 1 line help summary from docstring
+        self.long_help = ''       # Full help summary from docstring.
+        self.display_help = True  # Does this show up in the command summary?
 
         for primary in kw1:
             for secondary in kw2:
@@ -270,7 +271,7 @@ class CompoundCommand(object):
         @param args the arg array to pass to the method.
         """
 
-        return self.command_func(self.make_self(repl), args) # repl passed to c'tor for 'self' object
+        return self.command_func(self.make_self(repl), args)  # repl passed to c'tor for 'self' object
 
     def __call__(self, *args, **kwargs):
         """
@@ -288,7 +289,7 @@ class CompoundCommand(object):
         """
 
         fn = args[0]
-        self.command_func = fn # The function argument is what we'll call to run the command.
+        self.command_func = fn  # The function argument is what we'll call to run the command.
 
         # The long help (shown in `help <kwd>`) is the entire cleanly-reformatted docstring,
         # along with the list of keyword synonyms to invoke it.
@@ -312,7 +313,7 @@ class CompoundCommand(object):
             if docstr_lines[i].strip().startswith("Syntax:"):
                 # Replace this line with *bold*
                 docstr_lines[i] = term.fmt(docstr_lines[i], term.BOLD)
-                break # Only need to bold one syntax line.
+                break  # Only need to bold one syntax line.
         docstring = "\n".join(docstr_lines)
 
         helptext = f"    {keywordsIntro}\n\n{docstring}"
@@ -383,7 +384,7 @@ class ReplAutoComplete(object):
             next_char = chr(ord(last_char) + 1)
             nextfix = prefix[0:-1] + next_char
 
-        return Command.getCommandList().irange(prefix, nextfix, inclusive=(True,False))
+        return Command.getCommandList().irange(prefix, nextfix, inclusive=(True, False))
 
     def _complete_symbol(self, prefix):
         return self._debugger.syms_by_prefix(prefix)
@@ -420,7 +421,7 @@ class ReplAutoComplete(object):
             searchdir = os.path.dirname(prefix)
             result_prepend = searchdir
             if searchdir is None or len(searchdir) == 0:
-                searchdir='.'
+                searchdir = '.'
             file_prefix = os.path.basename(prefix)
 
         # Iterate through everything in the search dir.
@@ -430,7 +431,7 @@ class ReplAutoComplete(object):
         contents = os.listdir(searchdir)
         # But only keep the ones that start with the prefix.
         contents = list(filter(lambda item: item.startswith(file_prefix), contents))
-        contents = [ os.path.join(result_prepend, elem) for elem in contents ]
+        contents = [os.path.join(result_prepend, elem) for elem in contents]
         # Append '/' to directory elements.
         for i in range(0, len(contents)):
             if os.path.isdir(contents[i]):
@@ -446,7 +447,7 @@ class ReplAutoComplete(object):
         """
         Add a space after each suggestion to advance to the next token in the autocomplete sequence.
         """
-        return [ item + ' ' for item in suggestions ]
+        return [item + ' ' for item in suggestions]
 
     def _suggest(self, tokens, prefix):
         if len(tokens) == 0 or len(tokens) == 1:
@@ -467,7 +468,7 @@ class ReplAutoComplete(object):
         # Get the completion set relevant to the current token
         completion_set = completion_sets[len(arg_tokens) - 1]
         if completion_set == Completions.NONE:
-            return [] # No suggestions
+            return []  # No suggestions
         elif completion_set == Completions.KW:
             return self._space(self._complete_keyword(prefix))
         elif completion_set == Completions.SYM:
@@ -477,11 +478,11 @@ class ReplAutoComplete(object):
         elif completion_set == Completions.SYM_OR_TYPE:
             return self._space(self._complete_symbol_or_type(prefix))
         elif completion_set == Completions.WORD_SIZE:
-            return self._space(self.__filter([ '1', '2', '4' ], prefix))
+            return self._space(self.__filter(['1', '2', '4'], prefix))
         elif completion_set == Completions.BINARY:
-            return self._space(self.__filter([ '0', '1' ], prefix))
+            return self._space(self.__filter(['0', '1'], prefix))
         elif completion_set == Completions.BASE:
-            return self._space(self.__filter([ '2', '8', '10', '16' ], prefix))
+            return self._space(self.__filter(['2', '8', '10', '16'], prefix))
         elif completion_set == Completions.CONF_KEY:
             return self._space(self._complete_conf_key(prefix))
         elif completion_set == Completions.PATH:
@@ -521,15 +522,15 @@ class ReplAutoComplete(object):
                 return self._cached_result[state]
 
             results = list(self._suggest(tokens, prefix))
-            results.append(None) # Append a 'None' to the end to signal
-                                 # stop-iteration condition to readline.
+            results.append(None)  # Append a 'None' to the end to signal
+                                  # stop-iteration condition to readline.
 
             # Cache the result on the way out, along with a key to ensure we're still on the same
             # search next time we try to access a cached result.
             self._cached_key = (prefix, line_buffer, state)
             self._cached_result = results
 
-            return results[state] # state is an index into the output list.
+            return results[state]  # state is an index into the output list.
 
         except Exception as e:
             # readline swallows our exceptions. Print them out, because we need to know
@@ -537,13 +538,13 @@ class ReplAutoComplete(object):
             print(f'\nException in autocomplete: {e}')
             if self._debugger.get_conf("dbg.verbose"):
                 traceback.print_tb(e.__traceback__)
-            raise # rethrow
+            raise  # rethrow
 
 
 def repl_split(cmdline, incomplete_ok=False):
     """
     Split a repl commandline into tokens. We allow 'single quotes' or "double quotes" to preserve
-    whitespace within a token. There is no escape character; shortcuts like '\q' are returned
+    whitespace within a token. There is no escape character; shortcuts like '\\q' are returned
     as-is. Unlike shlex in its posix=False settinsg, we strip '"containing quotes"' from token
     responses.
 
@@ -557,7 +558,7 @@ def repl_split(cmdline, incomplete_ok=False):
     except ValueError:
         if not incomplete_ok:
             # Got incomplete quotation marks.
-            raise # re-throw
+            raise  # re-throw
         else:
             single_q = None
             double_q = None
@@ -574,7 +575,7 @@ def repl_split(cmdline, incomplete_ok=False):
                 pass
 
             if double_q is None and single_q is None:
-                raise # No idea how to process a ValueError w/o any open-quote issues.
+                raise  # No idea how to process a ValueError w/o any open-quote issues.
             elif double_q is None and single_q is not None:
                 # Try again with closed single-quote.
                 return repl_split(cmdline.rstrip() + "'", False)
@@ -609,7 +610,7 @@ def print_command_help(debugger, argv):
             cmdMap = CompoundCommand.getCommandMap()
             cmdObj = cmdMap[(primary, secondary)]
             debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
-        except:
+        except Exception:
             debugger.msg_q(MsgLevel.ERR, f"Error: No command '{argv[0]} {argv[1]}' found.")
             debugger.msg_q(MsgLevel.INFO, "Try 'help' to list all available commands.")
             debugger.msg_q(MsgLevel.INFO, "Use 'quit' to exit the debugger.")
@@ -622,12 +623,11 @@ def print_command_help(debugger, argv):
             cmdMap = Command.getCommandMap()
             cmdObj = cmdMap[cmd]
             debugger.msg_q(MsgLevel.INFO, cmdObj.long_help)
-        except:
+        except Exception:
             if CompoundCommand.is_compound_leader(cmd):
                 # List compound commands that start with this initial keyword.
-                compoundMap = CompoundCommand.getCommandMap()
                 compound_cmds = list(filter(lambda full_cmd: full_cmd.startswith(cmd + ' '),
-                    Command.getCommandIndex()))
+                                            Command.getCommandIndex()))
                 debugger.msg_q(MsgLevel.INFO, f"'{cmd}' Commands")
                 debugger.msg_q(MsgLevel.INFO, (len(cmd) + 11) * "-")
                 debugger.msg_q(MsgLevel.INFO, '\n'.join(compound_cmds))
@@ -645,20 +645,23 @@ def print_command_help(debugger, argv):
     debugger.msg_q(MsgLevel.INFO, "--------")
 
     cmdIndex = Command.getCommandIndex()
-    for (keyword, cmdObj) in cmdIndex.items(): # iterate over sorted map.
+    for (keyword, cmdObj) in cmdIndex.items():  # iterate over sorted map.
         if cmdObj.display_help:
             debugger.msg_q(MsgLevel.INFO, cmdObj.short_help)
 
     debugger.msg_q(MsgLevel.INFO, "")
-    debugger.msg_q(MsgLevel.INFO,
+    debugger.msg_q(
+        MsgLevel.INFO,
         "After doing a symbol search with sym or '?', you can reference results by")
-    debugger.msg_q(MsgLevel.INFO,
+    debugger.msg_q(
+        MsgLevel.INFO,
         "number, e.g.: `print #3`  // look up value of 3rd symbol in the list")
-    debugger.msg_q(MsgLevel.INFO,
+    debugger.msg_q(
+        MsgLevel.INFO,
         "The most recently-used such number--or '#0' if '?' gave a unique result--can")
-    debugger.msg_q(MsgLevel.INFO,
+    debugger.msg_q(
+        MsgLevel.INFO,
         "then be referenced as '$'. e.g.: `print $`  // look up the same value again")
     debugger.msg_q(MsgLevel.INFO, "")
-    debugger.msg_q(MsgLevel.INFO,
-        "For more information, type: help <command>")
+    debugger.msg_q(MsgLevel.INFO, "For more information, type: help <command>")
 

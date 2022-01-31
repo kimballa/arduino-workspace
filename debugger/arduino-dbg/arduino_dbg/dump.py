@@ -16,6 +16,7 @@ SERIALIZED_STATE_KEY = 'state'
 DUMP_SCHEMA_KEY = 'dump_schema'
 DUMP_SCHEMA_VER = 1
 
+
 def capture_dump(debugger, dump_filename):
     """
     Capture registers and SRAM from the device and store in a file locally.
@@ -30,13 +31,13 @@ def capture_dump(debugger, dump_filename):
     ram_end = debugger.get_arch_conf("RAMEND")
     instruction_set = debugger.get_arch_conf("instruction_set")
     gen_reg_count = debugger.get_arch_conf("general_regs")
-    byte_order = debugger.get_arch_conf("endian") # 'little' or 'big'
+    byte_order = debugger.get_arch_conf("endian")  # 'little' or 'big'
 
     platform_name = debugger.get_conf('arduino.platform')
     arch_name = debugger.get_conf('arduino.arch')
 
     # Number of bytes to retrieve from the device at a time
-    read_size = 4 # TODO(aaron): Parameterize?
+    read_size = 4  # TODO(aaron): Parameterize?
 
     # what's the memory address where this starts?
     if instruction_set == 'avr':
@@ -64,7 +65,7 @@ def capture_dump(debugger, dump_filename):
     regs = debugger.get_registers()
 
     memstats = debugger.get_memstats()
-    del memstats['RAMSTART'] # Remove memstats components that are populated from _arch.
+    del memstats['RAMSTART']  # Remove memstats components that are populated from _arch.
     del memstats['RAMEND']
     del memstats['FLASHEND']
 
@@ -79,7 +80,7 @@ def capture_dump(debugger, dump_filename):
         for i in range(0, gen_reg_count):
             reg_bytes.append(regs[f'r{i}'])
         sram_byte_string[0:0] = reg_bytes
-        sram_offset = 0 # We now have a complete memory image starting at offset 0000h
+        sram_offset = 0  # We now have a complete memory image starting at offset 0000h
 
         # Make sure register-file values for $SP and $SREG are written to the SRAM image
         # at the right mem-mapped-register addresses, so they are consistent on reload.
@@ -110,6 +111,7 @@ def capture_dump(debugger, dump_filename):
     out[DUMP_SCHEMA_KEY] = DUMP_SCHEMA_VER
 
     serialize.persist_config_file(dump_filename, SERIALIZED_STATE_KEY, out)
+
 
 def load_dump(filename, print_q, config=None, history_change_hook=None):
     """
@@ -147,15 +149,16 @@ def load_dump(filename, print_q, config=None, history_change_hook=None):
     # Create a new Debugger instance connected to the 'left' pipe.
     # Specify the ELF file associated with this dump and the relevant Arduino platform.
     # Start with client lock ownership - we'll release it when this 'load' command is done.
-    dbg = debugger.Debugger(elf_filename, left, print_q,
+    dbg = debugger.Debugger(
+        elf_filename, left, print_q,
         arduino_platform=dump_data['platform'], force_config=config,
         history_change_hook=history_change_hook, is_locked=True)
-    dbg.set_process_state(debugger.ProcessState.BREAK) # It's definitionally always paused.
+    dbg.set_process_state(debugger.ProcessState.BREAK)  # It's definitionally always paused.
 
     # Create a service that acts like the __dbg_service() in C.
     # Connect it to the ram/image and the 'right' pipe.
     dbg_serv = HostedDebugService(dump_data, dbg, right)
-    dbg_serv.start() # Start service in a new thread.
+    dbg_serv.start()  # Start service in a new thread.
 
     return (dbg, dbg_serv)
 
@@ -215,14 +218,14 @@ class HostedDebugService(object):
 
         while self.stay_alive:
             while not self._conn.available():
-                time.sleep(0.05) # Sleep for 50ms if no data available.
+                time.sleep(0.05)  # Sleep for 50ms if no data available.
                 if not self.stay_alive:
-                    return # time to leave
+                    return  # time to leave
 
             cmdline = self._conn.readline()
             if not len(cmdline):
                 continue
-            #print(f"Received: {cmdline}")
+            # print(f"Received: {cmdline}")
 
             cmd = f'{chr(cmdline[0])}'
             args = self._to_args(cmdline[1:])
@@ -245,7 +248,7 @@ class HostedDebugService(object):
                 self._send_comment("Cannot continue in image debugger")
                 # Debugger expects a RESULT_ONELINE, so send a formal response that is not
                 # 'Continuing' in addition to the user-helpful comment above.
-                self._send("error") 
+                self._send("error")
             elif cmd == protocol.DBG_OP_SET_FLAG:
                 # Used to enable/disable breakpoints; unnecessary in static image debugger.
                 self._send_comment("Cannot set bit flag in image debugger")
@@ -272,15 +275,15 @@ class HostedDebugService(object):
                         if key == "SP":
                             self._send(f'{self._regs["SP"]:x}')
                         else:
-                            self._send('0') # e.g. unknown __malloc_heap_end
+                            self._send('0')  # e.g. unknown __malloc_heap_end
                 self._send('$')
             elif cmd == protocol.DBG_OP_PORT_IN:
                 # Return a GPIO value to the user.
                 addr = args[0]
                 try:
                     val = 1 * (self._gpio[addr] != 0)
-                except:
-                    val = 0 # Invalid GPIO port? Return LOW.
+                except Exception:
+                    val = 0  # Invalid GPIO port? Return LOW.
                 self._send(f'{int(val)&1:b}')
             elif cmd == protocol.DBG_OP_PORT_OUT:
                 # "Drive" a "pin" with the specified GPIO value.
@@ -288,8 +291,8 @@ class HostedDebugService(object):
                 val = int((args[1] != 0) * 1)
                 try:
                     self._gpio[addr] = val
-                except:
-                    pass # Invalid GPIO port? Ignore...
+                except Exception:
+                    pass  # Invalid GPIO port? Ignore...
             elif cmd == protocol.DBG_OP_RESET:
                 self._send_comment("Cannot reset in image debugger")
                 # Command does not expect any real response so no more to do here.
@@ -311,10 +314,11 @@ class HostedDebugService(object):
 
     # Private helper methods for the main service.
 
+
     def _send(self, text):
         if text[-1] != '\n':
             text = text + "\n"
-        #print(f'Sending: {text.encode("UTF-8")}')
+        # print(f'Sending: {text.encode("UTF-8")}')
         self._conn.write(text.encode("UTF-8"))
 
     def _send_comment(self, comment):

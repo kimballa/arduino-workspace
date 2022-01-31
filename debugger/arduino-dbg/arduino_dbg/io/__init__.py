@@ -1,19 +1,24 @@
 # (c) Copyright 2022 Aaron Kimball
-#
-#
-# Classes to interact with serial connections or virtual connections to a locally-mounted service.
-# We wrap enough of the serial.Serial interface for the Debugger's needs, and also support
-# a version that operates on two internal pipes for intra-process "serial" connection to the
-# HostedDumpDebugger service.
+
+"""
+Classes to interact with serial connections or virtual connections to a locally-mounted service.
+We wrap enough of the serial.Serial interface for the Debugger's needs, and also support
+a version that operates on two internal pipes for intra-process "serial" connection to the
+HostedDumpDebugger service.
+"""
 
 import fcntl
 import os
 import serial
 import time
 
+
 class DebugConn(object):
     """
-    Abstract interface for a bi-diirectional
+    Abstract interface for a bi-directional communication channel (e.g., a serial port).
+
+    Implementations include a wrapper around PySerial, and a wrapper around a pair of OS pipes
+    used for inter-thread communication or IPC.
     """
     def __init__(self):
         pass
@@ -103,7 +108,6 @@ class SerialConn(DebugConn):
         return f'SerialDebugConn(port={self.port}, baud={self.baud}, timeout={self.timeout})'
 
 
-
 class LocalBidiPipeConn(DebugConn):
     """
     Given handles to opposite ends of two open pipes, enable bidirectional conversation with
@@ -154,7 +158,7 @@ class LocalBidiPipeConn(DebugConn):
             c = self._buf[0]
 
             out.append(c)
-            del self._buf[0] # This can be O(n^2) but we don't actually buffer very far.
+            del self._buf[0]  # This can be O(n^2) but we don't actually buffer very far.
             self._n_buffered -= 1
 
             if c == ord('\n'):
@@ -166,7 +170,7 @@ class LocalBidiPipeConn(DebugConn):
             try:
                 newbytes = os.read(self._read_fd, 1)
                 if len(newbytes) == 0:
-                    return bytes(out) # EOF condition -- we're done.
+                    return bytes(out)  # EOF condition -- we're done.
             except BlockingIOError:
                 # Got nothing from nonblocking read.
                 if sleep_start is not None:
@@ -177,14 +181,14 @@ class LocalBidiPipeConn(DebugConn):
                 else:
                     # This is the first such time point. Mark when we started.
                     sleep_start = time.time()
-                time.sleep(0.025) # Wait 25ms and try again.
+                time.sleep(0.025)  # Wait 25ms and try again.
                 continue
 
-            sleep_start = None # We got a byte; reset timeout.
+            sleep_start = None  # We got a byte; reset timeout.
             c = newbytes[0]
             out.append(c)
             if c == ord('\n'):
-                break # Done!
+                break  # Done!
 
         return bytes(out)
 
@@ -236,5 +240,4 @@ def make_bidi_pipe():
     right = LocalBidiPipeConn(r2, w1, timeout)
 
     return (left, right)
-
 

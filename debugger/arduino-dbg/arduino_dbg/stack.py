@@ -12,6 +12,7 @@ _debugger_methods = [
   "__dbg_service",   # The debugger interactive service loop
 ]
 
+
 class CallFrame(object):
     """
     Represents a frame on the call stack; generated in the debugger.get_backtrace()
@@ -21,7 +22,7 @@ class CallFrame(object):
     def __init__(self, debugger, addr, sp):
         self._debugger = debugger
 
-        self.addr = addr # $PC
+        self.addr = addr  # $PC
         self.sp = sp
         self.name = None
         self.demangled = '???'
@@ -49,8 +50,8 @@ class CallFrame(object):
         self._calculate_source_line(debugger.elf_name)
         self._demangle()
 
-        self._unwound_registers = None # Cached map of register values pre-call (unwound)
-        self._cfa = None               # Cached canonical frame address
+        self._unwound_registers = None  # Cached map of register values pre-call (unwound)
+        self._cfa = None                # Cached canonical frame address
 
     def __repr__(self):
         out = f"{self.addr:04x}: {self.demangled}"
@@ -93,8 +94,8 @@ class CallFrame(object):
         if self._cfa is not None:
             return self._cfa
 
-        self.unwind_registers(regs_in) # CFA calculated thru unwind process.
-        return self._cfa # As saved by unwind_registers().
+        self.unwind_registers(regs_in)  # CFA calculated thru unwind process.
+        return self._cfa  # As saved by unwind_registers().
 
     def unwind_registers(self, regs_in):
         """
@@ -116,12 +117,12 @@ class CallFrame(object):
         stack_unwind_registers = self._debugger.get_arch_conf('stack_unwind_registers')
         num_general_regs = self._debugger.get_arch_conf('general_regs')
         has_sph = self._debugger.get_arch_conf('has_sph')
-        push_word_len = self._debugger.get_arch_conf('push_word_len') # width of one PUSHed word.
-        ret_addr_size = self._debugger.get_arch_conf('ret_addr_size') # width of return site addr on stack
+        push_word_len = self._debugger.get_arch_conf('push_word_len')  # width of one PUSHed word.
+        ret_addr_size = self._debugger.get_arch_conf('ret_addr_size')  # width of return site addr on stack
 
         if not self.sym or not self.sym.frame_info:
             self._debugger.msg_q(MsgLevel.WARN,
-                f"Warning: Could not unwind stack frame for method {self.name}.")
+                                 f"Warning: Could not unwind stack frame for method {self.name}.")
             return None
 
         pc = regs_in['PC']
@@ -135,7 +136,7 @@ class CallFrame(object):
 
         decoded_info = self.sym.frame_info.get_decoded()
         cfi_table = decoded_info.table
-        cfi_register_order = decoded_info.reg_order # Order in which registers appear in the table.
+        cfi_register_order = decoded_info.reg_order  # Order in which registers appear in the table.
 
         rule_row = None
         for row in cfi_table:
@@ -154,53 +155,53 @@ class CallFrame(object):
         self._debugger.verboseprint(f"In method {self.sym.demangled} at PC {pc:04x}, use rowPC {row_pc:04x}")
 
         cfa_rule = rule_row['cfa']
-        cfa_reg = stack_unwind_registers[cfa_rule.reg] # cfa gives us an index into the unwind
-                                                       # reg names. Get the mapped-to reg name.
+        cfa_reg = stack_unwind_registers[cfa_rule.reg]  # cfa gives us an index into the unwind
+                                                        # reg names. Get the mapped-to reg name.
         if cfa_reg is None:
             self._debugger.msg_q(MsgLevel.ERROR,
-                "Error: Unknown register mapping for r{cfa_reg} in CFA rule")
+                                 "Error: Unknown register mapping for r{cfa_reg} in CFA rule")
             return None
 
-        cfa_base = regs_in[cfa_reg] # Read the mapped register to get the baseline for CFA
+        cfa_base = regs_in[cfa_reg]  # Read the mapped register to get the baseline for CFA
 
         if cfa_rule.reg < num_general_regs and has_sph:
             # cfa_reg points to e.g. r28, but $SP is 16 bits wide. Also use the next register.
             cfa_base = (regs_in[stack_unwind_registers[cfa_rule.reg + 1]] << 8) | (cfa_base & 0xFF)
 
-        cfa_addr = cfa_base + cfa_rule.offset # We've established the call frame address.
-                                              # This is where SP would point if the entire
-                                              # frame went away via the epilogue + 'ret'.
+        cfa_addr = cfa_base + cfa_rule.offset   # We've established the call frame address.
+                                                # This is where SP would point if the entire
+                                                # frame went away via the epilogue + 'ret'.
         self._debugger.verboseprint(f'Canonical frame addr (CFA) = {cfa_addr:04x}')
-        self._cfa = cfa_addr # Cache this for later.
+        self._cfa = cfa_addr  # Cache this for later.
 
         regs_out = regs_in.copy()
 
         regs_to_process = cfi_register_order.copy()
-        regs_to_process.reverse() # LIFO.
+        regs_to_process.reverse()  # LIFO.
         for reg_num in regs_to_process:
             reg_width = push_word_len
 
-            rule = rule_row[reg_num] # type is RegisterRule
+            rule = rule_row[reg_num]  # type is RegisterRule
             reg_name = stack_unwind_registers[reg_num]
 
             if reg_name == 'LR' or reg_name == 'PC':
-                reg_name = 'PC' # This return site will be assigned to PC after frame 'ret'.
+                reg_name = 'PC'  # This return site will be assigned to PC after frame 'ret'.
                 reg_width = ret_addr_size
 
             if rule.type == callframe.RegisterRule.UNDEFINED:
-                continue # Nothing to do.
+                continue  # Nothing to do.
             elif rule.type == callframe.RegisterRule.SAME_VALUE:
-                continue # We did not change this register value.
+                continue  # We did not change this register value.
             elif rule.type == callframe.RegisterRule.OFFSET:
                 # We've got an offset from the CFA; load the value at that memory address into
                 # the assigned register.
                 data = self._debugger.get_sram(cfa_addr + rule.arg, reg_width)
                 if reg_name == 'PC':
                     # AVR: For $PC, swap the order of the two bytes retrieved, LSH the result by 1.
-                    data = (((data & 0xFF) << 8) | ((data >> 8) & 0xFF)) << 1;
+                    data = (((data & 0xFF) << 8) | ((data >> 8) & 0xFF)) << 1
                 regs_out[reg_name] = data
                 self._debugger.verboseprint(
-                    f'{reg_name}    <- LD({(cfa_addr + rule.arg):x}) (CFA+{rule.arg:x}) ' + \
+                    f'{reg_name}    <- LD({(cfa_addr + rule.arg):x}) (CFA+{rule.arg:x}) '
                     f'[= {regs_out[reg_name]:x} ]')
             elif rule.type == callframe.RegisterRule.VAL_OFFSET:
                 # Based on https://dwarfstd.org/ShowIssue.php?issue=030812.2 I believe this
@@ -215,37 +216,41 @@ class CallFrame(object):
                 self._debugger.verboseprint(
                     f'{reg_name}    <- {reg_in_name} [= {regs_out[reg_name]:x} ]')
             elif rule.type == callframe.RegisterRule.EXPRESSION:
-                self._debugger.msg_q(MsgLevel.ERR,
+                self._debugger.msg_q(
+                    MsgLevel.ERR,
                     "Error: Cannot process EXPRESSION register rule")
                 return None
             elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
-                self._debugger.msg_q(MsgLevel.ERR,
+                self._debugger.msg_q(
+                    MsgLevel.ERR,
                     "Error: Cannot process VAL_EXPRESSION register rule")
                 return None
             elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
-                self._debugger.msg_q(MsgLevel.ERR,
+                self._debugger.msg_q(
+                    MsgLevel.ERR,
                     "Error: Cannot process architecture-specific register rule")
                 return None
 
-        regs_out['SP'] = cfa_addr # As established earlier.
+        regs_out['SP'] = cfa_addr  # As established earlier.
 
         # TODO(aaron): gcc doesn't regard 'SREG' as unwindable; there won't be instructions on
         # how to restore the prior version of it, if it was saved within the method. So the
         # regs_in.copy() will include the child frame's SREG as-is.
 
-        self._unwound_registers = regs_out # Cache for reuse if necessary.
+        self._unwound_registers = regs_out  # Cache for reuse if necessary.
         return regs_out
+
 
 def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
     if sym.isr_frame_ok:
-        return # Already handled / not an issue for this method.
+        return  # Already handled / not an issue for this method.
 
     sreg_save_sequence = debugger.get_arch_conf("GCC_ISR_SREG_SAVE_OPS")
     if not sreg_save_sequence:
-        return # Not an issue for this architecture.
+        return  # Not an issue for this architecture.
 
     fn_body = debugger.image_for_symbol(sym.name)
-    default_fetch_width = debugger.get_arch_conf("default_op_width") # standard instruction decode size
+    default_fetch_width = debugger.get_arch_conf("default_op_width")  # standard instruction decode size
 
     fn_start_pc = sym.addr
     fn_size = sym.size
@@ -259,7 +264,7 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
 
     patch_pc = None
     for virt_pc in range(fn_start_pc, last_scan_pc, default_fetch_width):
-        sliding_window = fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + len(sreg_save_sequence)]
+        sliding_window = fn_body[virt_pc - fn_start_pc: virt_pc - fn_start_pc + len(sreg_save_sequence)]
         if sliding_window == sreg_save_sequence:
             # We found the SREG save sequence.
             patch_pc = virt_pc + len(sreg_save_sequence)
@@ -283,7 +288,7 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
     debugger.verboseprint(
         f"Adjusting frame table for PC >= {patch_pc:04x} in method {sym.name} due to $SREG save bug.")
 
-    seen_rules = {} # Keep track of rules already visited
+    seen_rules = {}  # Keep track of rules already visited
 
     for row in frame_table:
         row_pc = row['pc']
@@ -292,9 +297,9 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
             # and need a further offset.
             for (reg, rule) in row.items():
                 if reg == 'pc':
-                    continue # Not a real rule.
+                    continue  # Not a real rule.
                 if seen_rules.get(rule) is not None:
-                    continue # Rule already seen/adjusted.
+                    continue  # Rule already seen/adjusted.
 
                 if isinstance(rule, callframe.CFARule):
                     if rule.offset is not None:
@@ -302,13 +307,14 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
                         # calculate the CFA relative to the register in question.
                         rule.offset += 1
                     elif rule.expr is not None:
-                        debugger.msg_q(MsgLevel.WARN,
+                        debugger.msg_q(
+                            MsgLevel.WARN,
                             f"Warning: CFA Rule at PC {row_pc:04x} has DWARF expr; unsupported")
                 elif isinstance(rule, callframe.RegisterRule):
                     if rule.type == callframe.RegisterRule.UNDEFINED:
-                        pass # No modification needed.
+                        pass  # No modification needed.
                     elif rule.type == callframe.RegisterRule.SAME_VALUE:
-                        pass # No modification needed.
+                        pass  # No modification needed.
                     elif rule.type == callframe.RegisterRule.OFFSET:
                         # Adjust the offset by subtracting 1 for SREG's position on the stack.
                         # We subtract here (vs add) because the data is below the CFA, and
@@ -317,34 +323,40 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
                     elif rule.type == callframe.RegisterRule.VAL_OFFSET:
                         # Don't have an example of one of these, so I don't know if we need to
                         # adjust, or in which direction.
-                        debugger.msg_q(MsgLevel.WARN,
+                        debugger.msg_q(
+                            MsgLevel.WARN,
                             f"Warning: Got a VAL_OFFSET for reg {reg}; does it need an offset?!??")
                     elif rule.type == callframe.RegisterRule.REGISTER:
-                        pass # No modification needed.
+                        pass  # No modification needed.
                     elif rule.type == callframe.RegisterRule.EXPRESSION:
-                        debugger.msg_q(MsgLevel.WARN,
+                        debugger.msg_q(
+                            MsgLevel.WARN,
                             f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type EXPR')
                     elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
-                        debugger.msg_q(MsgLevel.WARN,
+                        debugger.msg_q(
+                            MsgLevel.WARN,
                             f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type VAL_EXPR')
                     elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
-                        debugger.msg_q(MsgLevel.WARN,
+                        debugger.msg_q(
+                            MsgLevel.WARN,
                             f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type ARCH')
                     else:
-                        debugger.msg_q(MsgLevel.WARN,
+                        debugger.msg_q(
+                            MsgLevel.WARN,
                             f'Warning: Do not know how to process reg rule type={rule.type}')
                 else:
                     # No idea how to process this...
-                    debugger.msg_q(MsgLevel.WARN,
+                    debugger.msg_q(
+                        MsgLevel.WARN,
                         f"Warning: Got rule for register {reg} of instance {rule.__class__}")
 
-                seen_rules[rule] = True # Mark rule as seen so we don't double-process.
+                seen_rules[rule] = True  # Mark rule as seen so we don't double-process.
         else:
             # $SP offsets not yet affected by SREG push at this point in the prologue.
             # Add all members of this row to the seen rule list so we preserve them as-is.
             for (reg, rule) in row.items():
                 if reg == 'pc':
-                    continue # Not a real rule.
+                    continue  # Not a real rule.
                 seen_rules[rule] = True
 
     # Now that the frame_table has been corrected, don't perform this procedure on this
@@ -354,23 +366,20 @@ def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
 
 def get_stack_autoskip_count(debugger):
     """
-        Return the number of bytes in the stack to skip when dumping the stack
-        to the user console. This is the number of bytes required to skip all
-        _debugger_methods[] entries on the top of the call stack.
+    Return the number of bytes in the stack to skip when dumping the stack
+    to the user console. This is the number of bytes required to skip all
+    _debugger_methods[] entries on the top of the call stack.
     """
     regs = debugger.get_registers()
     sp = regs["SP"]
-    pc = regs["PC"]
 
     ret_addr_size = debugger.get_arch_conf("ret_addr_size")
 
     frames = debugger.get_backtrace(limit=len(_debugger_methods))
     for frame in frames:
-        try:
-            _debugger_methods.index(frame['name'])
-        except ValueError:
+        if frame['name'] not in _debugger_methods:
             # This frame is not part of the debugger service, it's a real frame.
-            return frame['sp'] - sp # Skip count == diff between this frame's SP and real SP
+            return frame['sp'] - sp  # Skip count == diff between this frame's SP and real SP
 
     # All the debugger methods are on the stack. Last frame holds the key: its offset
     # from the current stack pointer /plus/ the frame size & retaddr
@@ -380,43 +389,44 @@ def get_stack_autoskip_count(debugger):
 
 def stack_frame_size_for_method(debugger, pc, method_sym):
     """
-        Given a program counter ($PC) somewhere within the body of `method_sym`, determine
-        the size of the current stack frame at that point and return it.
+    Given a program counter ($PC) somewhere within the body of `method_sym`, determine
+    the size of the current stack frame at that point and return it.
 
-        i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
-        filled by the method (x+1..x+4) and the (2 byte AVR) return address is at
-        x+5..x+6.
+    i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
+    filled by the method (x+1..x+4) and the (2 byte AVR) return address is at
+    x+5..x+6.
 
-        This method uses prologue analysis to determine the size of the stack frame: by
-        analyzing the disassembly of the method containing the indicated $PC, we establish
-        the size of the stack frame in question.
+    This method uses prologue analysis to determine the size of the stack frame: by
+    analyzing the disassembly of the method containing the indicated $PC, we establish
+    the size of the stack frame in question.
 
-        NOTE: While the opcodes to analyze are parameterized in avr_common.conf, the pattern
-        recognition state machine implemented here is AVR-specific.
+    NOTE: While the opcodes to analyze are parameterized in avr_common.conf, the pattern
+    recognition state machine implemented here is AVR-specific.
 
-        TODO(aaron): For architectures with a frame pointer (e.g. the ARM ABI), use frame
-        pointer walking.
+    TODO(aaron): For architectures with a frame pointer (e.g. the ARM ABI), use frame
+    pointer walking.
 
-        TODO(aaron): When .debug_frame is available, implement CFA record analysis-based
-        approach.
+    TODO(aaron): When .debug_frame is available, implement CFA record analysis-based
+    approach.
     """
 
     if method_sym is None:
-        debugger.msg_q(MsgLevel.ERR,
-            f"Error: No function symbol for method: {method_name}; method frame size = ???")
+        debugger.msg_q(
+            MsgLevel.ERR,
+            "Error: No function symbol for method; method frame size = ???")
         return None
 
     # Pull opcode details from architecture configuration.
     # opcode records contain fields: name, OPCODE, MASK, width, decoder
     prologue_opcodes = debugger.get_arch_conf("prologue_opcodes")
 
-    push_word_len = debugger.get_arch_conf("push_word_len") # nr of bytes a PUSH adds to the stack.
-    default_fetch_width = debugger.get_arch_conf("default_op_width") # standard instruction decode size
-    has_sph = debugger.get_arch_conf("has_sph") # True if we have a 16-bit $SP ($SPH:$SPL)
+    push_word_len = debugger.get_arch_conf("push_word_len")  # nr of bytes a PUSH adds to the stack.
+    default_fetch_width = debugger.get_arch_conf("default_op_width")  # standard instruction decode size
+    has_sph = debugger.get_arch_conf("has_sph")  # True if we have a 16-bit $SP ($SPH:$SPL)
 
-    spl_port = debugger.get_arch_conf("SPL_PORT") # Port for IN Rd, <port> to read SPL
+    spl_port = debugger.get_arch_conf("SPL_PORT")  # Port for IN Rd, <port> to read SPL
     if has_sph:
-        sph_port = debugger.get_arch_conf("SPH_PORT") # Port for IN Rd, <port> to read SPH
+        sph_port = debugger.get_arch_conf("SPH_PORT")  # Port for IN Rd, <port> to read SPH
     else:
         sph_port = None
 
@@ -451,25 +461,25 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
     #
     # TODO(aaron): This is AVR-specific. Can we parameterize at levels smaller than this entire
     # method?
-    IO_SUB_PATTERN_NONE  = 0
-    IO_SUB_PATTERN_IN_1  = 1 # Read one of SPL/SPH
-    IO_SUB_PATTERN_IN_2  = 2 # Read both of SPL/SPH
-    IO_SUB_PATTERN_SUB   = 3 # Subtracted from SPL/SPH (via SBIW / SUBI Rd, i)
-    IO_SUB_PATTERN_OUT_1 = 4 # Wrote back one of SPL/SPH
-    IO_SUB_PATTERN_DONE  = 5 # After writing back both (or 1 if !has_sph), lock in, then back to pattern_none.
+    IO_SUB_PATTERN_NONE = 0
+    IO_SUB_PATTERN_IN_1 = 1   # noqa: F841 (Read one of SPL/SPH)
+    IO_SUB_PATTERN_IN_2 = 2   # Read both of SPL/SPH
+    IO_SUB_PATTERN_SUB = 3    # Subtracted from SPL/SPH (via SBIW / SUBI Rd, i)
+    IO_SUB_PATTERN_OUT_1 = 4  # Wrote back one of SPL/SPH
+    IO_SUB_PATTERN_DONE = 5   # After writing back both (or 1 if !has_sph), lock in; back to pattern_none.
 
     spl_active_reg = None
     sph_active_reg = None
     possible_offset = 0
-    io_sub_seq_state = IO_SUB_PATTERN_NONE # Not currently in this pattern.
+    io_sub_seq_state = IO_SUB_PATTERN_NONE  # Not currently in this pattern.
 
     while virt_pc < (fn_start_pc + fn_size) and virt_pc < pc:
         width = default_fetch_width
-        op = int.from_bytes(fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + width],
-            "little", signed=False)
-        #print(f'vpc {virt_pc:04x} (w={width}) -- op {op:02x} {op:016b}')
+        op = int.from_bytes(fn_body[virt_pc - fn_start_pc: virt_pc - fn_start_pc + width],
+                            "little", signed=False)
+        # print(f'vpc {virt_pc:04x} (w={width}) -- op {op:02x} {op:016b}')
 
-        is_prologue = False # Don't yet know if this instruction is part of the prologue
+        is_prologue = False  # Don't yet know if this instruction is part of the prologue
 
         for opcode_rec in prologue_opcodes:
             loop_op = op
@@ -478,8 +488,8 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
             if opcode_rec['width'] != default_fetch_width:
                 # Try to decode more than the standard fetch width at once.
                 loop_width = opcode_rec['width']
-                this_op = int.from_bytes(
-                    fn_body[virt_pc - fn_start_pc : virt_pc - fn_start_pc + loop_width],
+                loop_op = int.from_bytes(
+                    fn_body[virt_pc - fn_start_pc: virt_pc - fn_start_pc + loop_width],
                     "little", signed=False)
 
             if (loop_op & opcode_rec['MASK']) != opcode_rec['OPCODE']:
@@ -498,8 +508,8 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
             elif opcode_rec['name'] == 'in':
                 (port, rd) = opcode_rec['decoder'](loop_op)
                 if port == spl_port:
-                    spl_active_reg = rd # We've loaded $SPL into Rd.
-                    possible_offset = 0 # Reset possible_offset since we can't have SBIW'd yet.
+                    spl_active_reg = rd  # We've loaded $SPL into Rd.
+                    possible_offset = 0  # Reset possible_offset since we can't have SBIW'd yet.
                     if io_sub_seq_state < IO_SUB_PATTERN_IN_2:
                         # Advance state machine by 1
                         io_sub_seq_state += 1
@@ -511,8 +521,8 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
                         # Skip _IN_1 state; there is no $SPH so we've read the whole SP.
                         io_sub_seq_state = IO_SUB_PATTERN_IN_2
                 elif has_sph and port == sph_port:
-                    sph_active_reg = rd # We've loaded $SPH into Rd.
-                    possible_offset = 0 # Reset possible_offset since we can't have SBIW'd yet.
+                    sph_active_reg = rd  # We've loaded $SPH into Rd.
+                    possible_offset = 0  # Reset possible_offset since we can't have SBIW'd yet.
                     if io_sub_seq_state < IO_SUB_PATTERN_IN_2:
                         # Advance state machine by 1
                         io_sub_seq_state += 1
@@ -540,17 +550,17 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
                 if io_sub_seq_state >= IO_SUB_PATTERN_SUB:
                     # We either just saw the SBIW or wrote one of the two ports.
                     if port == spl_port and rd == spl_active_reg:
-                        io_sub_seq_state += 1 # Wrote back to $SPL
+                        io_sub_seq_state += 1  # Wrote back to $SPL
                     elif has_sph and port == sph_port and rd == sph_active_reg:
                         io_sub_seq_state += 1
 
                     if io_sub_seq_state == IO_SUB_PATTERN_OUT_1 and not has_sph:
-                        io_sub_seq_state += 1 # Advance to _DONE; no $SPH to write.
+                        io_sub_seq_state += 1  # Advance to _DONE; no $SPH to write.
 
                     if io_sub_seq_state == IO_SUB_PATTERN_DONE:
                         # We have completed the pattern
                         debugger.verboseprint(f"Direct SP adjustment of {possible_offset}")
-                        depth += possible_offset # possible_offset confirmed as frame ptr offset
+                        depth += possible_offset  # possible_offset confirmed as frame ptr offset
 
                         # Reset state machine.
                         io_sub_seq_state = IO_SUB_PATTERN_NONE
@@ -558,8 +568,8 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
                         spl_active_reg = None
                         sph_active_reg = None
 
-            virt_pc += loop_width # Advance virtual $PC past this instruction
-            break # Break out of cycle of decode attempts for this instruction.
+            virt_pc += loop_width  # Advance virtual $PC past this instruction
+            break  # Break out of cycle of decode attempts for this instruction.
 
         if not is_prologue:
             # We tested all possible prologue opcodes and this instruction isn't one of 'em.
@@ -572,8 +582,8 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
 
 def stack_frame_size_by_pc(debugger, pc):
     """
-        Given a program counter (PC), determine what method we're in and return the size
-        of the stack frame
+    Given a program counter (PC), determine what method we're in and return the size
+    of the stack frame.
     """
     method = debugger.function_sym_by_pc(pc)
     return stack_frame_size_for_method(debugger, pc, method)

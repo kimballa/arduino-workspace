@@ -4,10 +4,10 @@
 import unittest
 
 import arduino_dbg.stack as stack
-import arduino_dbg.symbol as symbol
 import arduino_dbg.eval_location as el
 import arduino_dbg.types as types
-from dbg_testcase import *
+from dbg_testcase import DbgTestCase
+
 
 class TestLocals(DbgTestCase):
 
@@ -56,7 +56,7 @@ class TestLocals(DbgTestCase):
         # Note that values for ctrlFlags & enFlag are unreliable due to call-clobbered regs.
         # We are currently unable to access values for: scan, v
         self.assertEqual(len(var_values), 5)
-        self.assertEqual(var_values['send'], 191) # I believe this is a reliable local to test.
+        self.assertEqual(var_values['send'], 191)  # I believe this is a reliable local to test.
 
 
     def test_local_method_name_from_specification(self):
@@ -79,6 +79,7 @@ class TestLocals(DbgTestCase):
         # Assert outermost method name properly incorporated as I2C4BitNhdByteSender::readByte().
         self.assertEqual(scope.member_of.class_name, "I2C4BitNhdByteSender")
         self.assertEqual(scope.method_name, "readByte")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

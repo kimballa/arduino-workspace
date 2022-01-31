@@ -4,10 +4,9 @@
 import unittest
 
 import arduino_dbg.stack as stack
-import arduino_dbg.symbol as symbol
 import arduino_dbg.eval_location as el
-import arduino_dbg.types as types
-from dbg_testcase import *
+from dbg_testcase import DbgTestCase
+
 
 class TestFlashLocals(DbgTestCase):
 
@@ -57,6 +56,7 @@ class TestFlashLocals(DbgTestCase):
 
         # Assert that we correctly processed the data as a string.
         self.assertEqual(var_values['__c'], "I2C4BitNhdByteSender.cpp")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
