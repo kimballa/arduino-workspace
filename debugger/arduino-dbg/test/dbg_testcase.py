@@ -66,7 +66,7 @@ class DbgTestCase(unittest.TestCase):
                                                  config=DbgTestCase.get_debug_config())
         cls.debugger = debugger
         cls.dbg_service = dbg_service
-        
+
         # Note: We do not need to call debugger.get_cmd_lock() as this is now performed
         # automatically within load_dump() before returning a debugger to us.
 
