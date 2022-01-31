@@ -2,16 +2,11 @@
 
 import argparse
 import sys
+import arduino_dbg.version as version
 
-from .debugger import Debugger
-from .repl import Repl
-from .term import ConsolePrinter
-import arduino_dbg.dump as dump
-import arduino_dbg.io as io
-
-DBG_VERSION = [0, 1, 0]
-DBG_VERSION_STR = '.'.join(map(str, DBG_VERSION))
-FULL_DBG_VERSION_STR = f'Arduino Debugger (adbg) version {DBG_VERSION_STR}'
+DBG_VERSION = version.DBG_VERSION
+DBG_VERSION_STR = version.DBG_VERSION_STR
+FULL_DBG_VERSION_STR = version.DBG_VERSION_STR
 __version__ = DBG_VERSION_STR
 
 
@@ -26,6 +21,14 @@ def _parseArgs():
 
 
 def main():
+    # Delay loading real dependencies into main so that setup.py can load arduino_dbg.version
+    # without relying on any real dependencies of this system.
+    from .debugger import Debugger
+    from .repl import Repl
+    from .term import ConsolePrinter
+    import arduino_dbg.dump as dump
+    import arduino_dbg.io as io
+
     ret = 1
     args = _parseArgs()
     connection = None

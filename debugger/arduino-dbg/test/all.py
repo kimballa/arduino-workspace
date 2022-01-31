@@ -6,9 +6,13 @@ import unittest
 import sys
 
 
+def all_tests():
+    return unittest.defaultTestLoader.discover(start_dir='.', pattern='test*.py')
+
+
 def main(argv):
     runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(unittest.defaultTestLoader.discover(start_dir='.', pattern='test*.py'))
+    result = runner.run(all_tests())
 
     if result.wasSuccessful():
         return 0
