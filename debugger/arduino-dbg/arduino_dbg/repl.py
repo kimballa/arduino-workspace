@@ -18,6 +18,7 @@ from arduino_dbg.repl_command import Completions, Command, CompoundCommand, Repl
 import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
+import arduino_dbg.version
 
 PROMPT = term.PROMPT
 
@@ -1641,7 +1642,18 @@ class Repl(object):
 
             Syntax: version
         """
-        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.FULL_DBG_VERSION_STR)
+        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.FULL_DBG_VERSION_STR)
+
+    @Command(keywords=['license'])
+    def print_license(self, argv):
+        """
+        Print debugger license terms
+
+            Syntax: license
+        """
+        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.FULL_DBG_VERSION_STR)
+        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.LICENSE)
+
 
 
     @Command(keywords=['help'], completions=[Completions.KW])

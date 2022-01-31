@@ -6,7 +6,7 @@ import arduino_dbg.version as version
 
 DBG_VERSION = version.DBG_VERSION
 DBG_VERSION_STR = version.DBG_VERSION_STR
-FULL_DBG_VERSION_STR = version.DBG_VERSION_STR
+FULL_DBG_VERSION_STR = version.FULL_DBG_VERSION_STR
 __version__ = DBG_VERSION_STR
 
 
