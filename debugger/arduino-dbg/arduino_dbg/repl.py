@@ -13,7 +13,7 @@ import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
 import arduino_dbg.io as io
 import arduino_dbg.protocol as protocol
-from arduino_dbg.repl_commands import Completions, Command, CompoundCommand, ReplAutoComplete, \
+from arduino_dbg.repl_command import Completions, Command, CompoundCommand, ReplAutoComplete, \
     repl_split, print_command_help
 import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
@@ -1654,7 +1654,7 @@ class Repl(object):
         If given a specific command name, will print the usage info for that command.
         Otherwise, this help message lists all available commands.
         """
-        print_command_help(self._debugger, argv)  # call method imported from repl_commands module.
+        print_command_help(self._debugger, argv)  # call method imported from repl_command module.
 
 
     @Command(keywords=['quit', '\\q'])

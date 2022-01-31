@@ -196,7 +196,7 @@ class Command(object):
 def CompoundHost(cls):
     """
     Decorator that annotates a class that contains @CompoundCommand-decorated methods.
-    Used to pull the class name into the namespace of the repl_commands module, so we can
+    Used to pull the class name into the namespace of the repl_command module, so we can
     do lazy-instantiation of instances of this class to use for 'self' in CompoundCommand.invoke().
     """
     globals()[cls.__name__] = cls  # Pull this class into our namespace.

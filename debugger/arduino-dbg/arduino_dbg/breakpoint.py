@@ -24,7 +24,7 @@ import threading
 
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
-from arduino_dbg.repl_commands import CompoundCommand, CompoundHost
+from arduino_dbg.repl_command import CompoundCommand, CompoundHost
 from arduino_dbg.term import MsgLevel
 
 

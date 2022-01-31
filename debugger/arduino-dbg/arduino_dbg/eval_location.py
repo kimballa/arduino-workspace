@@ -1030,17 +1030,22 @@ class DWARFExprMachine(object):
 
         See DWARFv5 sec 2.5.1.7
         """
-        self._flags |= LookupFlags.REGISTER_UNWIND
-        sub_location = op.args[0]  # sub_location is a list of DWARFExprOp's.
+
+        # sub_location is a list of DWARFExprOp's.
         # It's either a single opcode identifying a register (DW_OP_regN)
         # or a full expression computing a more complex location. We evaluate this
         # location in a brand new dwarf expr machine.
+        sub_location = op.args[0]
         sub_machine = DWARFExprMachine(sub_location, self.regs, self._debugger)
         unwind_location_parts, sub_flags = sub_machine.eval()
-        self._flags |= (sub_flags & ~LookupFlags.OK)  # Attach all subflags minus the final OK.
+
+        self._flags |= (sub_flags & ~LookupFlags.OK)  # Attach all subflags minus any final OK.
+        self._flags |= LookupFlags.REGISTER_UNWIND
+
         if len(unwind_location_parts) != 1:
             raise Exception(
                 f"Cannot unwind ENTRY_LOCATION in multiple parts; got len={len(unwind_location_parts)}")
+
         if LookupFlags.has_errors(sub_flags):
             raise Exception(
                 f"Error getting entry location: {LookupFlags.get_message(sub_flags)}")
@@ -1048,24 +1053,27 @@ class DWARFExprMachine(object):
         (unwind_location, _) = unwind_location_parts[0]
         if not isinstance(unwind_location, str):
             raise Exception(f"Cannot unwind ENTRY_LOCATION in memory; got addr {unwind_location}")
-        elif self._frame is None:
+
+        if self._frame is None:
             # We have identified a specific value to grab from the frame's register unwind set but
             # we don't have a backtrace frame to use for unwinding.
             raise Exception(f'Cannot unwind register \'{unwind_location}\'; no backtrace frame set')
-        else:
-            # We have identified a specific register whose value at method-start we want to extract.
-            #  - unwind_location is a string holding an architectural register name.
-            #  - self._frame holds a backtrace stack.CallFrame we can use to unwind.
-            start_regs = self._frame.unwind_registers(self.regs)
-            start_val = start_regs[unwind_location]
-            self._debugger.verboseprint(f'Unwinding register {unwind_location} to value 0x{start_val:x}')
-            call_clobbers = self._debugger.get_arch_conf("call_clobbered_registers")
-            try:
-                call_clobbers.index(unwind_location)
-                self._flags |= LookupFlags.WARN_CLOBBERED_REG | LookupFlags.WARNED
-            except ValueError:
-                pass  # This is the happy path.
-            self.push(start_val)
+
+        # We have identified a specific register whose value at method-start we want to extract.
+        #  - unwind_location is a string holding an architectural register name.
+        #  - self._frame holds a backtrace stack.CallFrame we can use to unwind.
+        start_regs = self._frame.unwind_registers(self.regs)
+        start_val = start_regs[unwind_location]
+        self._debugger.verboseprint(f'Unwinding register {unwind_location} to value 0x{start_val:x}')
+
+        call_clobbers = self._debugger.get_arch_conf("call_clobbered_registers")
+        if unwind_location in call_clobbers:
+            # The unwind location is in a register that, according to the arch ABI, may be
+            # clobbered by the callee. Thus, this value is not trustworthy. We will push what
+            # we this register value is, but we also add the CLOBBERED_REG warning to the flags.
+            self._flags |= LookupFlags.WARN_CLOBBERED_REG | LookupFlags.WARNED
+
+        self.push(start_val)
 
     def _call_frame_cfa(self, op):
         """
