@@ -74,3 +74,7 @@ See README.md in the `debugger/arduino_dbg` directory for more details.
 
 ![debugger screenshot](./debugger/doc/dbg-screenshot.png)
 
+License
+=======
+
+This project is licensed under the BSD 3-Clause license. See LICENSE.txt for complete details.
