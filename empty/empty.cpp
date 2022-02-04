@@ -12,7 +12,8 @@
 #define DBG_PRETTY_FUNCTIONS
 #include <dbg.h>
 
-static const int PIN = 5;
+// 13 = onboard pin-wired LED for Feather M4 Express
+static constexpr int PIN = 13;
 
 void SETUP() {
   pinMode(PIN, OUTPUT);

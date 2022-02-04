@@ -47,7 +47,7 @@
 # Use `make config` to see the active configuration.
 # Use `make help` to see a list of available targets.
 
-ARDUINO_MK_VER := 1.1.1
+ARDUINO_MK_VER := 1.2.0
 
 # If the user has a config file to set $BOARD, etc., include it here.
 MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
@@ -220,18 +220,41 @@ AR := $(AVR_AR)
 OBJCOPY := $(AVR_OBJCOPY)
 SIZE := $(AVR_SIZE)
 
-
-__FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "avrdude" | head -1 ))
-FLASH_TOOLS_DIR := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 3 | cut -d ':' -f 2))
-FLASH_VERSION := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 4))
-FLASH_BINDIR := $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/$(FLASH_TOOLS_DIR)/$(FLASH_VERSION)/bin
-ifeq ($(origin AVRDUDE), undefined)
-	AVRDUDE_NAME := $(strip $(shell ls -1 $(FLASH_BINDIR) | grep -e 'avrdude$$' | head -1))
-	# We have found the fully-qualified path to the avrdude to use.
-	AVRDUDE := $(realpath $(FLASH_BINDIR)/$(AVRDUDE_NAME))
+ifeq ($(ARCH), avr)
+	__FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "avrdude" | tail -1 ))
+	FLASH_VENDOR := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 3 | cut -d ':' -f 1))
+	FLASH_TOOLS_DIR := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 3 | cut -d ':' -f 2))
+	FLASH_VERSION := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 4))
+	FLASH_BINDIR := $(ARDUINO_DATA_DIR)/packages/$(FLASH_VENDOR)/tools/$(FLASH_TOOLS_DIR)/$(FLASH_VERSION)/bin
+	ifeq ($(origin AVRDUDE), undefined)
+		AVRDUDE_NAME := $(strip $(shell ls -1 $(FLASH_BINDIR) | grep -e 'avrdude$$' | head -1))
+		# We have found the fully-qualified path to the avrdude to use.
+		AVRDUDE := $(realpath $(FLASH_BINDIR)/$(AVRDUDE_NAME))
+	endif
+	ifeq ($(origin AVRDUDE_CONF), undefined)
+		AVRDUDE_CONF := $(realpath $(FLASH_BINDIR)/../etc/avrdude.conf)
+	endif
+	FLASH_PRGM := $(AVRDUDE)
+	FLASH_ARGS = -C$(AVRDUDE_CONF) -v -p$(build_mcu) -c$(AVR_PROGRAMMER) -P$(UPLOAD_PORT) -D -Uflash:w:$(flash_file):i
+	# -V argument suppresses verification.
+	UPLOAD_FLASH_ARGS = -V $(FLASH_ARGS)
+	VERIFY_FLASH_ARGS = $(FLASH_ARGS)
 endif
-ifeq ($(origin AVRDUDE_CONF), undefined)
-  AVRDUDE_CONF := $(realpath $(FLASH_BINDIR)/../etc/avrdude.conf)
+ifeq ($(ARCH), samd)
+	__FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "bossac" | tail -1 ))
+	FLASH_VENDOR := $(strip $(shell echo "$(__FLASH_TOOLS)" | tr -s ' ' | cut -d ' ' -f 3 | cut -d ':' -f 1))
+	FLASH_TOOLS_DIR := $(strip $(shell echo "$(__FLASH_TOOLS)" | tr -s ' ' | cut -d ' ' -f 3 | cut -d ':' -f 2))
+	FLASH_VERSION := $(strip $(shell echo "$(__FLASH_TOOLS)" | tr -s ' ' | cut -d ' ' -f 4))
+	FLASH_BINDIR := $(ARDUINO_DATA_DIR)/packages/$(FLASH_VENDOR)/tools/$(FLASH_TOOLS_DIR)/$(FLASH_VERSION)/
+	ifeq ($(origin BOSSAC), undefined)
+		BOSSAC_NAME := $(strip $(shell ls -1 $(FLASH_BINDIR) | grep -e 'bossac$$' | head -1))
+		# We have found the fully-qualified path to the bossac to use.
+		BOSSAC := $(realpath $(FLASH_BINDIR)/$(BOSSAC_NAME))
+	endif
+	FLASH_PRGM := $(BOSSAC)
+	FLASH_ARGS = --info --debug --port=$(UPLOAD_PORT) -U --offset=0x4000 --write $(flash_file) --reset
+	UPLOAD_FLASH_ARGS = $(FLASH_ARGS)
+	VERIFY_FLASH_ARGS = $(FLASH_ARGS) --verify
 endif
 
 
@@ -253,12 +276,44 @@ CFLAGS += $(OPTFLAGS)
 CFLAGS += $(DBGFLAGS)
 
 # Compiler flags we need
-CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino
-CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(VARIANT)
-CFLAGS += -DARCH_$(arch_upper)
 
-build_mcu := $(strip $(shell grep -e "^$(VARIANT).build.mcu" $(boards_txt) | cut -d '=' -f 2))
-CFLAGS += -mmcu=$(build_mcu)
+build_variant := $(strip $(shell grep -e "^$(VARIANT).build.variant" $(boards_txt) | cut -d '=' -f 2-))
+
+CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino
+CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(build_variant)
+CFLAGS += -DARCH_$(arch_upper) -DARDUINO_ARCH_$(arch_upper)
+
+
+# Get 'extra_flags' from boards.txt; disregard any requested interpolations
+raw_extra_flags := $(strip $(shell grep -e "^$(VARIANT).build.extra_flags" $(boards_txt) | cut -d '=' -f 2-))
+extra_flags := $(strip $(shell echo "$(raw_extra_flags)" | sed -e 's/{.*}//'))
+CFLAGS += $(extra_flags)
+
+build_mcu := $(strip $(shell grep -e "^$(VARIANT).build.mcu" $(boards_txt) | cut -d '=' -f 2-))
+ifeq ($(ARCH), avr)
+	# AVR-specific compiler options.
+	CFLAGS += -mmcu=$(build_mcu)
+	LDARCH = -mmcu=$(build_mcu)
+endif
+ifeq ($(ARCH), samd)
+	# SAMD/ARM-specific compiler options.
+
+	CMSIS_VER=$(strip $(shell \
+		ls --reverse -1 $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS | \
+		head -1))
+
+	CMSIS_ATMEL_VER=$(strip $(shell \
+		ls --reverse -1 $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS-Atmel | \
+		head -1))
+
+	CFLAGS += -mcpu=$(build_mcu) -mthumb -nostdlib -fno-rtti
+	CFLAGS += -DENABLE_CACHE
+	CFLAGS += -DUSBCON -DUSB_CONFIG_POWER=100
+	CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS-Atmel/$(CMSIS_ATMEL_VER)/CMSIS/Device/ATMEL
+	CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS/$(CMSIS_VER)/CMSIS/Core/Include
+	CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS/$(CMSIS_VER)/CMSIS/DSP/Include
+	LDARCH = -mcpu=$(build_mcu) -mthumb
+endif
 
 build_board_def := $(strip $(shell grep -e "^$(VARIANT).build.board" $(boards_txt) | cut -d '=' -f 2))
 CFLAGS += -DARDUINO_$(build_board_def) # e.g. -DARDUINO_AVR_LEONARDO
@@ -273,7 +328,9 @@ build_pid := $(strip $(shell grep -e "^$(VARIANT).build.pid" $(boards_txt) | cut
 CFLAGS += -DUSB_PID=$(build_pid)
 
 build_usb_product := $(strip $(shell grep -e "^$(VARIANT).build.usb_product" $(boards_txt) | cut -d '=' -f 2))
-CFLAGS += '-DUSB_PRODUCT=$(build_usb_product)'
+build_usb_mfr := $(strip $(shell grep -e "^$(VARIANT).build.usb_manufacturer" $(boards_txt) | \
+		cut -d '=' -f 2))
+CFLAGS += '-DUSB_PRODUCT="$(build_usb_product)"' '-DUSB_MANUFACTURER="$(build_usb_mfr)"'
 
 CFLAGS += -fno-exceptions
 
@@ -290,7 +347,7 @@ CXXFLAGS += -std=gnu++14
 CXXFLAGS += -fno-threadsafe-statics
 
 # g++ flags to use for the linker
-LDFLAGS += $(OPTFLAGS) $(DBGFLAGS) -w -fuse-linker-plugin -mmcu=$(build_mcu)
+LDFLAGS += $(OPTFLAGS) $(DBGFLAGS) -w -fuse-linker-plugin $(LDARCH)
 
 ######### end configuration section #########
 
@@ -312,6 +369,8 @@ config:
 	@echo "===================================="
 	@echo "arduino-cli   : $(ARDUINO_CLI)"
 	@echo "AVRDUDE       : $(AVRDUDE)"
+	@echo "BOSSAC        : $(BOSSAC)"
+	@echo ""
 	@echo "AR            : $(AR)"
 	@echo "CXX           : $(CXX)"
 	@echo "OBJCOPY       : $(OBJCOPY)"
@@ -321,7 +380,12 @@ config:
 	@echo "===================================="
 	@echo "build_dir     : $(build_dir)"
 	@echo "src_dirs      : $(src_dirs)"
+ifneq ($(origin prog_name), undefined)
 	@echo "prog_name     : $(prog_name)"
+endif
+ifneq ($(origin lib_name), undefined)
+	@echo "lib_name      : $(lib_name)"
+endif
 	@echo "TARGET        : $(TARGET)"
 	@echo "src_files     : $(src_files)"
 	@echo "obj_files     : $(obj_files)"
@@ -465,7 +529,6 @@ ifneq ($(origin prog_name), undefined)
 # Main compile/link target for programs. Convert from the ELF executable into files to flash to EEPROM.
 image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_summary_file)
 
-FLASH_ARGS = -C$(AVRDUDE_CONF) -v -p$(build_mcu) -c$(AVR_PROGRAMMER) -P$(UPLOAD_PORT) -D -Uflash:w:$(flash_file):i
 upload: image
 	# Force reset of device through port knocking on serial port.
 	# TODO(aaron): Only do this for Leonardo ... need to make configurable.
@@ -474,8 +537,7 @@ upload: image
 	@echo "Waiting for port to re-appear"
 	while true; do ls -l $(UPLOAD_PORT); if [ $$? -eq 0 ]; then break; fi; sleep 1; done
 	@echo "Serial port available at $(UPLOAD_PORT)"
-	# -V argument suppresses verification.
-	$(AVRDUDE) -V $(FLASH_ARGS)
+	$(FLASH_PRGM) $(UPLOAD_FLASH_ARGS)
 
 verify: image
 	# Force reset of device through port knocking on serial port.
@@ -485,7 +547,7 @@ verify: image
 	@echo "Waiting for port to re-appear"
 	while true; do ls -l $(UPLOAD_PORT); if [ $$? -eq 0 ]; then break; fi; sleep 1; done
 	@echo "Serial port available at $(UPLOAD_PORT)"
-	$(AVRDUDE) $(FLASH_ARGS)
+	$(FLASH_PRGM) $(VERIFY_FLASH_ARGS)
 
 endif
 
