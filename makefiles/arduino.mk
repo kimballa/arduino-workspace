@@ -220,6 +220,8 @@ AR := $(AVR_AR)
 OBJCOPY := $(AVR_OBJCOPY)
 SIZE := $(AVR_SIZE)
 
+# Identify the flash uploader tool to use based on the target architecture.
+# `avrdude` for AVR platforms, `bossac` for ARM.
 ifeq ($(ARCH), avr)
 	__FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "avrdude" | tail -1 ))
 	FLASH_VENDOR := $(strip $(shell echo "$(__FLASH_TOOLS)" | cut -d ' ' -f 3 | cut -d ':' -f 1))
@@ -239,8 +241,7 @@ ifeq ($(ARCH), avr)
 	# -V argument suppresses verification.
 	UPLOAD_FLASH_ARGS = -V $(FLASH_ARGS)
 	VERIFY_FLASH_ARGS = $(FLASH_ARGS)
-endif
-ifeq ($(ARCH), samd)
+else ifeq ($(ARCH), samd)
 	__FLASH_TOOLS := $(strip $(shell $(__DETAILS) | grep "Required tool" | grep "bossac" | tail -1 ))
 	FLASH_VENDOR := $(strip $(shell echo "$(__FLASH_TOOLS)" | tr -s ' ' | cut -d ' ' -f 3 | cut -d ':' -f 1))
 	FLASH_TOOLS_DIR := $(strip $(shell echo "$(__FLASH_TOOLS)" | tr -s ' ' | cut -d ' ' -f 3 | cut -d ':' -f 2))
@@ -257,11 +258,11 @@ ifeq ($(ARCH), samd)
 	VERIFY_FLASH_ARGS = $(FLASH_ARGS) --verify
 endif
 
-
+arch_root_dir = $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)
 arch_upper := $(strip $(shell echo $(ARCH) | tr [:lower:] [:upper:]))
 
 # Board definitions file for this hardware set.
-boards_txt := "$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/boards.txt"
+boards_txt := "$(arch_root_dir)/boards.txt"
 
 # Optimization flags to add to CFLAGS and LDFLAGS.
 OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
@@ -277,18 +278,29 @@ CFLAGS += $(DBGFLAGS)
 
 # Compiler flags we need
 
+# This may be slightly different than $(VARIANT); indicates directory under /variants/
 build_variant := $(strip $(shell grep -e "^$(VARIANT).build.variant" $(boards_txt) | cut -d '=' -f 2-))
 
-CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino
-CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(build_variant)
+core_dir := $(arch_root_dir)/cores/arduino
+variant_dir := $(arch_root_dir)/variants/$(build_variant)
+
+# What directory structure exists under /core/ that we should pay attention to?
+# Used for -I as well as copying core files to build target.
+# Add a '.' on the front to capture the root of the $core_dir/ search (otherwise it's an empty str)
+core_subdirs = . $(shell find $(core_dir) -type d -printf '%P\n')
+
+include_dirs += $(addprefix $(core_dir)/,$(core_subdirs)) $(variant_dir)
 CFLAGS += -DARCH_$(arch_upper) -DARDUINO_ARCH_$(arch_upper)
 
+lib_dirs += $(variant_dir)
 
 # Get 'extra_flags' from boards.txt; disregard any requested interpolations
 raw_extra_flags := $(strip $(shell grep -e "^$(VARIANT).build.extra_flags" $(boards_txt) | cut -d '=' -f 2-))
 extra_flags := $(strip $(shell echo "$(raw_extra_flags)" | sed -e 's/{.*}//'))
 CFLAGS += $(extra_flags)
 
+# Add architecture-specific compiler and linker flags.
+# At minimum, we need to specify the architecture and subarchitecture/step compilation target.
 build_mcu := $(strip $(shell grep -e "^$(VARIANT).build.mcu" $(boards_txt) | cut -d '=' -f 2-))
 ifeq ($(ARCH), avr)
 	# AVR-specific compiler options.
@@ -298,21 +310,42 @@ endif
 ifeq ($(ARCH), samd)
 	# SAMD/ARM-specific compiler options.
 
-	CMSIS_VER=$(strip $(shell \
+	CMSIS_VER = $(strip $(shell \
 		ls --reverse -1 $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS | \
 		head -1))
 
-	CMSIS_ATMEL_VER=$(strip $(shell \
+	CMSIS_ATMEL_VER = $(strip $(shell \
 		ls --reverse -1 $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS-Atmel | \
 		head -1))
 
-	CFLAGS += -mcpu=$(build_mcu) -mthumb -nostdlib -fno-rtti
+	CMSIS_DIR = $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS/$(CMSIS_VER)
+	CMSIS_ATMEL_DIR = $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS-Atmel/$(CMSIS_ATMEL_VER)
+
+	CFLAGS += -mcpu=$(build_mcu) -mthumb -nostdlib
+	# We generally want the L1 cache enabled on SAMD devices.
 	CFLAGS += -DENABLE_CACHE
 	CFLAGS += -DUSBCON -DUSB_CONFIG_POWER=100
-	CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS-Atmel/$(CMSIS_ATMEL_VER)/CMSIS/Device/ATMEL
-	CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS/$(CMSIS_VER)/CMSIS/Core/Include
-	CFLAGS += -I$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/tools/CMSIS/$(CMSIS_VER)/CMSIS/DSP/Include
+	# Add flags specific to Atmel/ARM standard library paths: math and signal processing lib code
+	# is outside default search path; needed by Arduino core.
+	include_dirs += $(CMSIS_ATMEL_DIR)/CMSIS/Device/ATMEL
+	include_dirs += $(CMSIS_DIR)/CMSIS/Core/Include
+	include_dirs += $(CMSIS_DIR)/CMSIS/DSP/Include
+
+	# Could consider promoting to general CXXFLAGS area? Why keep SAMD-specific?
+	CXXFLAGS += -fno-rtti
+
 	LDARCH = -mcpu=$(build_mcu) -mthumb
+	LDFLAGS += --specs=nano.specs --specs=nosys.specs
+	# Add ARM CMSIS standard library paths for linker.
+	lib_dirs += $(CMSIS_DIR)/CMSIS/Lib/GCC
+endif
+
+# Define flags for architecture-specific ldscript if available.
+linker_script_arg := $(strip $(shell grep -e "^$(VARIANT).build.ldscript" $(boards_txt) | cut -d '=' -f 2-))
+ifneq ($(linker_script_arg),)
+	# We have a custom linker script to deploy; its path is relative to the variant dir.
+  linker_script := $(variant_dir)/$(linker_script_arg)
+	LDFLAGS += -T$(linker_script)
 endif
 
 build_board_def := $(strip $(shell grep -e "^$(VARIANT).build.board" $(boards_txt) | cut -d '=' -f 2))
@@ -330,24 +363,35 @@ CFLAGS += -DUSB_PID=$(build_pid)
 build_usb_product := $(strip $(shell grep -e "^$(VARIANT).build.usb_product" $(boards_txt) | cut -d '=' -f 2))
 build_usb_mfr := $(strip $(shell grep -e "^$(VARIANT).build.usb_manufacturer" $(boards_txt) | \
 		cut -d '=' -f 2))
-CFLAGS += '-DUSB_PRODUCT="$(build_usb_product)"' '-DUSB_MANUFACTURER="$(build_usb_mfr)"'
+CFLAGS += "-DUSB_PRODUCT=\"\"$(subst ",\",$(build_usb_product))\"\""
+CFLAGS += "-DUSB_MANUFACTURER=\"\"$(subst ",\",$(build_usb_mfr))\"\""
 
 CFLAGS += -fno-exceptions
 
 CFLAGS += $(include_flags)
 
-# TODO(aaron): Questionable to enforce by default... do we want to? (arduino-ide does...)
-CXXFLAGS += -Wno-error=narrowing
 
 # Include all the CFLAGS for C++ too.
 CXXFLAGS += $(CFLAGS)
+# TODO(aaron): Questionable to enforce by default... do we want to? (arduino-ide does...)
+CXXFLAGS += -Wno-error=narrowing
 
 # Additional flags specific to C++ compilation
 CXXFLAGS += -std=gnu++14
 CXXFLAGS += -fno-threadsafe-statics
 
-# g++ flags to use for the linker
+# g++ flags to use for invoking the linker
 LDFLAGS += $(OPTFLAGS) $(DBGFLAGS) -w -fuse-linker-plugin $(LDARCH)
+
+# Get additional LDFLAGS from boards.txt; disregard any lib dirs (we add separately).
+# Mostly kicking those out because they involve interpolations we can't do.
+raw_board_ld_flags := $(strip $(shell \
+		grep -e "^$(VARIANT).compiler.*ldflags=" $(boards_txt) | cut -d '=' -f 2-))
+board_ld_flags := $(strip $(shell \
+	echo '$(raw_board_ld_flags)' | awk 'BEGIN {RS=" "} !/-L/ {print $$1}' | xargs))
+
+LDFLAGS += $(board_ld_flags)
+
 
 ######### end configuration section #########
 
@@ -407,7 +451,7 @@ endif
 	@echo ""
 	@echo 'CXXFLAGS        : $(CXXFLAGS)'
 	@echo ""
-	@echo 'LDFLAGS         : $(LDFLAGS) $(lib_flags)'
+	@echo 'LDFLAGS         : $(LDFLAGS) $${...obj files...} $(lib_flags)'
 
 serial:
 	$(ARDUINO_CLI) monitor -p $(UPLOAD_PORT)
@@ -420,29 +464,42 @@ clean:
 distclean: clean
 	-rm $(TAGS_FILE)
 
-core_dir := $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino
+
 # The src files in build/core/ need to be copied into that dir by the core setup task, so their names can't
 # be used as wildcard in depends; rely on the names of the upstream source files in the package
 # core_dir.
-core_cpp_filenames = $(notdir $(wildcard $(core_dir)/*.cpp))
-core_c_filenames = $(notdir $(wildcard $(core_dir)/*.c))
-core_asm_filenames = $(notdir $(wildcard $(core_dir)/*.S))
+core_cpp_filenames = $(shell find $(core_dir) -type f -name '*.cpp' -printf '%P\n')
+core_c_filenames   = $(shell find $(core_dir) -type f -name '*.c'   -printf '%P\n')
+core_asm_filenames = $(shell find $(core_dir) -type f -name '*.S'   -printf '%P\n')
+
+# Map the directory structure under /core/ to one we should replicate in our build target dir.
+core_build_subdirs = $(addprefix $(build_dir)/core/,$(core_subdirs) variant)
+
+# Map input cpp/c/asm files in real core dir tree to .o files in our build target tree.
 core_obj_files = $(patsubst %.cpp,%.o,$(addprefix $(build_dir)/core/,$(core_cpp_filenames))) \
 		$(patsubst %.c,%.o,$(addprefix $(build_dir)/core/,$(core_c_filenames))) \
 		$(patsubst %.S,%.o,$(addprefix $(build_dir)/core/,$(core_asm_filenames)))
 
+# Add
+variant_cpp_filenames = $(notdir $(wildcard $(variant_dir)/*.cpp))
+variant_c_filenames = $(notdir $(wildcard $(variant_dir)/*.c))
+variant_asm_filenames = $(notdir $(wildcard $(variant_dir)/*.S))
+variant_obj_files = $(patsubst %.cpp,%.o,$(addprefix $(build_dir)/core/variant/,$(variant_cpp_filenames))) \
+		$(patsubst %.c,%.o,$(addprefix $(build_dir)/core/variant/,$(variant_c_filenames))) \
+		$(patsubst %.S,%.o,$(addprefix $(build_dir)/core/variant/,$(variant_asm_filenames)))
+
 core_setup_file = $(build_dir)/.copied_core
 core_lib = $(build_dir)/core.a
 
-$(core_lib) : $(core_setup_file) $(core_obj_files)
-	$(AR) rcs $(core_lib) $(core_obj_files)
+$(core_lib) : $(core_setup_file) $(core_obj_files) $(variant_obj_files)
+	$(AR) rcs $(core_lib) $(core_obj_files) $(variant_obj_files)
 
 # Copy core cpp files to build dir (don't overwrite existing; don't force it to be out of date)
 # Because we expect the upstream to barely ever change, instead of making this a phony task (or
 # go through the trouble of depending on the actual upstream .cpp files) we just `touch(1)` a
 # file to mark that this task is done, so it doesn't continually make our build out of date.
 $(core_setup_file):
-	mkdir -p "$(build_dir)/core/"
+	mkdir -p $(core_build_subdirs)
 	touch $(core_setup_file)
 
 # Copy each file from the core source directory into our working copy within build/.
@@ -456,8 +513,20 @@ $(build_dir)/core/%.c : $(core_dir)/%.c $(core_setup_file)
 $(build_dir)/core/%.S : $(core_dir)/%.S $(core_setup_file)
 	cp -n $< $@
 
+# Also copy in variant-specific sources, if any.
+$(build_dir)/core/variant/%.cpp : $(variant_dir)/%.cpp $(core_setup_file)
+	cp -n $< $@
+
+$(build_dir)/core/variant/%.c : $(variant_dir)/%.c $(core_setup_file)
+	cp -n $< $@
+
+$(build_dir)/core/variant/%.S : $(variant_dir)/%.S $(core_setup_file)
+	cp -n $< $@
+
 # Don't delete our local copy of the core source.
-.PRECIOUS: $(build_dir)/core/%.cpp $(build_dir)/core/%.c $(build_dir)/core/%.S $(core_setup_file)
+.PRECIOUS: $(build_dir)/core/%.cpp $(build_dir)/core/%.c $(build_dir)/core/%.S \
+	$(build_dir)/core/variant/%.cpp $(build_dir)/core/variant/%.c $(build_dir)/core/variant/%.S \
+	$(core_setup_file)
 
 core: $(core_lib)
 
@@ -485,8 +554,13 @@ BSS=`grep $(size_report_file)  -e "^.bss"  | tr -s " " | cut -d " " -f 2`; \
 SKETCH_SZ=$$[DATA + TEXT]; \
 RAM_USED=$$[DATA + BSS]; \
 MAX_SKETCH=$(max_sketch_size); \
-MAX_RAM=$(user_ram); \
-RAM_USE_PCT=$$[100 * RAM_USED / MAX_RAM]; \
+if [ -z "$(user_ram)" -o "$(user_ram)" == "0" ]; then \
+  MAX_RAM="(unknown)"; \
+	RAM_USE_PCT="--"; \
+else \
+	MAX_RAM=$(user_ram); \
+	RAM_USE_PCT=$$[100 * RAM_USED / MAX_RAM]; \
+fi; \
 SKETCH_PCT=$$[100 * SKETCH_SZ / MAX_SKETCH]; \
 echo "Global memory used: $$RAM_USED bytes ($$RAM_USE_PCT%); max is $$MAX_RAM bytes"; \
 echo "Sketch size: $$[SKETCH_SZ] bytes ($$SKETCH_PCT%); max is $$MAX_SKETCH bytes"
@@ -564,9 +638,7 @@ install: $(TARGET)
 endif
 
 tags:
-	$(CTAGS) -R $(CTAGS_OPTS) --exclude=build/* . \
-		$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/cores/arduino \
-		$(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)/variants/$(VARIANT)
+	$(CTAGS) -R $(CTAGS_OPTS) --exclude=build/* . $(core_dir) $(variant_dir)
 
 TAGS: tags
 
