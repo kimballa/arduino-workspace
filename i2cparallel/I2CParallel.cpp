@@ -27,7 +27,12 @@ void I2CParallel::init(const uint8_t i2cAddr, const uint32_t busSpeed) {
   }
 
   Wire.setClock(busSpeed);
+#if defined(ARDUINO_ARCH_SAMD)
+  Wire.setTimeout(I2C_PARALLEL_WIRE_TIMEOUT);
+#else
+  // This is the default for the __ARCH_AVR__ Wire library.
   Wire.setWireTimeout(I2C_PARALLEL_WIRE_TIMEOUT, true);
+#endif
 }
 
 void I2CParallel::setByte(const uint8_t val) {
