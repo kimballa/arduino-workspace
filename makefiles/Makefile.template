@@ -8,6 +8,12 @@ prog_name := Your_App_Name
 # This example creates `libyourlib.a`
 lib_name := yourlib
 
+# Uncomment definitions to direct header files for this library to be installed
+# in architecture-specific or mcu-specific subdirectories of default /include/ 
+# target of `make install`.
+#arch_specific_h := 1
+#mcu_specific_h := 1
+
 # Other libraries you depend on. If you depend on libfoo.a, write 'foo'. 
 # If a library 'foo' depends on another library 'bar', you must enumerate both.
 # Further, you *must* list foo /before/ bar, otherwise you will see errors in

@@ -5,10 +5,6 @@ Makefile:
 * `arduino-cli board list` will list all attached boards.
   If BOARD is not set, parse this and get the attached board for the specified serial port.
 
-* Library `make install` needs a flag for arch-specific .h file installation
-* `include_dirs` should include arch-specific target.
-
-
 Debugger:
 ------------
 

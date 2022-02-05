@@ -33,7 +33,10 @@
 #   install_headers - Specific list of header files to copy in `make install`;
 #                     default is *.h in each of $(install_header_dirs)
 #   install_header_dirs - List of dirs containing *.h files to install. Defaults to $(src_dirs).
-#
+#   target_include_dir  - Directory where headers are copied to.
+#   											Defaults to $(install_dir)/include
+#   arch_specific_h - If defined, sets target_include_dir to an arch-specific subdir of include/.
+#   mcu_specific_h  - If defined, sets target_include_dir to an MCU-specific subdir of include/.
 #
 # If you have a file named .arduino_mk.conf in your home dir, it will be included
 # to enable you to set defaults.
@@ -51,7 +54,7 @@
 # Use `make config` to see the active configuration.
 # Use `make help` to see a list of available targets.
 
-ARDUINO_MK_VER := 1.2.0
+ARDUINO_MK_VER := 1.2.1
 
 # If the user has a config file to set $BOARD, etc., include it here.
 MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
@@ -108,8 +111,11 @@ TAGS_FILE = tags
 # Set variables for compilation dependencies
 
 ifneq (,$(install_dir))
+include_dirs += $(install_dir)/include/arch/$(ARCH)/$(build_mcu)
+include_dirs += $(install_dir)/include/arch/$(ARCH)
 include_dirs += $(install_dir)/include
-lib_dirs += $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
+
+lib_dirs += $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)
 endif
 
 include_flags = $(addprefix -I,$(include_dirs))
@@ -125,7 +131,17 @@ ifndef install_headers
 # Calculate list of header files to use with `make install`
 install_headers = $(foreach dir,$(install_header_dirs),$(wildcard $(dir)/*.h))
 endif
-endif
+
+ifndef target_include_dir
+ifneq ($(origin mcu_specific_h), undefined)
+target_include_dir = $(install_dir)/include/arch/$(ARCH)/$(build_mcu)
+else ifneq ($(origin arch_specific_h), undefined)
+target_include_dir = $(install_dir)/include/arch/$(ARCH)
+else
+target_include_dir = $(install_dir)/include
+endif # flags controlling target_include_dir definition.
+endif # if target_include_dir already defined
+endif # if creating a library
 
 # Set variables for programs we need access to.
 
@@ -458,7 +474,8 @@ endif
 	@echo "===================================="
 	@echo "libs            : $(libs)"
 ifdef lib_name
-	@echo "install_headers : $(install_headers)"
+	@echo "install_headers    : $(install_headers)"
+	@echo "target_include_dir : $(target_include_dir)"
 endif
 	@echo ""
 	@echo 'CFLAGS          : $(CFLAGS)'
@@ -651,10 +668,10 @@ library: $(TARGET)
 
 install: $(TARGET)
 	mkdir -p $(install_dir)
-	mkdir -p $(install_dir)/include
+	mkdir -p $(target_include_dir)
 	mkdir -p $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
 	cp $(TARGET) $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
-	cp $(install_headers) $(install_dir)/include/
+	cp $(install_headers) $(target_include_dir)
 endif
 
 tags:
