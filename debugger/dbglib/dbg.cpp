@@ -17,7 +17,10 @@ extern "C" {
   static inline void __dbg_reset() __attribute__((no_instrument_function));
 }
 
+#if defined (__AVR_ARCH__)
+// AVR: Forward-declare ISR function used for Timer1 interrupts for USB activity check.
 ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
+#endif /* AVR */
 
 #define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
 
@@ -51,6 +54,7 @@ ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
 #define DBG_TIME_MILLIS 'm' // get time in ms
 #define DBG_TIME_MICROS 'u' // get time in us
 
+#if defined(__AVR_ARCH__)
 /**
  * Method called pre-init to disable watchdog.
  * The watchdog timer remains running after watchdog-fired reset, which will just
@@ -70,6 +74,19 @@ static inline void __dbg_reset() {
   wdt_enable(WDTO_15MS);
   while (true) { }; // Wait for watchdog reset to fire.
 }
+#else
+// TODO(aaron): Implement reset protocol on SAMD/ARM
+void __dbg_disable_watchdog() { } // Nothing to do on non-AVR platform.
+static inline void __dbg_reset() { } // Reset not supported on non-AVR platform.
+#endif /* AVR_ARCH */
+
+#if defined(ARDUINO_ARCH_SAMD)
+// Helper fn for timer setup on SAMD architecture.
+// Wait for register changes to sync to underlying device register.
+static inline void TC4_wait_for_sync() {
+  while (TC4->COUNT16.SYNCBUSY.reg != 0);
+}
+#endif /* ARDUINO_ARCH_SAMD */
 
 /**
  * Setup function for debugger; called before user's setup function.
@@ -78,9 +95,11 @@ static inline void __dbg_reset() {
 void __dbg_setup() {
   DBG_SERIAL.begin(DBG_SERIAL_SPEED);
 
-  // Set up timer IRQ: 4Hz on Timer1
+  // Set up timer IRQ: 4Hz
+  noInterrupts();
+#if defined(__AVR_ARCH__)
+  // Set up IRQ on AVR Timer1
   // (see https://www.instructables.com/Arduino-Timer-Interrupts/)
-  cli();
   TCCR1A = 0; // set entire TCCR1A register to 0
   TCCR1B = 0; // same for TCCR1B
   TCNT1  = 0; // initialize counter value to 0
@@ -92,7 +111,48 @@ void __dbg_setup() {
   TCCR1B |= (1 << CS12) | (1 << CS10);
   // enable timer compare interrupt
   TIMSK1 |= (1 << OCIE1A);
-  sei();
+
+#elif defined(ARDUINO_ARCH_SAMD)
+
+  // Set up 4Hz timer on ARM/SAMD.
+  // Code based on github.com/DEnnis-van-Gils/SAMD51_InterruptTimer
+
+  // base clocks set up in cores/arduino/startup.c
+  // GCLK1: 48 MHz
+  // with prescaler of 1024, count from [0, 46875) in one second. 4 Hz (250ms) => TOP=11718
+  // Configure TC4 to track GCLK1, and use TC4 in compare/match mode to its CC0 register.
+  constexpr uint32_t GCLK1_HZ = 48000000;
+  constexpr uint32_t TIMER_PRESCALER = 1024;
+  constexpr uint32_t freq = 4; // 4 Hz.
+
+  GCLK->PCHCTRL[TC4_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK1_Val | (1 << GCLK_PCHCTRL_CHEN_Pos);
+  while (GCLK->SYNCBUSY.reg > 0); // Wait for clock register sync
+  TC4->COUNT16.CTRLA.bit.ENABLE = 0; // EN must be low to modify register.
+  TC4->COUNT16.WAVE.bit.WAVEGEN = TC_WAVE_WAVEGEN_MFRQ; // mode: "match freq"; TOP=CC0.
+  TC4_wait_for_sync();
+
+  // Enable compare interrupt
+  TC4->COUNT16.INTENSET.reg = 0;
+  TC4->COUNT16.INTENSET.bit.MC0 = 1; // IRQ for match-compare mode vs CC0 comparator register.
+  NVIC_EnableIRQ(TC4_IRQn); // Enable IRQ (TC4_Handler())
+
+  // Set period.
+  TC4->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
+  TC4_wait_for_sync();
+  // Enable 1024 prescaler. (All prescaler select bits set high.)
+  TC4->COUNT16.CTRLA.reg |= TC_CTRLA_PRESCALER_DIV1024;
+  TC4_wait_for_sync();
+
+  constexpr uint16_t TOP = (uint16_t)((GCLK1_HZ / (TIMER_PRESCALER * freq)) - 1); // TOP=11718.
+  TC4->COUNT16.CC[0].reg = TOP;
+  TC4_wait_for_sync();
+
+  // All systems go.
+  TC4->COUNT16.CTRLA.bit.ENABLE = 1;
+  TC4_wait_for_sync();
+
+#endif /* (architecture select) */
+  interrupts();
 }
 
 // Keyword sent from sketch/server to client whenever breakpoint is triggered (either
@@ -113,7 +173,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
   debug_status |= DBG_STATUS_IN_BREAK; // Mark the service as started so we don't recursively re-enter.
   // In order to communicate over UART or USB Serial, we need to keep servicing interrupts within
   // debugger, even if called via IRQ.
-  sei();
+  interrupts();
   // TODO(aaron): Give user a way to disable interrupts of theirs via callback SPI before sei?
 
   static uint8_t cmd;
@@ -137,6 +197,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
     unsigned long value = 0;
     int offset = 0;
     uint8_t b = 0;
+
+    volatile register uint32_t SP asm("sp");
     switch(cmd) {
     case DBG_OP_BREAK:
       // Report pause as: "Paused {flagNum:x} {flagsAddr:x}\n"
@@ -200,9 +262,13 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       // will be 0 if the dynamic allocator isn't initialized; __malloc_heap_start will point
       // to the end of the .bss section, where allocatable memory begins.
 #ifndef DBG_NO_MEM_REPORT
+#if defined(__ARCH_AVR__)
       DBG_SERIAL.println(SP, HEX);
       DBG_SERIAL.println((uint16_t)__malloc_heap_end, HEX);
       DBG_SERIAL.println((uint16_t)__malloc_heap_start, HEX);
+#elif defined(ARDUINO_ARCH_SAMD)
+    // TODO(aaron): SAMD memory usage report
+#endif /* architecture select */
 #endif /* DBG_NO_MEM_REPORT */
       DBG_SERIAL.println('$');
       break;
@@ -211,8 +277,9 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       for(addr = 0; addr < 32; addr++) {
         DBG_SERIAL.println(*((uint8_t*)addr), HEX);
       }
-      // Special registers: SP (note: 16 bit), SREG
+      // Special registers: SP (AVR note: 16 bit), SREG (AVR only)
       DBG_SERIAL.println((uint16_t)SP, HEX);
+#ifdef __ARCH_AVR__
       DBG_SERIAL.println((uint8_t)SREG, HEX);
       // PC can only be read by pushing it to the stack via a 'method call'.
       asm volatile (
@@ -222,6 +289,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       : "=e" (addr)
       );
       DBG_SERIAL.println(addr << 1, HEX); // addr now holds PC[15:1]; lsh by 1 to get a 'real' addr.
+#endif /* __ARCH_AVR__ */
+  // TODO(aaron): Read PC on ARM.
       DBG_SERIAL.println('$');
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
@@ -299,8 +368,8 @@ static const char _breakpoint_msg[] PROGMEM = "Breakpoint at ";
 static const char _assert_fail_msg[] PROGMEM = "Assertion failure in ";
 static const char _separator[] PROGMEM = "): ";
 
-bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
-    const unsigned int lineno) {
+bool __dbg_assert(const bool test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
 
   if (test) {
     return true; // Assert succeeded.
@@ -317,8 +386,8 @@ bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
   return false;
 }
 
-bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
-    const unsigned int lineno) {
+bool __dbg_assert(const bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
 
   if (test) {
     return true; // Assert succeeded.
@@ -335,8 +404,8 @@ bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *f
   return false;
 }
 
-bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
-    const unsigned int lineno) {
+bool __dbg_assert(const bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) {
 
   if (test) {
     return true; // Assert succeeded.
@@ -353,8 +422,8 @@ bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *f
   return false;
 }
 
-bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const __FlashStringHelper *funcOrFile,
-    const unsigned int lineno) {
+bool __dbg_assert(const bool test, const __FlashStringHelper *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) {
 
   if (test) {
     return true; // Assert succeeded.
@@ -491,9 +560,13 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
 
 
 /**
- * 1Hz timer fires for us to check whether data is available on DBG_SERIAL port.
+ * Periodic timer fires for us to check whether data is available on DBG_SERIAL port.
  * If we have a request from the debugger client, we break into the debugger service.
+ *
+ * Timer frequency & IRQ control initialized in __dbg_setup().
  */
+#if defined (__AVR_ARCH__)
+
 ISR(TIMER1_COMPA_vect) {
   if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
     // Enter debug service if serial traffic available, and we are not already within the dbg
@@ -501,3 +574,20 @@ ISR(TIMER1_COMPA_vect) {
     __dbg_service(0, NULL);
   }
 }
+
+#elif defined(ARDUINO_ARCH_SAMD)
+
+extern "C" void TC4_Handler(void) __attribute__((interrupt, used, no_instrument_function));
+extern "C" void TC4_Handler(void) {
+  // Handler can be fired for a variety of timer-related reasons.
+  // Filter to continue only based on match-compare to CC0.
+  if (TC4->COUNT16.INTFLAG.bit.MC0 != 0) {
+    if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
+      // Enter debug service if serial traffic available, and we are not already
+      // within the dbg service.
+      __dbg_service(0, NULL);
+    }
+  }
+}
+
+#endif /* architecture select */

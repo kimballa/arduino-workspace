@@ -77,7 +77,7 @@
 #endif
 
 #define _DBG_MAX_BP_FLAGS_PER_FILE (16)
-typedef unsigned int bp_bitfield_t;
+typedef unsigned short int bp_bitfield_t;
 
 // Determine whether to enable the debugger, based on preprocessor flags.
 #if defined(DEBUG) && !defined(DBG_ENABLED)
@@ -105,7 +105,9 @@ typedef unsigned int bp_bitfield_t;
 // Debugger support enabled.
 
 #include<Arduino.h>  // For typedefs e.g. uint8_t
+#ifdef __AVR_ARCH__
 #include<avr/wdt.h>  // For watchdog timer control
+#endif /* AVR_ARCH */
 
 // Define bitfield of 16 flags / translation unit to switch on/off up to 16 breakpoints/file
 // dynamically from the debugger. Initially set to 'all enabled'.
@@ -120,14 +122,14 @@ extern void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno)
     __attribute__((noinline));
 
-extern bool __dbg_assert(bool test, const char *assertStr, const char *funcOrFile,
-    const unsigned int lineno) __attribute__((no_instrument_function));
-extern bool __dbg_assert(bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
-    const unsigned int lineno) __attribute__((no_instrument_function));
-extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
-    const unsigned int lineno) __attribute__((no_instrument_function));
-extern bool __dbg_assert(bool test, const __FlashStringHelper *assertStr,
-    const __FlashStringHelper *funcOrFile, const unsigned int lineno)
+extern bool __dbg_assert(const bool test, const char *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+extern bool __dbg_assert(const bool test, const char *assertStr, const __FlashStringHelper *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+extern bool __dbg_assert(const bool test, const __FlashStringHelper *assertStr, const char *funcOrFile,
+    const uint16_t lineno) __attribute__((no_instrument_function));
+extern bool __dbg_assert(const bool test, const __FlashStringHelper *assertStr,
+    const __FlashStringHelper *funcOrFile, const uint16_t lineno)
     __attribute__((no_instrument_function));
 
 // Forward-declare the inline methods to attach no_instrument_function attribute to each of them.
@@ -183,127 +185,127 @@ inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr,
 // Define inline method-type overrides for __dbg_assert()
 inline bool __dbg_assert(uint8_t test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(uint8_t test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(uint8_t test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(uint8_t test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 
 inline bool __dbg_assert(int test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(int test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(int test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(int test, const __FlashStringHelper *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 
 inline bool __dbg_assert(long test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(long test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(long test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(long test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 
 inline bool __dbg_assert(unsigned int test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(unsigned int test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(unsigned int test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(unsigned int test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 
 inline bool __dbg_assert(unsigned long test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(unsigned long test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(unsigned long test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  __dbg_assert(test != 0, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != 0), assertStr, funcOrFile, lineno);
   return test;
 }
 
 inline bool __dbg_assert(void *test, const char *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != NULL), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(void *test, const char *assertStr, const __FlashStringHelper *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != NULL), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr, const char *funcOrFile,
     const uint16_t lineno) {
-  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != NULL), assertStr, funcOrFile, lineno);
   return test;
 }
 inline bool __dbg_assert(void *test, const __FlashStringHelper *assertStr,
     const __FlashStringHelper *funcOrFile, const uint16_t lineno) {
-  __dbg_assert(test != NULL, assertStr, funcOrFile, lineno);
+  __dbg_assert((bool)(test != NULL), assertStr, funcOrFile, lineno);
   return test;
 }
 
@@ -332,11 +334,13 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 #ifdef DBG_PRETTY_FUNCTIONS
 #  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)
 #  define TRACE(x) __dbg_trace(F(#x),  __PRETTY_FUNCTION__, __LINE__)
-#  define BREAK() __dbg_break(__COUNTER__, &breakpoint_en_flags, __PRETTY_FUNCTION__, __LINE__);
+#  define BREAK() __dbg_break((const uint8_t)__COUNTER__, &breakpoint_en_flags, \
+    __PRETTY_FUNCTION__, (const uint16_t)__LINE__);
 #else
 #  define ASSERT(x) __dbg_assert(x, F(#x), F(__FILE__), __LINE__)
 #  define TRACE(x) __dbg_trace(F(#x),  F(__FILE__), __LINE__)
-#  define BREAK() __dbg_break(__COUNTER__, &breakpoint_en_flags, F(__FILE__), __LINE__);
+#  define BREAK() __dbg_break((const uint8_t)__COUNTER__, &breakpoint_en_flags, \
+    F(__FILE__), (const uint16_t)__LINE__);
 #endif /* DBG_PRETTY_FUNCTIONS */
 
 

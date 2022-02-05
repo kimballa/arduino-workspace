@@ -10,6 +10,7 @@
 
 #define DEBUG
 #define DBG_PRETTY_FUNCTIONS
+//#define DBG_START_PAUSED
 #include <dbg.h>
 
 // 13 = onboard pin-wired LED for Feather M4 Express
@@ -22,6 +23,7 @@ void SETUP() {
 static uint8_t state = 0;
 
 void loop() {
+  DBGPRINT("meep");
   state = !state;
   digitalWrite(PIN, state);
   delay(500);

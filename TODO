@@ -15,8 +15,9 @@ Debugger:
 On-device service capabilities:
   * SAMD: memory map; use __bss_end__, sbrk(0);
   * SAMD: register dump - get $PC. Are other registers correct?
+    dump r0..r15 and CPSR
+    See ARM ABI Procedure Call Standard, 32bit. (sec 6.1.1 "core registers")
   * SAMD: watchdog timer / reset [just call NVIC_SystemReset() ?]
-  * SAMD: __dbg_assert() version warnings
 
   * SAMD: Implement 'monitor mode debugging'. see e.g.:
   https://github.com/NordicPlayground/j-link-monitoring-mode-debugging

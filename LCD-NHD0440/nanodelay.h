@@ -24,6 +24,10 @@
 
 #include<Arduino.h>
 
+#if !defined(_NOP) && defined(ARDUINO_ARCH_SAMD)
+#define _NOP() { asm("mov r0, r0\n\t"); }
+#endif /* No _NOP() and arch == SAMD */
+
 // Building on the _NOP() macro from AVR or Arduino, define multi-NOP sequences.
 #define NOP2() _NOP(); _NOP();
 #define NOP3() _NOP(); _NOP(); _NOP();

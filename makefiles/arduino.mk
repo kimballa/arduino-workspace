@@ -26,6 +26,10 @@
 #   OPTFLAGS  - Included in CFLAGS/CXXFLAGS, specific to optimization.
 #   DBGFLAGS  - Included in CFLAGS/CXXFLAGS, specific to debugging.
 #
+#   XFLAGS    - More flags, added to .c, .cpp, and linker phase gcc/g++ inputs, *after*
+#               all of the above. Intended to be useful for specifying overrides on the
+#               `make` command line rather than to set within the config file directly.
+#
 #   install_headers - Specific list of header files to copy in `make install`;
 #                     default is *.h in each of $(install_header_dirs)
 #   install_header_dirs - List of dirs containing *.h files to install. Defaults to $(src_dirs).
@@ -265,7 +269,7 @@ arch_upper := $(strip $(shell echo $(ARCH) | tr [:lower:] [:upper:]))
 boards_txt := "$(arch_root_dir)/boards.txt"
 
 # Optimization flags to add to CFLAGS and LDFLAGS.
-OPTFLAGS += -flto -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
+OPTFLAGS += -Os -fdata-sections -ffunction-sections -Wl,--relax,--gc-sections
 
 # Debug-mode compilation options.
 ifeq ($(origin DBGFLAGS), undefined)
@@ -306,6 +310,12 @@ ifeq ($(ARCH), avr)
 	# AVR-specific compiler options.
 	CFLAGS += -mmcu=$(build_mcu)
 	LDARCH = -mmcu=$(build_mcu)
+
+	# link-time optimization creates great space savings, critical for AVR.
+	# A bug in binutils (fixed in 2.35; see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=83967)
+	# makes it challenging to use in ARM projects with IRQ handlers, so AVR-only for now.
+	# Fixed in ARM 2020-q4 toolchain but not available in Arduino / Adafruit SAMD toolchains.
+	OPTFLAGS += -flto
 endif
 ifeq ($(ARCH), samd)
 	# SAMD/ARM-specific compiler options.
@@ -392,6 +402,10 @@ board_ld_flags := $(strip $(shell \
 
 LDFLAGS += $(board_ld_flags)
 
+# Finally, add extra 'XFLAGS' at end of each cli arg set.
+CFLAGS += $(XFLAGS)
+CXXFLAGS += $(XFLAGS)
+LDFLAGS += $(XFLAGS)
 
 ######### end configuration section #########
 
@@ -578,7 +592,8 @@ $(size_summary_file): $(size_report_file)
 ifneq ($(origin prog_name), undefined)
 # Build the main ELF executable containing user code, Arduino core, any required libraries.
 $(TARGET): $(obj_files) $(core_lib)
-	$(CXX) $(LDFLAGS) -o $(TARGET) $(obj_files) $(lib_flags) -lm $(core_lib)
+	$(CXX) $(LDFLAGS) -o $(TARGET) -Wl,--start-group $(obj_files) \
+			$(lib_flags) $(core_lib) -lm -Wl,--end-group
 
 else ifneq ($(origin lib_name), undefined)
 # Build the main library containing user code.
@@ -650,24 +665,24 @@ endif
 
 # Rule for compiling c++ source replicated for various equivalent c++ extensions.
 %.o : %.cpp
-	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	$(CXX) -x c++ -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 %.o : %.cxx
-	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	$(CXX) -x c++ -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 %.o : %.C
-	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	$(CXX) -x c++ -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 # Arduino-specific C++ file ext.
 %.o : %.ino
-	$(CXX) -x c++ -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	$(CXX) -x c++ -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 # Additional gcc-supported languages.
 %.o : %.c
-	$(CXX) -x c -c $(CFLAGS) $(CPPFLAGS) $< -o $@
+	$(CXX) -x c -c $(CPPFLAGS) $(CFLAGS) $< -o $@
 
 %.o : %.S
-	$(CXX) -x assembler-with-cpp -c $(CXXFLAGS) $(CPPFLAGS) $< -o $@
+	$(CXX) -x assembler-with-cpp -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 
 .PHONY: all config help clean core install image library eeprom flash upload verify \
