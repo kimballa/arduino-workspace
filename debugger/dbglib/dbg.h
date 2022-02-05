@@ -47,7 +47,7 @@
 // * DBG_START_PAUSED: The sketch will immediately enter the debugger and require
 //   an explicit 'continue' ('C') command before proceeding to your setup() fn.
 // * DBG_WAIT_FOR_CONNECT: The sketch will wait for a Serial connection before
-//   beginning. (On supported systems - Arduino Leonardo.)
+//   beginning. (On supported systems - all SAMD Arduinos, and arduino:avr:leonardo.)
 //
 // ** Optional component compilation:
 //
@@ -351,12 +351,13 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 #  define __optional_immediate_brk()
 #endif /* DBG_START_PAUSED */
 
-#ifdef __AVR_ATmega32U4__
-// Arduino Leonardo -- require serial.
+#if defined(__AVR_ATmega32U4__) or defined(ARUDINO_ARCH_SAMD)
+// Arduino AVR Leonardo and SAMD-based systems support `Serial::operator bool()`;
+// allows user to require (via DBG_WAIT_FOR_CONNECT) serial connection before proceeding.
 #  define WAIT_FOR_CONNECT_SUPPORTED  1
 #else
 #  define WAIT_FOR_CONNECT_SUPPORTED  0
-#endif /* __AVR_ATmega32U4__ */
+#endif /* arch detection */
 
 #if WAIT_FOR_CONNECT_SUPPORTED == 1 && defined(DBG_WAIT_FOR_CONNECT)
 #  define __optional_wait_for_conn()  while (!DBG_SERIAL) { delay(1); };

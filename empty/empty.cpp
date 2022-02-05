@@ -10,6 +10,7 @@
 
 #define DEBUG
 #define DBG_PRETTY_FUNCTIONS
+//#define DBG_WAIT_FOR_CONNECT
 //#define DBG_START_PAUSED
 #include <dbg.h>
 
