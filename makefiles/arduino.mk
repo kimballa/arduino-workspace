@@ -241,7 +241,7 @@ ifeq ($(ARCH), avr)
 		AVRDUDE_CONF := $(realpath $(FLASH_BINDIR)/../etc/avrdude.conf)
 	endif
 	FLASH_PRGM := $(AVRDUDE)
-	FLASH_ARGS = -C$(AVRDUDE_CONF) -v -p$(build_mcu) -c$(AVR_PROGRAMMER) -P$(UPLOAD_PORT) -D -Uflash:w:$(flash_file):i
+	FLASH_ARGS = -C$(AVRDUDE_CONF) -v -p$(build_mcu) -c$(AVR_PROGRAMMER) -P$(UPLOAD_PORT) -D -Uflash:w:$(flash_hex_file):i
 	# -V argument suppresses verification.
 	UPLOAD_FLASH_ARGS = -V $(FLASH_ARGS)
 	VERIFY_FLASH_ARGS = $(FLASH_ARGS)
@@ -257,9 +257,9 @@ else ifeq ($(ARCH), samd)
 		BOSSAC := $(realpath $(FLASH_BINDIR)/$(BOSSAC_NAME))
 	endif
 	FLASH_PRGM := $(BOSSAC)
-	FLASH_ARGS = --info --debug --port=$(UPLOAD_PORT) -U --offset=0x4000 --write $(flash_file) --reset
-	UPLOAD_FLASH_ARGS = $(FLASH_ARGS)
-	VERIFY_FLASH_ARGS = $(FLASH_ARGS) --verify
+	FLASH_ARGS = --info --debug --port=$(UPLOAD_PORT) -U --offset=0x4000 --erase --write $(flash_bin_file)
+	UPLOAD_FLASH_ARGS = $(FLASH_ARGS) --reset
+	VERIFY_FLASH_ARGS = $(FLASH_ARGS) --verify --reset
 endif
 
 arch_root_dir = $(ARDUINO_DATA_DIR)/packages/$(ARDUINO_PACKAGE)/hardware/$(ARCH)/$(ARCH_VER)
@@ -548,7 +548,8 @@ src_files = $(filter %,$(foreach dir,$(src_dirs),$(foreach ext,$(src_extensions)
 obj_files = $(filter %.o,$(foreach ext,$(src_extensions),$(patsubst %$(ext),%.o,$(src_files))))
 
 eeprom_file = $(build_dir)/$(prog_name).eep
-flash_file = $(build_dir)/$(prog_name).hex
+flash_hex_file = $(build_dir)/$(prog_name).hex
+flash_bin_file = $(build_dir)/$(prog_name).bin
 
 max_sketch_size := $(strip $(shell grep -e "^$(VARIANT).upload.maximum_size" $(boards_txt) \
 	| cut -d '=' -f 2 | tr -s ' '))
@@ -580,7 +581,7 @@ echo "Global memory used: $$RAM_USED bytes ($$RAM_USE_PCT%); max is $$MAX_RAM by
 echo "Sketch size: $$[SKETCH_SZ] bytes ($$SKETCH_PCT%); max is $$MAX_SKETCH bytes"
 endef
 
-$(size_report_file): $(TARGET) $(eeprom_file) $(flash_file)
+$(size_report_file): $(TARGET) $(eeprom_file) $(flash_hex_file) $(flash_bin_file)
 	$(SIZE) -A $(TARGET) > $(size_report_file)
 
 $(size_summary_file): $(size_report_file)
@@ -606,21 +607,24 @@ $(eeprom_file): $(TARGET)
 	$(OBJCOPY) -O ihex -j .eeprom --set-section-flags=.eeprom=alloc,load --no-change-warnings \
 			--change-section-lma .eeprom=0 $(TARGET) $(eeprom_file)
 
-$(flash_file): $(TARGET) $(eeprom_file)
-	$(OBJCOPY) -O ihex -R .eeprom $(TARGET) $(flash_file)
+$(flash_hex_file): $(TARGET) $(eeprom_file)
+	$(OBJCOPY) -O ihex -R .eeprom $(TARGET) $(flash_hex_file)
+
+$(flash_bin_file): $(TARGET) $(eeprom_file)
+	$(OBJCOPY) -O binary -R .eeprom $(TARGET) $(flash_bin_file)
 
 eeprom: $(eeprom_file)
 
-flash: $(flash_file)
+flash: $(flash_hex_file) $(flash_bin_file)
 
 ifneq ($(origin prog_name), undefined)
 
 # Main compile/link target for programs. Convert from the ELF executable into files to flash to EEPROM.
-image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_file) $(size_summary_file)
+image: $(TARGET) $(core_lib) $(eeprom_file) $(flash_hex_file) $(filash_bin_file) $(size_summary_file)
 
 upload: image
 	# Force reset of device through port knocking on serial port.
-	# TODO(aaron): Only do this for Leonardo ... need to make configurable.
+	# TODO(aaron): Only do this for Leonardo and Feather... need to make configurable.
 	stty 1200 -F $(UPLOAD_PORT) raw -echo
 	@sleep 1
 	@echo "Waiting for port to re-appear"
@@ -630,7 +634,8 @@ upload: image
 
 verify: image
 	# Force reset of device through port knocking on serial port.
-	# TODO(aaron): Only do this for Leonardo ... need to make configurable.
+	# TODO(aaron): Only do this for Leonardo and Feather ... need to make configurable.
+	# (see '1200_bps_touch' option in boards.txt)
 	stty 1200 -F $(UPLOAD_PORT) raw -echo
 	@sleep 1
 	@echo "Waiting for port to re-appear"
