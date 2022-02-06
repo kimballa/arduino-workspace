@@ -755,7 +755,7 @@ class Debugger(object):
 
         if self.elf_name is None:
             self.msg_q(MsgLevel.WARN, "No ELF file provided; cannot load symbols.")
-            self.msg_q(MsgLevel.INFO, "Use `read <filename.elf>` to load a program image.")
+            self.msg_q(MsgLevel.INFO, "Use `file <filename.elf>` to load a program image.")
             return
 
         # Clear any existing ELF-populated state.
