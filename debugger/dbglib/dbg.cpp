@@ -31,8 +31,17 @@ extern "C" {
 
 /** Debugger status bits **/
 volatile uint8_t debug_status = 0;
+static inline void _set_dbg_status(uint8_t new_status) {
+  debug_status = new_status;
+  #if defined (ARDUINO_ARCH_SAMD)
+    // Ensure synchronization of the debug status to prevent debugger service from
+    // interrupting itself.
+    __DMB();
+  #endif /* ARCH_SAMD */
+}
 
 #define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
+
 
 /** Debugger wire protocol definition **/
 
@@ -310,13 +319,14 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       DBG_SERIAL.println('$');
       break;
     case DBG_OP_REGISTERS:
-      // 32 general purpose registers exist at 0x00..0x1F (mega32u4 ds fig. 4-2)
-      for(addr = 0; addr < 32; addr++) {
-        DBG_SERIAL.println(*((uint8_t*)addr), HEX);
-      }
-      // Special registers: SP (AVR note: 16 bit), SREG (AVR only)
-      DBG_SERIAL.println((uint16_t)SP, HEX);
-      #ifdef __AVR_ARCH__
+      #if defined(__AVR_ARCH__)
+
+        // 32 general purpose registers are mem-mapped at 0x00..0x1F (mega32u4 ds fig. 4-2)
+        for(addr = 0; addr < 32; addr++) {
+          DBG_SERIAL.println(*((uint8_t*)addr), HEX);
+        }
+        // Special registers: SP (AVR note: 16 bit), SREG
+        DBG_SERIAL.println((uint16_t)SP, HEX);
         DBG_SERIAL.println((uint8_t)SREG, HEX);
         // PC can only be read by pushing it to the stack via a 'method call'.
         asm volatile (
@@ -326,10 +336,48 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
         : "=e" (addr)
         );
         DBG_SERIAL.println(addr << 1, HEX); // addr now holds PC[15:1]; lsh by 1 to get a 'real' addr.
-      #endif /* __AVR_ARCH__ */
-      // TODO(aaron): Read PC on ARM.
+        // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
+
+      #elif defined(ARDUINO_ARCH_SAMD)
+
+        // 16 general purpose registers, including SP and PC.
+        asm volatile ("mov %[out], r0 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r1 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r2 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r3 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r4 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r5 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r6 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r7 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r8 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r9 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r10 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r11 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r12 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r13 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], r14 \n\t" : [out] "=l" (addr));
+        DBG_SERIAL.println(addr, HEX);
+        asm volatile ("mov %[out], pc \n\t" : [out] "=l" (addr)); // $pc is r15
+        addr &= ~1; // $PC must be short-aligned; disregard lsb (thumb state flag).
+        DBG_SERIAL.println(addr, HEX);
+        DBG_SERIAL.println(__get_xPSR(), HEX); // Return $xPSR status registers (IPSR/EPSR/APSR) view.
+
+      #endif /* architecture select */
       DBG_SERIAL.println('$');
-      // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.
       break;
 #ifdef DBG_NO_GPIO
     case DBG_OP_PORT_IN:
@@ -398,7 +446,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
   }
 exit_loop:
 
-  debug_status &= ~DBG_STATUS_IN_BREAK; // Mark debug service as closed.
+  // Mark debug service as closed.
+  _set_dbg_status(debug_status & ~DBG_STATUS_IN_BREAK);
 }
 
 static const char _breakpoint_msg[] PROGMEM = "Breakpoint at ";
@@ -568,7 +617,8 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     return;
   }
 
-  debug_status |= DBG_STATUS_IN_BREAK; // Mark debugger as started so we don't recursively re-enter.
+  // Mark debugger as started so we don't recursively re-enter.
+  _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK);
   DBG_SERIAL.print(DBG_RET_PRINT);
   DBG_SERIAL.print(FPSTR(_breakpoint_msg));
   DBG_SERIAL.print(funcOrFile);
@@ -586,7 +636,8 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // Breakpoint is disabled by debugger.
     return;
   }
-  debug_status |= DBG_STATUS_IN_BREAK; // Mark debugger as started so we don't recursively re-enter.
+  // Mark debugger as started so we don't recursively re-enter.
+  _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK);
   DBG_SERIAL.print(DBG_RET_PRINT);
   DBG_SERIAL.print(FPSTR(_breakpoint_msg));
   DBG_SERIAL.print(funcOrFile);

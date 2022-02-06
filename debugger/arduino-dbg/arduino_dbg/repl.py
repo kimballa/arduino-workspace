@@ -564,7 +564,13 @@ class Repl(object):
         ram_end = mem_map["RAMEND"]
         ram_start = mem_map["RAMSTART"]
         total_ram = ram_end - ram_start + 1
+
         stack_size = ram_end - mem_map["SP"]
+        if self._debugger.get_arch_conf('stack_model') == 'full_desc':
+            # Arithmetic above is based on empty-descending stack model (as in AVR);
+            # off by 1 for full-descending stacks like ARM.
+            stack_size += 1
+
         if mem_map["HeapEnd"] != 0:
             heap_size = mem_map["HeapEnd"] - mem_map["HeapStart"]
         else:
@@ -758,26 +764,35 @@ class Repl(object):
         """
         MAX_WIDTH = 65
 
-        has_sph = self._debugger.get_arch_conf("instruction_set") == "avr" and \
-            self._debugger.get_arch_conf("has_sph")
+        # Width of a hex-formatted register value for this arch: 2 chars per byte * word size
+        int_width = self._debugger.get_arch_conf("int_size") * 2
+        sp_width = int_width  # by default, format $SP like other register values.
+        sp_pad = 1
+
+        if self._debugger.get_arch_conf("instruction_set") == "avr":
+            if self._debugger.get_arch_conf("has_sph"):
+                sp_width = 4  # AVR-specific: AVR platforms with $SPH have $SP as short int-wide, not
+                              # char-width..
+                sp_pad = 0
 
         cur_width = 0
-        out = ''
+        reg_strs = []
         for (reg, regval) in registers.items():
-            if reg == "SP" and has_sph:
-                # if reg=SP and we have SPH in the arch conf, it's a 16-bit reg; use 04x for regval.
-                out += f"{reg.rjust(4)}:{regval:04x} "
+            if reg == "SP":
+                # On AVR, $SP (may) uniquely be a 16-bit register, requiring special padding.
+                this_reg = f"{reg.rjust(4)}: 0x{regval:0{sp_width}x} " + (sp_pad * ' ')
             else:
-                # normal 8-bit register
-                out += f"{reg.rjust(4)}:{regval:02x}  "
+                # normal register
+                this_reg = f"{reg.rjust(4)}: 0x{regval:0{int_width}x}  "
 
-            cur_width += 9
+            cur_width += len(this_reg)
+            reg_strs.append(this_reg)
             if cur_width >= MAX_WIDTH:
                 cur_width = 0
-                self._debugger.msg_q(MsgLevel.INFO, out)
-                out = ''
+                self._debugger.msg_q(MsgLevel.INFO, ''.join(reg_strs))
+                reg_strs = []
 
-        self._debugger.msg_q(MsgLevel.INFO, out)
+        self._debugger.msg_q(MsgLevel.INFO, ''.join(reg_strs))
 
     @Command(keywords=['regs'])
     def _regs(self, argv):
