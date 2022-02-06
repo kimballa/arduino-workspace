@@ -86,6 +86,14 @@ static inline void __dbg_reset() { } // Reset not supported on non-AVR platform.
 static inline void TC4_wait_for_sync() {
   while (TC4->COUNT16.SYNCBUSY.reg != 0);
 }
+
+// Priority level to assign to timer irq for checking for debugger comms.
+// Must be lower priority (higher number) than the priority associated with
+// USBSerial / CDC interface, or else USB will never preempt the debug
+// server. We want to run at a lower priority than any capability we may need
+// within the debugger service. Meaning that we run at the *lowest* priority.
+#define TC4_IRQ_PRIORITY (255)
+
 #endif /* ARDUINO_ARCH_SAMD */
 
 /**
@@ -131,7 +139,9 @@ void __dbg_setup() {
   TC4->COUNT16.WAVE.bit.WAVEGEN = TC_WAVE_WAVEGEN_MFRQ; // mode: "match freq"; TOP=CC0.
   TC4_wait_for_sync();
 
-  // Enable compare interrupt
+  // Set priority and enable compare interrupt
+  NVIC_ClearPendingIRQ(TC4_IRQn); // If a TC4 interrupt was already queued up, ignore it.
+  NVIC_SetPriority(TC4_IRQn, TC4_IRQ_PRIORITY); // Cortex-M0 requires priority set before enable
   TC4->COUNT16.INTENSET.reg = 0;
   TC4->COUNT16.INTENSET.bit.MC0 = 1; // IRQ for match-compare mode vs CC0 comparator register.
   NVIC_EnableIRQ(TC4_IRQn); // Enable IRQ (TC4_Handler())

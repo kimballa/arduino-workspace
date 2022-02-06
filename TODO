@@ -10,8 +10,11 @@ Debugger:
 
 On-device service capabilities:
   * SAMD: memory map; use __bss_end__, sbrk(0);
-  * SAMD: register dump - get $PC. Are other registers correct?
-    dump r0..r15 and CPSR
+  * SAMD: register dump:
+    dump r0..r15 and CPSR (also CONTROL?)
+    naming of 16 registers: r0..r12, SP, LR, PC
+      r11 may also be called FP
+    PC[0] needs to be zeroed as it encodes the arm/thumb state. (PC = PC & ~1)
     See ARM ABI Procedure Call Standard, 32bit. (sec 6.1.1 "core registers")
   * SAMD: watchdog timer / reset [just call NVIC_SystemReset() ?]
 
