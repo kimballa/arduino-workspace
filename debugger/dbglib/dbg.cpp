@@ -115,7 +115,7 @@ void __dbg_setup() {
 #elif defined(ARDUINO_ARCH_SAMD)
 
   // Set up 4Hz timer on ARM/SAMD.
-  // Code based on github.com/DEnnis-van-Gils/SAMD51_InterruptTimer
+  // Code based on github.com/Dennis-van-Gils/SAMD51_InterruptTimer
 
   // base clocks set up in cores/arduino/startup.c
   // GCLK1: 48 MHz
@@ -144,7 +144,8 @@ void __dbg_setup() {
   TC4_wait_for_sync();
 
   constexpr uint16_t TOP = (uint16_t)((GCLK1_HZ / (TIMER_PRESCALER * freq)) - 1); // TOP=11718.
-  TC4->COUNT16.CC[0].reg = TOP;
+  TC4->COUNT16.COUNT.reg = 0;    // Reset counter.
+  TC4->COUNT16.CC[0].reg = TOP;  // Set trigger count.
   TC4_wait_for_sync();
 
   // All systems go.
@@ -582,6 +583,7 @@ extern "C" void TC4_Handler(void) {
   // Handler can be fired for a variety of timer-related reasons.
   // Filter to continue only based on match-compare to CC0.
   if (TC4->COUNT16.INTFLAG.bit.MC0 != 0) {
+    TC4->COUNT16.INTFLAG.bit.MC0 = 1; // Setting bit _clears_ interrupt flag state.
     if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
       // Enter debug service if serial traffic available, and we are not already
       // within the dbg service.
