@@ -17,7 +17,7 @@
 // 13 = onboard pin-wired LED for Feather M4 Express
 static constexpr int PIN = 13;
 
-void SETUP() {
+void setup() {
   pinMode(PIN, OUTPUT);
 }
 

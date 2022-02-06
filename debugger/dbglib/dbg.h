@@ -5,12 +5,18 @@
 // To enable the debugging system, use the following steps:
 //
 // 1) include `dbg` in your  Makefile's `libs` list variable.
-// 2) #include <dbg.h>
-// 3) replace the words `void setup()` in your sketch with `void SETUP()`. e.g.:
+// 2) #include <dbg.h> in any files where you want to use the debug API macros,
+//    but most importantly in the file containing your `setup()` method:
 //
-//     void SETUP() {
-//       /* your setup function. */
-//     }
+//      /* define DBG_START_PAUSED, etc. here if desired. */
+//      #include<dbg.h>
+//
+//      void setup() {
+//        /* your setup function. */
+//      }
+//
+//    Your `setup()` function will be renamed to `__user_setup()` and invoked by a
+//    setup() function that first injects debugger handling into the environment.
 //
 // ** API:
 //
@@ -95,7 +101,6 @@ typedef unsigned short int bp_bitfield_t;
 
 #ifndef DBG_ENABLED /* Suppress debugger support. */
 
-#define SETUP() setup()
 #define BREAK()
 #define ASSERT(x)
 #define TRACE(x)
@@ -348,7 +353,7 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 
 
 #ifdef DBG_START_PAUSED
-// Within the SETUP() macro, start paused immediately prior to user's setup().
+// Within the setup() macro, start paused immediately prior to user's setup().
 #  define __optional_immediate_brk() { DBGPRINT("Break on init"); BREAK(); }
 #else
 #  define __optional_immediate_brk()
@@ -368,7 +373,7 @@ void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function
 #  define __optional_wait_for_conn()
 #endif /* DBG_WAIT_FOR_CONNECT ? */
 
-#define SETUP() \
+#define setup(x) \
     __user_setup(); /* fwd declare */       \
     void setup() {                          \
       __dbg_setup();                        \

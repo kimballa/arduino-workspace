@@ -35,14 +35,15 @@ Configuration
 ```
 #include<dbg.h>
 
-void SETUP() { // replace `setup()` with `SETUP()`
+// define a macro named 'setup(x)' that instruments this:
+void setup() { 
   /* your setup fn. */
 }
 ```
 
 This unwraps to:
 ```
-#define SETUP()                             \
+#define setup(x)                             \
     __user_setup(); /* fwd declare */       \
     void setup() {                          \
       /* set up timer irq  */               \
@@ -54,10 +55,8 @@ This unwraps to:
     void __user_setup()
 ```
 
-(and if `DEBUG` isn't defined, we just `#define SETUP() setup()`)
 
-
-... or check `#if !defined(NDEBUG)` instead to play nice with g++?
+... check `#if !defined(NDEBUG)` to play nice with g++
 
 
 Use a macro to allow alternate `Serial` interface usage.

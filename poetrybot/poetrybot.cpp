@@ -40,7 +40,7 @@ static char linebuf[80];
 I2C4BitNhdByteSender nhdByteSender;
 NewhavenLcd0440 lcd;
 
-void SETUP() {
+void setup() {
   // Initialize hardware serial.
 //  Serial.begin(115200);
 #ifdef __AVR_ATmega32U4__ // Arduino AVR Leonardo
