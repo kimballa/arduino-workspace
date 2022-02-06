@@ -9,10 +9,11 @@
   #define FPSTR(pstr_pointer) (reinterpret_cast<const __FlashStringHelper *>(pstr_pointer))
 #endif /* FPSTR */
 
-#if defined (__AVR_ARCH__)
-  // AVR: Forward-declare ISR function used for Timer1 interrupts for USB activity check.
-  ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
-#endif /* AVR */
+#ifdef ARDUINO_ARCH_SAMD
+  // Symbols needed for memory usage printing.
+  extern "C" char *sbrk(int i);
+  extern "C" unsigned int __bss_end__; // symbols defined in linker script.
+#endif /* SAMD */
 
 
 /** Forward declarations needed later in this file **/
@@ -22,6 +23,11 @@ extern "C" {
 
   static inline void __dbg_reset() __attribute__((no_instrument_function));
 }
+
+#if defined (__AVR_ARCH__)
+  // AVR: Forward-declare ISR function used for Timer1 interrupts for USB activity check.
+  ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
+#endif /* AVR */
 
 /** Debugger status bits **/
 volatile uint8_t debug_status = 0;
@@ -296,7 +302,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       #elif defined(ARDUINO_ARCH_SAMD)
 
         DBG_SERIAL.println(SP, HEX);
-        //DBG_SERIAL.println(__bss_end__);
+        DBG_SERIAL.println((uint32_t)sbrk(0), HEX);
+        DBG_SERIAL.println((uint32_t)(&__bss_end__), HEX);
 
       #endif /* architecture select */
 #endif /* !DBG_NO_MEM_REPORT */

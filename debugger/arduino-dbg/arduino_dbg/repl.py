@@ -575,13 +575,13 @@ class Repl(object):
 
         self._debugger.msg_q(
             MsgLevel.INFO,
-            f'   Total RAM:  {total_ram:>4}  RAMEND={ram_end:04x} .. RAMSTART={ram_start:04x}')
+            f'   Total RAM:  {total_ram:>8}  RAMEND={ram_end:04x} .. RAMSTART={ram_start:04x}')
         self._debugger.msg_q(
             MsgLevel.INFO,
-            f'  Stack size:  {stack_size:>4}      SP={mem_map["SP"]:04x}')
-        self._debugger.msg_q(MsgLevel.INFO, f'      (free):  {free_ram:>4}')
-        self._debugger.msg_q(MsgLevel.INFO, f'   Heap size:  {heap_size:>4}')
-        self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>4} (.data + .bss)')
+            f'  Stack size:  {stack_size:>8}      SP={mem_map["SP"]:04x}')
+        self._debugger.msg_q(MsgLevel.INFO, f'      (free):  {free_ram:>8}')
+        self._debugger.msg_q(MsgLevel.INFO, f'   Heap size:  {heap_size:>8}')
+        self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>8} (.data + .bss)')
 
 
     @Command(keywords=['mem', 'x', '\\m'], completions=[Completions.WORD_SIZE])

@@ -9,7 +9,6 @@ Debugger:
 ------------
 
 On-device service capabilities:
-  * SAMD: memory map; use __bss_end__, sbrk(0);
   * SAMD: register dump:
     dump r0..r15 and CPSR (also CONTROL?)
     naming of 16 registers: r0..r12, SP, LR, PC
