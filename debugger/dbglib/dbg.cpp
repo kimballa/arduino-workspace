@@ -14,6 +14,7 @@ volatile uint8_t debug_status = 0;
 extern "C" {
   static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags)
       __attribute__((no_instrument_function));
+
   static inline void __dbg_reset() __attribute__((no_instrument_function));
 }
 
@@ -74,11 +75,14 @@ static inline void __dbg_reset() {
   wdt_enable(WDTO_15MS);
   while (true) { }; // Wait for watchdog reset to fire.
 }
-#else
-// TODO(aaron): Implement reset protocol on SAMD/ARM
-void __dbg_disable_watchdog() { } // Nothing to do on non-AVR platform.
-static inline void __dbg_reset() { } // Reset not supported on non-AVR platform.
-#endif /* AVR_ARCH */
+
+#elif defined(ARDUINO_ARCH_SAMD)
+
+static inline void __dbg_reset() {
+  NVIC_SystemReset(); // CMSIS standard reset option.
+}
+
+#endif /* architecture select */
 
 #if defined(ARDUINO_ARCH_SAMD)
 // Helper fn for timer setup on SAMD architecture.
@@ -273,7 +277,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       // will be 0 if the dynamic allocator isn't initialized; __malloc_heap_start will point
       // to the end of the .bss section, where allocatable memory begins.
 #ifndef DBG_NO_MEM_REPORT
-#if defined(__ARCH_AVR__)
+#if defined(__AVR_ARCH__)
       DBG_SERIAL.println(SP, HEX);
       DBG_SERIAL.println((uint16_t)__malloc_heap_end, HEX);
       DBG_SERIAL.println((uint16_t)__malloc_heap_start, HEX);
@@ -290,7 +294,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       }
       // Special registers: SP (AVR note: 16 bit), SREG (AVR only)
       DBG_SERIAL.println((uint16_t)SP, HEX);
-#ifdef __ARCH_AVR__
+#ifdef __AVR_ARCH__
       DBG_SERIAL.println((uint8_t)SREG, HEX);
       // PC can only be read by pushing it to the stack via a 'method call'.
       asm volatile (
@@ -300,7 +304,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
       : "=e" (addr)
       );
       DBG_SERIAL.println(addr << 1, HEX); // addr now holds PC[15:1]; lsh by 1 to get a 'real' addr.
-#endif /* __ARCH_AVR__ */
+#endif /* __AVR_ARCH__ */
   // TODO(aaron): Read PC on ARM.
       DBG_SERIAL.println('$');
       // TODO(aaron): Do we need RAMPX..Z, EIND? See avr/common.h for defs.

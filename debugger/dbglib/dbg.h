@@ -329,7 +329,10 @@ extern void __dbg_trace(const __FlashStringHelper *tracemsg, const __FlashString
     __attribute__((no_instrument_function));
 
 
+#ifdef __AVR_ARCH__
+// On AVR if we use WDT to reset the device, disable WDT early in boot process.
 void __dbg_disable_watchdog() __attribute__((naked, used, no_instrument_function, section(".init3")));
+#endif /* AVR */
 
 #ifdef DBG_PRETTY_FUNCTIONS
 #  define ASSERT(x) __dbg_assert(x, F(#x), __PRETTY_FUNCTION__, __LINE__)

@@ -16,7 +16,6 @@ On-device service capabilities:
       r11 may also be called FP
     PC[0] needs to be zeroed as it encodes the arm/thumb state. (PC = PC & ~1)
     See ARM ABI Procedure Call Standard, 32bit. (sec 6.1.1 "core registers")
-  * SAMD: watchdog timer / reset [just call NVIC_SystemReset() ?]
 
   * SAMD: Implement 'monitor mode debugging'. see e.g.:
   https://github.com/NordicPlayground/j-link-monitoring-mode-debugging
@@ -24,6 +23,8 @@ On-device service capabilities:
 Client:
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
+  * Show user a list of available platforms and arch's.
+  * Cannot parse SAMD51-compiled empty.elf
 
   --------
 
