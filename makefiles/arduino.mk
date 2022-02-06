@@ -33,15 +33,16 @@
 #   install_headers - Specific list of header files to copy in `make install`;
 #                     default is *.h in each of $(install_header_dirs)
 #   install_header_dirs - List of dirs containing *.h files to install. Defaults to $(src_dirs).
-#   target_include_dir  - Directory where headers are copied to.
+#   include_install_dir  - Directory where headers are copied to.
 #   											Defaults to $(install_dir)/include
-#   arch_specific_h - If defined, sets target_include_dir to an arch-specific subdir of include/.
-#   mcu_specific_h  - If defined, sets target_include_dir to an MCU-specific subdir of include/.
+#   arch_specific_h - If defined, sets include_install_dir to an arch-specific subdir of include/.
+#   mcu_specific_h  - If defined, sets include_install_dir to an MCU-specific subdir of include/.
 #
 # If you have a file named .arduino_mk.conf in your home dir, it will be included
 # to enable you to set defaults.
 #
 # Global config you may want to set there:
+# BOARD 					  - The fqbn of the board to use (e.g. 'arduino:avr:uno')
 # ARDUINO_CLI       - Path to the `arduino-cli` tool (default is to discover via which(1))
 # UPLOAD_PORT       - The serial port to deploy to
 # UPLOAD_PROTOCOL   - 'serial' or 'usb'
@@ -51,6 +52,9 @@
 # install_dir       - Where library binaries & headers are installed. Used to install new
 #                     libraries as well as link against existing ones.
 #
+# There is a template `arduino_mk_conf.template` in this directory for you to get started:
+#     $ cp arduino_mk_conf.template $HOME/.arduino_mk.conf
+#
 # Use `make config` to see the active configuration.
 # Use `make help` to see a list of available targets.
 
@@ -59,6 +63,7 @@ ARDUINO_MK_VER := 1.2.1
 # If the user has a config file to set $BOARD, etc., include it here.
 MAKE_CONF_FILE := $(HOME)/.arduino_mk.conf
 ifeq ($(shell ls -1 $(MAKE_CONF_FILE) 2>/dev/null),$(MAKE_CONF_FILE))
+$(info Loading config file: $(MAKE_CONF_FILE)...)
 include $(MAKE_CONF_FILE)
 endif
 
@@ -132,15 +137,15 @@ ifndef install_headers
 install_headers = $(foreach dir,$(install_header_dirs),$(wildcard $(dir)/*.h))
 endif
 
-ifndef target_include_dir
+ifndef include_install_dir
 ifneq ($(origin mcu_specific_h), undefined)
-target_include_dir = $(install_dir)/include/arch/$(ARCH)/$(build_mcu)
+include_install_dir = $(install_dir)/include/arch/$(ARCH)/$(build_mcu)
 else ifneq ($(origin arch_specific_h), undefined)
-target_include_dir = $(install_dir)/include/arch/$(ARCH)
+include_install_dir = $(install_dir)/include/arch/$(ARCH)
 else
-target_include_dir = $(install_dir)/include
-endif # flags controlling target_include_dir definition.
-endif # if target_include_dir already defined
+include_install_dir = $(install_dir)/include
+endif # flags controlling include_install_dir definition.
+endif # if include_install_dir already defined
 endif # if creating a library
 
 # Set variables for programs we need access to.
@@ -423,6 +428,9 @@ CFLAGS += $(XFLAGS)
 CXXFLAGS += $(XFLAGS)
 LDFLAGS += $(XFLAGS)
 
+$(info Building for target: $(BOARD) [$(build_variant); $(build_mcu)])
+$(info Toolchain (version $(COMPILER_VERSION)) location: $(COMPILER_BINDIR))
+$(info )
 ######### end configuration section #########
 
 config:
@@ -434,7 +442,8 @@ config:
 	@echo "Package       : $(ARDUINO_PACKAGE)"
 	@echo "Architecture  : $(ARCH)"
 	@echo "Arch version  : $(ARCH_VER)"
-	@echo "Variant       : $(VARIANT)"
+	@echo "Variant       : $(VARIANT) [$(build_variant)]"
+	@echo "Chipset       : $(build_mcu)"
 	@echo "Toolchain ver : $(COMPILER_VERSION)"
 	@echo "Toolchain     : $(COMPILER_BINDIR)"
 	@echo "Compiler      : $(COMPILER_NAME)"
@@ -442,8 +451,12 @@ config:
 	@echo "Tool paths:"
 	@echo "===================================="
 	@echo "arduino-cli   : $(ARDUINO_CLI)"
+ifneq ($(origin AVRDUDE), undefined)
 	@echo "AVRDUDE       : $(AVRDUDE)"
+endif
+ifneq ($(origin BOSSAC), undefined)
 	@echo "BOSSAC        : $(BOSSAC)"
+endif
 	@echo ""
 	@echo "AR            : $(AR)"
 	@echo "CXX           : $(CXX)"
@@ -475,7 +488,7 @@ endif
 	@echo "libs            : $(libs)"
 ifdef lib_name
 	@echo "install_headers    : $(install_headers)"
-	@echo "target_include_dir : $(target_include_dir)"
+	@echo "include_install_dir : $(include_install_dir)"
 endif
 	@echo ""
 	@echo 'CFLAGS          : $(CFLAGS)'
@@ -668,10 +681,10 @@ library: $(TARGET)
 
 install: $(TARGET)
 	mkdir -p $(install_dir)
-	mkdir -p $(target_include_dir)
+	mkdir -p $(include_install_dir)
 	mkdir -p $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
 	cp $(TARGET) $(install_dir)/lib/arch/$(ARCH)/$(build_mcu)/
-	cp $(install_headers) $(target_include_dir)
+	cp $(install_headers) $(include_install_dir)
 endif
 
 tags:
