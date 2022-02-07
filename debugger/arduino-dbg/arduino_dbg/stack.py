@@ -198,6 +198,7 @@ class CallFrame(object):
                 data = self._debugger.get_sram(cfa_addr + rule.arg, reg_width)
                 if reg_name == 'PC':
                     # AVR: For $PC, swap the order of the two bytes retrieved, LSH the result by 1.
+                    # TODO Move this PC-from-stack cleanup into AVRArchInterface.
                     data = (((data & 0xFF) << 8) | ((data >> 8) & 0xFF)) << 1
                 regs_out[reg_name] = data
                 self._debugger.verboseprint(
@@ -242,6 +243,9 @@ class CallFrame(object):
 
 
 def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
+    # TODO(aaron): Move this entire AVR-specific method into AVRArchInterface
+
+
     if sym.isr_frame_ok:
         return  # Already handled / not an issue for this method.
 
@@ -393,15 +397,12 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
     the size of the current stack frame at that point and return it.
 
     i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
-    filled by the method (x+1..x+4) and the (2 byte AVR) return address is at
-    x+5..x+6.
+    filled by the method (x+1..x+4) and the return address is just below that on the stack
+    (e.g., starting at x+5, in a descending stack).
 
     This method uses prologue analysis to determine the size of the stack frame: by
     analyzing the disassembly of the method containing the indicated $PC, we establish
     the size of the stack frame in question.
-
-    NOTE: While the opcodes to analyze are parameterized in avr_common.conf, the pattern
-    recognition state machine implemented here is AVR-specific.
 
     TODO(aaron): For architectures with a frame pointer (e.g. the ARM ABI), use frame
     pointer walking.
@@ -416,168 +417,7 @@ def stack_frame_size_for_method(debugger, pc, method_sym):
             "Error: No function symbol for method; method frame size = ???")
         return None
 
-    # Pull opcode details from architecture configuration.
-    # opcode records contain fields: name, OPCODE, MASK, width, decoder
-    prologue_opcodes = debugger.get_arch_conf("prologue_opcodes")
-
-    push_word_len = debugger.get_arch_conf("push_word_len")  # nr of bytes a PUSH adds to the stack.
-    default_fetch_width = debugger.get_arch_conf("default_op_width")  # standard instruction decode size
-    has_sph = debugger.get_arch_conf("has_sph")  # True if we have a 16-bit $SP ($SPH:$SPL)
-
-    spl_port = debugger.get_arch_conf("SPL_PORT")  # Port for IN Rd, <port> to read SPL
-    if has_sph:
-        sph_port = debugger.get_arch_conf("SPH_PORT")  # Port for IN Rd, <port> to read SPH
-    else:
-        sph_port = None
-
-    fn_body = debugger.image_for_symbol(method_sym.name)
-
-    fn_start_pc = method_sym.addr
-    fn_size = method_sym.size
-
-    debugger.verboseprint(f"Getting frame size for method {method_sym.name} (@PC {pc:04x})")
-    debugger.verboseprint(f"start addr {fn_start_pc:04x}, size {fn_size} bytes")
-
-    # Walk through the instructions of the method until we reach the end of the prologue
-    # or the current PC. Track the stack size through this point. We believe we are done
-    # with the prologue when we encounter an instruction that is not in the `prologue_opcodes`
-    # list.
-    #
-    # During this time we operate a state machine that understands how certain
-    # instructions or patterns of instructions modify the frame size.
-    #
-    # TODO(aaron): This will not properly backtrace if the method performs PUSH operations
-    # (or modifies SP directly with IN -> {SUBI, ADDI} -> OUT to SPL/SPH) after the method
-    # prologue. Without knowledge of the basic block / control flow structure within the
-    # method (or the path withn those taken by the PC from prologue to its current point)
-    # we can't just safely read linearly. If we do need to debug methods with this kind of
-    # operation, we need to be able to rely on an explicit frame pointer we can identify
-    # in the prologue.
-    depth = 0
-    virt_pc = fn_start_pc
-
-    # State machine to detect IN SPL/SPH -> SBIW/SUBI -> OUT SPL/SPH instruction sequence pattern
-    # that preallocates 1 or more bytes of space on the stack for locals.
-    #
-    # TODO(aaron): This is AVR-specific. Can we parameterize at levels smaller than this entire
-    # method?
-    IO_SUB_PATTERN_NONE = 0
-    IO_SUB_PATTERN_IN_1 = 1   # noqa: F841 (Read one of SPL/SPH)
-    IO_SUB_PATTERN_IN_2 = 2   # Read both of SPL/SPH
-    IO_SUB_PATTERN_SUB = 3    # Subtracted from SPL/SPH (via SBIW / SUBI Rd, i)
-    IO_SUB_PATTERN_OUT_1 = 4  # Wrote back one of SPL/SPH
-    IO_SUB_PATTERN_DONE = 5   # After writing back both (or 1 if !has_sph), lock in; back to pattern_none.
-
-    spl_active_reg = None
-    sph_active_reg = None
-    possible_offset = 0
-    io_sub_seq_state = IO_SUB_PATTERN_NONE  # Not currently in this pattern.
-
-    while virt_pc < (fn_start_pc + fn_size) and virt_pc < pc:
-        width = default_fetch_width
-        op = int.from_bytes(fn_body[virt_pc - fn_start_pc: virt_pc - fn_start_pc + width],
-                            "little", signed=False)
-        # print(f'vpc {virt_pc:04x} (w={width}) -- op {op:02x} {op:016b}')
-
-        is_prologue = False  # Don't yet know if this instruction is part of the prologue
-
-        for opcode_rec in prologue_opcodes:
-            loop_op = op
-            loop_width = width
-
-            if opcode_rec['width'] != default_fetch_width:
-                # Try to decode more than the standard fetch width at once.
-                loop_width = opcode_rec['width']
-                loop_op = int.from_bytes(
-                    fn_body[virt_pc - fn_start_pc: virt_pc - fn_start_pc + loop_width],
-                    "little", signed=False)
-
-            if (loop_op & opcode_rec['MASK']) != opcode_rec['OPCODE']:
-                # It's not this opcode_rec
-                continue
-
-            # The `loop_op` instruction is confirmed to match opcode_rec.
-            # This instruction confirmed as a valid prologue opcode.
-            is_prologue = True
-
-            # Certain opcodes modify our frame-size calculating state machine.
-            if opcode_rec['name'] == 'pop':
-                depth -= push_word_len
-            elif opcode_rec['name'] == 'push':
-                depth += push_word_len
-            elif opcode_rec['name'] == 'in':
-                (port, rd) = opcode_rec['decoder'](loop_op)
-                if port == spl_port:
-                    spl_active_reg = rd  # We've loaded $SPL into Rd.
-                    possible_offset = 0  # Reset possible_offset since we can't have SBIW'd yet.
-                    if io_sub_seq_state < IO_SUB_PATTERN_IN_2:
-                        # Advance state machine by 1
-                        io_sub_seq_state += 1
-                    else:
-                        # Redundant `in` (?) locks us into IN_2 state.
-                        io_sub_seq_state = IO_SUB_PATTERN_IN_2
-
-                    if not has_sph:
-                        # Skip _IN_1 state; there is no $SPH so we've read the whole SP.
-                        io_sub_seq_state = IO_SUB_PATTERN_IN_2
-                elif has_sph and port == sph_port:
-                    sph_active_reg = rd  # We've loaded $SPH into Rd.
-                    possible_offset = 0  # Reset possible_offset since we can't have SBIW'd yet.
-                    if io_sub_seq_state < IO_SUB_PATTERN_IN_2:
-                        # Advance state machine by 1
-                        io_sub_seq_state += 1
-                    else:
-                        # Redundant `in` (?) locks us into IN_2 state.
-                        io_sub_seq_state = IO_SUB_PATTERN_IN_2
-                else:
-                    # We read some other register port (e.g., SREG). Irrelevant to state
-                    # machine.
-                    pass
-            elif opcode_rec['name'] == 'sbiw':
-                (rd, imm) = opcode_rec['decoder'](loop_op)
-                if rd == spl_active_reg and io_sub_seq_state == IO_SUB_PATTERN_IN_2:
-                    # For registers holding SPH/SPL, (SPH:SPL) <-- (SPH:SPL) - imm
-                    io_sub_seq_state = IO_SUB_PATTERN_SUB
-                    possible_offset = imm
-            elif opcode_rec['name'] == 'subi':
-                (rd, imm) = opcode_rec['decoder'](loop_op)
-                if rd == spl_active_reg and io_sub_seq_state == IO_SUB_PATTERN_IN_2:
-                    # For register holding SPL, SPL <-- SPL - imm
-                    io_sub_seq_state = IO_SUB_PATTERN_SUB
-                    possible_offset = imm
-            elif opcode_rec['name'] == 'out':
-                (port, rd) = opcode_rec['decoder'](loop_op)
-                if io_sub_seq_state >= IO_SUB_PATTERN_SUB:
-                    # We either just saw the SBIW or wrote one of the two ports.
-                    if port == spl_port and rd == spl_active_reg:
-                        io_sub_seq_state += 1  # Wrote back to $SPL
-                    elif has_sph and port == sph_port and rd == sph_active_reg:
-                        io_sub_seq_state += 1
-
-                    if io_sub_seq_state == IO_SUB_PATTERN_OUT_1 and not has_sph:
-                        io_sub_seq_state += 1  # Advance to _DONE; no $SPH to write.
-
-                    if io_sub_seq_state == IO_SUB_PATTERN_DONE:
-                        # We have completed the pattern
-                        debugger.verboseprint(f"Direct SP adjustment of {possible_offset}")
-                        depth += possible_offset  # possible_offset confirmed as frame ptr offset
-
-                        # Reset state machine.
-                        io_sub_seq_state = IO_SUB_PATTERN_NONE
-                        possible_offset = 0
-                        spl_active_reg = None
-                        sph_active_reg = None
-
-            virt_pc += loop_width  # Advance virtual $PC past this instruction
-            break  # Break out of cycle of decode attempts for this instruction.
-
-        if not is_prologue:
-            # We tested all possible prologue opcodes and this instruction isn't one of 'em.
-            # We've ran past the end of the prologue and established the frame size.
-            break
-
-    debugger.verboseprint(f"Established frame_size={depth}")
-    return depth
+    return debugger.arch_iface.stack_frame_size_for_prologue(pc, method_sym)
 
 
 def stack_frame_size_by_pc(debugger, pc):

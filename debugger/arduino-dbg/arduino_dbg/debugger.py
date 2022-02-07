@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 
+import arduino_dbg.arch as arch
 import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.conf_files as conf_files
 import arduino_dbg.protocol as protocol
@@ -175,6 +176,7 @@ class Debugger(object):
             self.elf_name = os.path.realpath(self.elf_name)
 
         self.verboseprint = _silent  # verboseprint() method is either _silent() or _verbose_print_all()
+        self.arch_iface = None       # adbg.arch.ArchInterface implementation; loaded from config.
 
         # Set up general user-accessible config.
 
@@ -490,7 +492,16 @@ class Debugger(object):
         if not new_conf:
             return  # Nothing to load.
 
-        self._arch = new_conf
+        self._arch = new_conf  # Lock in the new k/v store.
+        # Instantiate class of arch-specific helper methods
+        # (Based on new `arch_interface` setting in self._arch)
+        arch.load_arch_interfaces()  # Trigger deferred imports of ArchInterface modules.
+        self.arch_iface = arch.ArchInterface.make_arch_interface(self)
+
+        # Clear cached architecture parameters in DWARFExprMachine
+        import arduino_dbg.eval_location as el
+        el.DWARFExprMachine.hard_reset_state()
+        el.DWARFExprMachine([], {}, self)
 
         if old_int_size is not None:
             # If the width of 'int' or pointer addr changes by virtue of changing the architecture
@@ -501,11 +512,6 @@ class Debugger(object):
                 self.msg_q(MsgLevel.WARN,
                            f'Arch changed widths: int={new_int_size}, ptr={new_addr_size}. Reloading ELF...')
                 self._try_read_elf()
-
-        # Clear cached architecture parameters in DWARFExprMachine
-        import arduino_dbg.eval_location as el
-        el.DWARFExprMachine.hard_reset_state()
-        el.DWARFExprMachine([], {}, self)
 
 
     def set_conf(self, key, val):

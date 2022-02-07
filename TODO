@@ -16,6 +16,14 @@ On-device service capabilities:
 
 Client:
 
+  * stack.CallFrame and other stack methods have a bunch of AVR-specific stuff in it to factor out.
+    - consider ArchInterface.true_pc(mem_pc) should actually call that 'reg_pc'. i.e. what you read
+      from a register.
+    - add separate ArchInterface.mem_to_pc(mem_pc) to clean up a linear read from RAM to true $PC.
+    - move GCC_ISR_SREG_SAVE_OPS to `avr_interface` module. Just leave a boolean
+      'cleanup_debug_frames' in the config.
+
+
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping. 
     If this names a member function with the same name as its containing class, we may have
     a conflict. We need to either retain only fully-canonicalized names ('typ.name') OR only
