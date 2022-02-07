@@ -118,17 +118,10 @@ class CompilationUnitNamespace(object):
     def getOffset(self):
         return self._die_offset
 
-    def getExprMachine(self, location_expr_data, regs):
+    def getLocationExprBytes(self, location_expr_data, regs):
         """
-        Return an expression evaluation machine ready to process the specified location info.
-        @param location_expr_data the result of a LocationParser (either a LocationExpr or
-        a list of LocationEntry/BaseAddressEntry objects).
-
-        @return the ready-to-go expr eval machine loaded with the right location expression opcodes
-        for the current PC location, or None if there is no location data valid at the current PC.
+        Extract the location expr bytes (opcode stream) from DW_AT_location-like attrs.
         """
-
-        parser = self.expr_parser
         location_expr_bytes = None
         if isinstance(location_expr_data, locationlists.LocationExpr):
             # It's a single list<int> representing the universal location expression for this var.
@@ -151,10 +144,25 @@ class CompilationUnitNamespace(object):
                         location_expr_bytes = loc_list_entry.loc_expr
                         break
 
+        return location_expr_bytes
+
+
+    def getExprMachine(self, location_expr_data, regs):
+        """
+        Return an expression evaluation machine ready to process the specified location info.
+        @param location_expr_data the result of a LocationParser (either a LocationExpr or
+        a list of LocationEntry/BaseAddressEntry objects).
+
+        @return the ready-to-go expr eval machine loaded with the right location expression opcodes
+        for the current PC location, or None if there is no location data valid at the current PC.
+        """
+
+        location_expr_bytes = self.getLocationExprBytes(location_expr_data, regs)
         if location_expr_bytes is None:
             # No location entry info mapped to current $PC.
             return None
 
+        parser = self.expr_parser
         return el.DWARFExprMachine(
             parser.parse_expr(location_expr_bytes),
             regs, self._debugger)
@@ -211,14 +219,24 @@ class CompilationUnitNamespace(object):
         return out
 
     def add_entry(self, typ, name, addr):
+        # TODO(aaron): Are we retaining the correct named thing?
+        # We should only retain top-level items with a name at the CUNS level.
+        # There may be cases where we are retaining a constructor instead of the class, etc.
+        # Instead of using DW_AT_name, use the typ.name which canonicalizes the item?
+
         if name and not self._named_entries.get(name):
             self._named_entries[name] = typ
 
         if not addr:
             return
         elif addr in self._addr_entries:
-            # Error: if we found an entry, we're trying to multiply-define it.
-            raise Exception(f"Already defined entry at addr {addr:x}")
+            # If we found an entry, we're trying to multiply-define it.
+            # This can happen if a convoluted-enough series of forward-references causes us to
+            # seek to places which define the dependents of this entry, and then 'forward ref'
+            # to this address again. Use what we've already installed at this location; ignore
+            # this rework.
+            assert repr(typ) == repr(self._addr_entries[addr])
+            self._debugger.verboseprint(f'Already defined entry at addr {addr:x}')
         else:
             # Typical case: haven't yet bound this addr to an entry. Do so here.
             self._addr_entries[addr] = typ
@@ -447,6 +465,12 @@ class PrgmType(DieBase):
         """
         return False
 
+    def is_union(self):
+        """
+        Return True if this represents a union type.
+        """
+        return False
+
     def get_array_len(self):
         """
         If is_array() is true, return the element count.
@@ -555,6 +579,9 @@ class ConstType(PrgmType):
     def is_char(self):
         return self.parent_type().is_char()
 
+    def is_union(self):
+        return self.parent_type().is_union()
+
     def __repr__(self):
         return self.name
 
@@ -637,7 +664,11 @@ class EnumType(PrgmType):
     """
 
     def __init__(self, enum_name, base_type, mappings={}):
-        PrgmType.__init__(self, 'enum ' + enum_name, base_type.size, base_type)
+        if enum_name is None:
+            full_name = '<enum>'
+        else:
+            full_name = 'enum ' + enum_name
+        PrgmType.__init__(self, full_name, base_type.size, base_type)
         self.enum_name = enum_name
         self.enums = {}
         for (token, val) in mappings.items():
@@ -662,7 +693,7 @@ class EnumType(PrgmType):
         return None
 
     def __repr__(self):
-        s = f'enum {self.enum_name} [size={self.size}] {{\n  '
+        s = f'{self.name} [size={self.size}] {{\n  '
         mappings = []
         for (token, val) in self.enums.items():
             mappings.append(f"{token} = {val}")
@@ -682,7 +713,10 @@ class ArrayType(PrgmType):
 
     def setLength(self, _len):
         self.length = _len
-        self.size = self.get_type().size * self.length
+        if self.length is not None:
+            self.size = self.get_type().size * self.length
+        else:
+            self.size = None
         # TODO(aaron): if DW_AT_byte_size specified, that overrides the above calculation.
 
     def is_array(self):
@@ -707,7 +741,10 @@ class ArrayType(PrgmType):
         return False  # Definitionally it's not a single character, it's an array.
 
     def __repr__(self):
-        return f'{self.parent_type()}[{self.length}]'
+        if self.length is not None:
+            return f'{self.parent_type()}[{self.length}]'
+        else:
+            return f'{self.parent_type()}[]'
 
 
 class AliasType(PrgmType):
@@ -719,6 +756,27 @@ class AliasType(PrgmType):
 
     def pointer_depth(self):
         return self.parent_type().pointer_depth()
+
+    def get_dereferenced_type(self):
+        return self.parent_type().get_dereferenced_type()
+
+    def is_array(self):
+        return self.parent_type().is_array()
+
+    def is_string(self):
+        return self.parent_type().is_string()
+
+    def is_char(self):
+        return self.parent_type().is_char()
+
+    def is_union(self):
+        return self.parent_type().is_union()
+
+    def get_array_len(self):
+        return self.parent_type().get_array_len()
+
+    def get_array_elem_size(self):
+        return self.parent_type.get_array_elem_size()
 
     def __repr__(self):
         return f'typedef {self.parent_type().name} {self.name}'
@@ -777,8 +835,8 @@ class MethodPtrType(PrgmType):
     """
     Pointer-to-method type. Not an actual method decl/def'n.
     """
-    def __init__(self, name, return_type=None, member_of=None):
-        PrgmType.__init__(self, name, 0, None)
+    def __init__(self, name, addr_size, return_type=None, member_of=None):
+        PrgmType.__init__(self, name, addr_size, None)
         self.return_type = return_type or _VOID
         self.member_of = member_of
         self.formal_args = []
@@ -900,7 +958,7 @@ class MethodInfo(PrgmType):
         # Implement DieBase method.
         return self._return_type
 
-    def make_signature(self, include_class=False, include_die_offset=False):
+    def make_signature(self, include_class=False, include_die_offset=False, override_name=None):
         s = ''
         if self.accessibility == PUBLIC:
             s += 'public '
@@ -917,7 +975,11 @@ class MethodInfo(PrgmType):
         else:
             class_part = ''
 
-        s += f'{self.return_type.name} {class_part}{self.method_name}('
+        use_name = self.method_name
+        if override_name is not None:
+            use_name = override_name
+
+        s += f'{self.return_type.name} {class_part}{use_name}('
         s += ', '.join(map(lambda arg: f'{arg}', FormalArg.filter_signature_args(self.formal_args)))
         s += ')'
         if self.virtual == dwarf_constants.DW_VIRTUALITY_pure_virtual:
@@ -1096,8 +1158,13 @@ class FieldType(PrgmType):
         else:
             acc = 'public'  # Assume public by default.
 
+        if self.offset is None:
+            offset_str = ''
+        else:
+            offset_str = f', offset={self.offset:#x}'
+
         return f'{acc} {self.parent_type().name} {self.field_name} ' + \
-            f'[size={self.parent_type().size}, offset={self.offset:#x}]'
+            f'[size={self.parent_type().size}{offset_str}]'
 
 
 class ClassType(PrgmType):
@@ -1106,7 +1173,11 @@ class ClassType(PrgmType):
     """
     def __init__(self, class_name, size, base_type):
         # TODO(aaron): how does 'base_type' interact with multiple inheritance? diamond inheritance?
-        PrgmType.__init__(self, 'class ' + class_name, size, base_type)
+        if class_name is None:
+            full_name = '<class>'
+        else:
+            full_name = 'class ' + class_name
+        PrgmType.__init__(self, full_name, size, base_type)
 
         self.class_name = class_name
         self.methods = []
@@ -1141,7 +1212,7 @@ class ClassType(PrgmType):
             s += '  '
         s += ';\n  '.join(map(lambda m: f'{m}', decl_methods + self.fields))
         if len(decl_methods) + len(self.fields) > 0:
-            s += '\n'
+            s += ';\n'
         s += '}'
         return s
 
@@ -1163,6 +1234,93 @@ class ClassType(PrgmType):
             field_lines.append(field.type_tree(indent + 1))
         details += '\n'.join(field_lines)
         return details
+
+
+class UnionType(PrgmType):
+    """
+    A union (OR-type)
+    """
+    def __init__(self, union_name, size, base_type):
+        # TODO(aaron): Do these actually have a base type?
+        if union_name is None:
+            full_name = '<union>'
+        else:
+            full_name = 'union ' + union_name
+        PrgmType.__init__(self, full_name, size, base_type)
+
+        self.union_name = union_name
+        self.fields = []
+
+
+    def addField(self, field_type):
+        self.fields.append(field_type)
+
+    def getField(self, fieldName):
+        for f in self.fields:
+            if f.field_name == fieldName:
+                return f
+        return None
+
+    def is_union(self):
+        return True
+
+    def __repr__(self):
+        s = f'{self.name}'
+        if self.parent_type():
+            s += f' <subtype of {self.parent_type().name}>'
+        s += f' [size={self.size}] {{\n'
+        if len(self.fields) > 0:
+            s += '  '
+        s += ';\n  '.join(map(lambda m: f'{m}', self.fields))
+        if len(self.fields) > 0:
+            s += ';\n'
+        s += '}'
+        return s
+
+    def type_tree_details(self, indent):
+        """
+        Return additional details about this object for the Type Tree.
+        Each line of text output should be indented by 2*indent spaces.
+        """
+        pad = indent * '  '
+        details = pad + f'union {self.union_name}'
+        details += '\n' + pad + 'Fields:\n' + pad
+        field_lines = []
+        for field in self.fields:
+            field_lines.append(field.type_tree(indent + 1))
+        details += '\n'.join(field_lines)
+        return details
+
+
+class PtrToMember(PrgmType):
+    """
+    Pointer to member field or method of a class/struct.
+    """
+
+    def __init__(self, ptr_name, addr_size, member_type, class_type):
+        PrgmType.__init__(self, ptr_name, addr_size, member_type)
+        self.member_type = member_type
+        self.class_type = class_type
+
+    def pointer_depth(self):
+        return self.parent_type().pointer_depth() + 1
+
+    def __repr__(self):
+        if self.name is None:
+            namestr = ''
+        else:
+            namestr = self.name
+
+        if isinstance(self.member_type, MethodInfo):
+            # Pointer-to-method syntax; embed the name of this pointer-type (if any) in place
+            # of the actual member method name in its own signature.
+            namestr = '*' + namestr
+            return self.member_type.make_signature(include_class=True, override_name=namestr)
+        else:
+            # Pointer to field
+            return f'{self.member_type} {self.class_type}::{namestr}*'
+
+
 
 
 class DwarfProcedure(DieBase):
@@ -1623,7 +1781,6 @@ class ParsedDebugInfo(object):
                 self.parseTypesFromDIE(sub_die, cuns, _fresh_context())
                 debugger.verboseprint('** End forward-seek process.')
 
-
             return cuns.entry_by_addr(addr)
 
         def _resolve_abstract_origin(attr='abstract_origin'):
@@ -1691,8 +1848,8 @@ class ParsedDebugInfo(object):
                 debugger.verboseprint(die)
 
 
-        if dieattr('name') and cuns.entry_by_name(dieattr('name')):
-            # We're redefining a type name that already exists.
+        if nesting == 0 and dieattr('name') and cuns.entry_by_name(dieattr('name')):
+            # We're redefining a top-level type name or symbol that already exists.
             # Just copy the existing definition into this address.
             debugger.verboseprint('(Redefining existing ', dieattr("name"), '); copying existing')
             _add_entry(cuns.entry_by_name(dieattr('name')), None, die.offset)
@@ -1758,11 +1915,19 @@ class ParsedDebugInfo(object):
             # [lower_bound=0], upper_bound
             lower = dieattr("lower_bound", 0)
             upper = dieattr("upper_bound")
-            length = upper - lower + 1
+            if upper is None:
+                # We may declare the presence of a const array of unknown size in a .h file
+                # (`const some_t foo[];`) without giving its contents until definition in
+                # some .cpp file. Length unknown for now.
+                length = None
+            else:
+                length = upper - lower + 1
             context['array'].setLength(length)
         elif die.tag == 'DW_TAG_enumeration_type':
             # name, type, byte_size
             name = dieattr('name')
+            if name is None:
+                name = dieattr('linkage_name', None)
             base = _lookup_type()
             enum = EnumType(name, base)
             _add_entry(enum, enum.name, die.offset)
@@ -1780,6 +1945,8 @@ class ParsedDebugInfo(object):
             # name, byte_size, containing_type
             # TODO(aaron): can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
             name = dieattr('name')
+            if name is None:
+                name = dieattr('linkage_name', None)
             size = dieattr('byte_size')
 
             parent_type_offset = dieattr("containing_type", None)
@@ -1787,11 +1954,30 @@ class ParsedDebugInfo(object):
                 parent_type = None
             else:
                 parent_type = _lookup_type("containing_type")
+
             class_type = ClassType(name, size, parent_type)
             _add_entry(class_type, name, die.offset)
             ctxt = context.copy()
             ctxt['nesting'] += 1
             ctxt['class'] = class_type
+            for child in die.iter_children():
+                self.parseTypesFromDIE(child, cuns, ctxt)
+        elif die.tag == 'DW_TAG_union_type':
+            name = dieattr('name')
+            if name is None:
+                name = dieattr('linkage_name', None)
+            size = dieattr('byte_size')
+            parent_type_offset = dieattr("containing_type", None)
+            if parent_type_offset is None:
+                parent_type = None
+            else:
+                parent_type = _lookup_type("containing_type")
+
+            union_type = UnionType(name, size, parent_type)
+            _add_entry(union_type, name, die.offset)
+            ctxt = context.copy()
+            ctxt['nesting'] += 1
+            ctxt['class'] = union_type
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
         elif die.tag == 'DW_TAG_member':
@@ -1801,31 +1987,47 @@ class ParsedDebugInfo(object):
             # [23h, Xh] means 'at offset Xh' (DW_OP_plus_uconst)
             name = dieattr('name')
             base = _lookup_type()
-            data_member_location = dieattr('data_member_location')
-
-            # class member offsets are technically stack machine exprs that require full
-            # evaluation. g++ seems to encode them all as DW_OP_plus_uconst [offset], but
-            # we've got the ability to calculate more complicated patterns, so long as they
-            # don't require access to current memory or registers here (which they shouldn't,
-            # as part of a static type definition). The expr assumes the address of the
-            # object is already on the expr stack to provide a true member address; we push '0'
-            # here as a starting stack to get a member offset rather than a member address.
-            #
-            # nb evaluating for offset here means doing so without a $PC, so we're assuming
-            # it's a single location expr and not a location_list. The latter _seems_ impossible
-            # for a field offset location to be PC-dependent, but maybe not?
-            expr_machine = cuns.getExprMachine(
-                locationlists.LocationExpr(data_member_location), {})
-            expr_machine.push(0)
-            offset_list, flags = expr_machine.eval()
-            if el.LookupFlags.successful(flags):
-                (offset, _) = offset_list[0]
-            else:
-                cuns.getDebugger.verboseprint(
-                    "Error decoding data member location for field ",
-                    context.get("class").class_name, "::", name, " - ",
-                    el.LookupFlags.get_message(flags))
+            if context['class'].is_union():
+                # This is a member field of a union; no offset info.
                 offset = None
+                location_bytes = None
+            else:
+                data_member_location = dieattr('data_member_location')
+                # Class member offsets may be integer constants representing offset from the
+                # beginning of the class/struct.
+                location_bytes = cuns.getLocationExprBytes(
+                    locationlists.LocationExpr(data_member_location), {})
+
+            if location_bytes is None:
+                # No location available
+                offset = None
+            elif isinstance(location_bytes, int):
+                # Just a plain integer offset.
+                offset = location_bytes
+            else:
+                # ... But they may also be stack machine exprs that require full evaluation.
+                # g++ for AVR seems to encode them all as DW_OP_plus_uconst [offset], but we've
+                # got the ability to calculate more complicated patterns, so long as they don't
+                # require access to current memory or registers here (which they shouldn't, as
+                # part of a static type definition). The expr assumes the address of the object
+                # is already on the expr stack to provide a true member address; we push '0'
+                # here as a starting stack to get a member offset rather than a member address.
+                #
+                # nb evaluating for offset here means doing so without a $PC, so we're assuming
+                # it's a single location expr and not a location_list. The latter _seems_
+                # impossible for a field offset location to be PC-dependent, but maybe not?
+                expr_machine = cuns.getExprMachine(
+                    locationlists.LocationExpr(data_member_location), {})
+                expr_machine.push(0)
+                offset_list, flags = expr_machine.eval()
+                if el.LookupFlags.successful(flags):
+                    (offset, _) = offset_list[0]
+                else:
+                    cuns.getDebugger.verboseprint(
+                        "Error decoding data member location for field ",
+                        context.get("class").class_name, "::", name, " - ",
+                        el.LookupFlags.get_message(flags))
+                    offset = None
 
             accessibility = dieattr('accessibility', 1)
             field = FieldType(name, context.get("class"), base, offset, accessibility)
@@ -2011,13 +2213,21 @@ class ParsedDebugInfo(object):
             name = dieattr('name')
             enclosing_class = context.get("class") or None
             return_type = _lookup_type() or _VOID
-            method_type = MethodPtrType(name, return_type, enclosing_class)
+            method_type = MethodPtrType(name, self.addr_size, return_type, enclosing_class)
             _add_entry(method_type, name, die.offset)
             ctxt = context.copy()
             ctxt['nesting'] += 1
             ctxt['method'] = method_type
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
+        elif die.tag == 'DW_TAG_ptr_to_member_type':
+            # Used for pointers to member methods or fields of a class/struct.
+            # Establishes a type for the pointer. This type may be named or anonymous.
+            name = dieattr('name')
+            member_type = _lookup_type()
+            class_type = _lookup_type('containing_type')
+            member_ptr_type = PtrToMember(name, self.addr_size, member_type, class_type)
+            _add_entry(member_ptr_type, name, die.offset)
         elif die.tag == 'DW_TAG_formal_parameter':
             # type signature for a formal arg to a method.
             # artificial=1 if added by compiler (e.g., implicit 'this')

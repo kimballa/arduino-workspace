@@ -8,11 +8,11 @@ import importlib.resources as resources
 from arduino_dbg.repl_command import CompoundCommand, CompoundHost
 from arduino_dbg.term import MsgLevel
 
+
 CONF_MODULES = [
     "arduino_dbg.arch",         # chip-level architecture configs (e.g. 'atmega32u4')
     "arduino_dbg.platforms",    # Arduino assembly names ('uno', 'leonardo', etc.)
     ]
-
 
 
 def load_conf_module(module_name, resource_name, print_q):
@@ -29,7 +29,10 @@ def load_conf_module(module_name, resource_name, print_q):
         raise RuntimeError(
             f"Security violation: Cannot load conf file from module '{module_name}'.")
 
+
     conf_resource_name = resource_name.strip() + ".conf"
+    if not resources.is_resource(module_name, conf_resource_name):
+        return None  # No such conf file to load
     conf_text = resources.read_text(module_name, conf_resource_name)
     conf = {}  # Create an empty environment in which to run the config code.
 
