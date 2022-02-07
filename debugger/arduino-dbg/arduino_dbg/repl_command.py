@@ -130,7 +130,10 @@ class Command(object):
             keywordsIntro = f"{all_keywords[0]}"
 
         # Get the docstring and eliminate method-level indentation.
-        docstring = inspect.cleandoc(fn.__doc__)
+        if fn.__doc__ is not None:
+            docstring = inspect.cleandoc(fn.__doc__)
+        else:
+            docstring = ""
         # Split into lines; if one line matches `Syntax: <foo>`, make that line bold.
         docstr_lines = docstring.split("\n")
         for i in range(0, len(docstr_lines)):

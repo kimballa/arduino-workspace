@@ -3,7 +3,6 @@
 from elftools.elf.elffile import ELFFile
 from elftools.dwarf.callframe import CIE
 
-import importlib.resources as resources
 import os
 import os.path
 import queue
@@ -13,6 +12,7 @@ import time
 import traceback
 
 import arduino_dbg.breakpoint as breakpoint
+import arduino_dbg.conf_files as conf_files
 import arduino_dbg.protocol as protocol
 import arduino_dbg.serialize as serialize
 import arduino_dbg.stack as stack
@@ -96,58 +96,6 @@ VHEX = b'\x00\xFF\x10'  # Print base 16
 VHEX2 = b'\x00\xFF\x10\x02'  # Print base 16, 0-pad to 2 places
 VHEX4 = b'\x00\xFF\x10\x04'  # Print base 16, 0-pad to 4 places
 VHEX8 = b'\x00\xFF\x10\x08'  # Print base 16, 0-pad to 8 places
-
-
-def _load_conf_module(module_name, resource_name, print_q):
-    """
-        Open a resource (file) within a module with a '.conf' extension and treat it like python
-        code; execute it in a sheltered environment and return the processed globals as a k-v map.
-
-        We use this for Arduino Platform and cpu architecture (Arch) definitions.
-    """
-    if resource_name is None or len(resource_name) == 0:
-        return None  # Nothing to load.
-
-    conf_resource_name = resource_name.strip() + ".conf"
-    conf_text = resources.read_text(module_name, conf_resource_name)
-    conf = {}  # Create an empty environment in which to run the config code.
-
-    def _include_fn(extra_resource_name):
-        """
-            Provide an 'include' method within the exec() scope so a .conf file can include
-            more .conf files. This is restricted to the same module_name as the exterior binding
-            scope.
-        """
-        included_map = _load_conf_module(module_name, extra_resource_name, print_q)
-        # Copy the items from the included map into the namespace of the including conf file
-        for (k, v) in included_map.items():
-            conf[k] = v
-
-        return None
-
-    conf['include'] = _include_fn  # Give the 'include' function to the scope.
-    try:
-        exec(conf_text, conf, conf)
-        del conf["__builtins__"]  # Pull python internals from gloabls map we're using as config.
-        del conf["include"]  # Pull out the include() function we provided.
-
-        # Remove any "__private" items.
-        to_delete = []
-        for (k, v) in conf.items():
-            if isinstance(k, str) and k.startswith("__"):
-                to_delete.append(k)
-        for key in to_delete:
-            del conf[key]
-
-    except Exception:
-        # Error parsing/executing conf; return empty result.
-        print_q.put(("Error loading config profile: %s" % conf_resource_name, MsgLevel.ERR))
-        return None
-
-    print_q.put(("Loading config profile: %s; read %d keys" % (conf_resource_name, len(conf)),
-                MsgLevel.INFO))
-    # conf is now populated with the globals from executing the conf file.
-    return conf
 
 
 class DebuggerIOError(Exception):
@@ -516,7 +464,7 @@ class Debugger(object):
 
         if not platform_name:
             return
-        new_conf = _load_conf_module("arduino_dbg.platforms", platform_name, self._print_q)
+        new_conf = conf_files.load_conf_module("arduino_dbg.platforms", platform_name, self._print_q)
         if not new_conf:
             return
 
@@ -538,7 +486,7 @@ class Debugger(object):
         arch_name = self.get_conf("arduino.arch")
         if not arch_name:
             return
-        new_conf = _load_conf_module("arduino_dbg.arch", arch_name, self._print_q)
+        new_conf = conf_files.load_conf_module("arduino_dbg.arch", arch_name, self._print_q)
         if not new_conf:
             return  # Nothing to load.
 

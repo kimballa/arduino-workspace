@@ -7,8 +7,9 @@ computer and debug your running sketch with this application.
 
 You must include a small debugging library (`dbg.cpp` and `dbg.h`) available at
 https://github.com/kimballa/arduino-workspace in your application. You should
-`#include <dbg.h>` and then follow the instructions in `dbg.h` to enable debugging your
-sketch. You will also find instructions in `dbg.h` on the API for creating unconditional
+`#include <dbg.h>` to enable debugging your sketch.
+
+You will find instructions in `dbg.h` on the API for creating unconditional
 and assertion-based breakpoints, and emitting debug and trace messages.
 
 Setup

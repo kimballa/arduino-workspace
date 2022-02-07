@@ -17,7 +17,6 @@ On-device service capabilities:
 Client:
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
-  * Show user a list of available platforms and arch's.
   * Cannot parse SAMD51-compiled empty.elf
   * All uses of $PC need ARM-specific PC cleansing (0 the LSB), separate from AVR-style PC cleansing
     ($PC = $PC' << 1).
@@ -47,7 +46,7 @@ SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
   * Disable/enable HW breakpoint
   * ... should DBGBREAK() use `BKPT` instr on ARM? By invoking the debug mon irq, we can then
     do a proper single-step from there.
-  * ... timer-irq-driven breaks need a way to 'kick off' single-step such that it gets back 
+  * ... timer-irq-driven breaks need a way to 'kick off' single-step such that it gets back
     to the bottom of the timer irq fn, enables single-step mode, and then returns from the irq
     to execute the 1 opcode. __dbg_service() probably needs to return a value or set a status flag
     checked in the irq fn.

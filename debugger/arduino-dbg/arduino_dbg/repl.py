@@ -926,6 +926,8 @@ class Repl(object):
                 self._debugger.msg_q(
                     MsgLevel.WARN,
                     "No platform set; configure with 'set arduino.platform ...'.")
+                self._debugger.msg_q(
+                    MsgLevel.WARN, "See 'list platforms' for available options.")
             else:
                 for (k, v) in platform:
                     _print_kv_pair(k, v)
@@ -939,6 +941,8 @@ class Repl(object):
                     MsgLevel.WARN,
                     "No architecture set; configure 'set arduino.platform ...' or "
                     "'set arduino.arch ...' directly.")
+                self._debugger.msg_q(
+                    MsgLevel.WARN, "See 'list architectures' for available options.")
             else:
                 for (k, v) in arch:
                     _print_kv_pair(k, v)
@@ -1668,7 +1672,6 @@ class Repl(object):
         """
         self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.FULL_DBG_VERSION_STR)
         self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.LICENSE)
-
 
 
     @Command(keywords=['help'], completions=[Completions.KW])
