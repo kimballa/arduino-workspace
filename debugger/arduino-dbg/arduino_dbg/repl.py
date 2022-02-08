@@ -12,6 +12,7 @@ import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
 import arduino_dbg.io as io
+import arduino_dbg.memory_map as memory_map
 import arduino_dbg.protocol as protocol
 from arduino_dbg.repl_command import Completions, Command, CompoundCommand, ReplAutoComplete, \
     repl_split, print_command_help
@@ -588,6 +589,10 @@ class Repl(object):
         self._debugger.msg_q(MsgLevel.INFO, f'      (free):  {free_ram:>8}')
         self._debugger.msg_q(MsgLevel.INFO, f'   Heap size:  {heap_size:>8}')
         self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>8} (.data + .bss)')
+        self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>8} (.data + .bss)')
+        self._debugger.msg_q(MsgLevel.INFO, f'')
+        self._debugger.msg_q(MsgLevel.INFO, repr(self._debugger.arch_iface.memory_map()))
+
 
 
     @Command(keywords=['mem', 'x', '\\m'], completions=[Completions.WORD_SIZE])
@@ -596,6 +601,9 @@ class Repl(object):
         Read a memory address on the Arduino
 
             Syntax: mem [<size>] <addr (hex)>
+
+        On a segmented memory system, you must provide a logical address, not a physical in-segment
+        memory address to write. On AVR, SRAM addresses begin at 0x800000.
 
         size must be 1, 2, or 4.
         """
@@ -614,7 +622,16 @@ class Repl(object):
         elif size > 4 or size == 3:
             size = 4
 
-        v = self._debugger.get_sram(addr, size)
+        # Resolve logical address to physical address.
+        mmap = self.arch_iface.memory_map()
+        phys_addr = mmap.logical_to_physical_addr(addr)
+        if mmap.access_mechanism_for_addr(addr) == memory_map.ACCESS_TYPE_PGM:
+            # We're trying to read something in flash with 'mem'.
+            self._debugger.msg_q(
+                MsgLevel.ERR,
+                f"Error: Cannot read flash segment at address {addr:x} with 'mem'; try 'flash'.")
+
+        v = self._debugger.get_sram(phys_addr, size)
         if size == 1:
             self._debugger.msg_q(MsgLevel.INFO, f"{v:02x}")
         elif size == 2:
@@ -634,6 +651,9 @@ class Repl(object):
 
         This will write to any address in the Arduino's SRAM and can easily corrupt your program.
         To set the value of a global variable with a known symbol, see the `setv` command.
+
+        On a segmented memory system, you must provide a logical address, not a physical in-segment
+        memory address to write. On AVR, SRAM addresses begin at 0x800000.
         """
         base = 10
         if len(argv) < 2:
@@ -686,15 +706,17 @@ class Repl(object):
         elif size > 4 or size == 3:
             size = 4
 
-        data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
-        if data_addr_mask and (addr & data_addr_mask) == addr:
+        # Resolve logical address to physical address.
+        mmap = self.arch_iface.memory_map()
+        phys_addr = mmap.logical_to_physical_addr(addr)
+        if mmap.access_mechanism_for_addr(addr) == memory_map.ACCESS_TYPE_PGM:
             # We're trying to update something in flash.
             self._debugger.msg_q(
                 MsgLevel.ERR,
                 f"Error: Cannot write to flash segment at address {addr:x}")
         else:
             # We're trying to update something in SRAM:
-            self._debugger.set_sram(addr, val, size)
+            self._debugger.set_sram(phys_addr, val, size)
 
 
     @Command(keywords=['print', 'v', '\\v'], completions=[Completions.SYM])
@@ -741,14 +763,14 @@ class Repl(object):
             elif size > 4 or size == 3:
                 size = 4
 
-            # TODO(aaron): Make this segment break-out be AVR-specific logic.
-            data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
-            if data_addr_mask and (addr & data_addr_mask) == addr:
+            mmap = self.arch_iface.memory_map()
+            phys_addr = mmap.logical_to_physical_addr(addr)
+            if mmap.access_mechanism_for_addr(addr) == memory_map.ACCESS_TYPE_PGM:
                 # We're requesting something in flash.
-                v = self._debugger.get_flash(addr, size)
+                v = self._debugger.get_flash(phys_addr, size)
             else:
                 # We're requesting something in SRAM:
-                v = self._debugger.get_sram(addr, size)
+                v = self._debugger.get_sram(phys_addr, size)
 
             if size == 1:
                 self._debugger.msg_q(MsgLevel.INFO, f"0x{v:02x}")
@@ -1246,15 +1268,17 @@ class Repl(object):
         elif size > 4 or size == 3:
             size = 4
 
-        data_addr_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
-        if data_addr_mask and (addr & data_addr_mask) == addr:
+        # Resolve logical address to physical address.
+        mmap = self.arch_iface.memory_map()
+        phys_addr = mmap.logical_to_physical_addr(addr)
+        if mmap.access_mechanism_for_addr(addr) == memory_map.ACCESS_TYPE_PGM:
             # We're trying to update something in flash.
             self._debugger.msg_q(
                 MsgLevel.ERR,
                 f"Error: Cannot write to flash segment at address {addr:x}")
         else:
             # We're trying to update something in SRAM:
-            self._debugger.set_sram(addr, val, size)
+            self._debugger.set_sram(phys_addr, val, size)
 
 
     @Command(keywords=['sym', "?"], completions=[Completions.SYM])

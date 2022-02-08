@@ -22,21 +22,8 @@ Client:
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
   * Verify `empty.elf` CFA records are actually useful?
-  * All uses of $PC need ARM-specific PC cleansing (0 the LSB), separate from AVR-style PC cleansing
-    ($PC = $PC' << 1).
-    * Consider moving "cleanup_pc()" logic into arch.AVRInterface and arch.ArmThumbInterface
-      classes; can also lift prologue analyzer code from .conf files into these classes too.
   * Get `backtrace` fn working (Expects AVR prolog_opcodes list in stack.py)
 
-
-  Rethink avr_common.DATA_ADDR_MASK; implement a more universal mechanism for:
-  1) Mapping the flat address space of the ELF file into 2+ segmented address spaces for flash + ram
-  2) Converting segmented address space memory addresses back into 'pointers' that we can relate to
-     symbols associated with ELF-flat-addressing locations.
-  3) Determining which of the \x or \xf accessors we should use to read from RAM or Flash.
-     e.g., SAMD51 does not need special flash loading functions; Flash and SRAM are both mapped to
-     a flat addr space on-device (with a large non-consecutive gap between them).
-  4) Update the 'print' command to use this.
 
   --------
 

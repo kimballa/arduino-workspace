@@ -497,6 +497,8 @@ class Debugger(object):
         # (Based on new `arch_interface` setting in self._arch)
         arch.load_arch_interfaces()  # Trigger deferred imports of ArchInterface modules.
         self.arch_iface = arch.ArchInterface.make_arch_interface(self)
+        mem_map = self.arch_iface.memory_map()  # Initialize and validate memory map
+        self.verboseprint('Initialized memory map:\n', mem_map)
 
         # Clear cached architecture parameters in DWARFExprMachine
         import arduino_dbg.eval_location as el
@@ -1499,12 +1501,9 @@ class Debugger(object):
     def set_sram(self, addr, value, size=1):
         """
         Update data in SRAM on the instance.
-        """
-        if self._arch["DATA_ADDR_MASK"]:
-            # On AVR, ELF file thinks .data starts at 800000h; it actually starts at 0h, aliased
-            # with the separate segment containing .text in flash RAM.
-            addr = addr & self._arch["DATA_ADDR_MASK"]
 
+        addr is a physical address.
+        """
         if size is None or size < 1:
             self.msg_q(MsgLevel.WARN, f"Warning: cannot set memory poke size = {size}; using 1")
             size = 1
@@ -1514,12 +1513,9 @@ class Debugger(object):
     def get_sram(self, addr, size=1):
         """
         Return data from SRAM on the instance.
-        """
 
-        if self._arch["DATA_ADDR_MASK"]:
-            # On AVR, ELF file thinks .data starts at 800000h; it actually starts at 0h, aliased
-            # with the separate segment containing .text in flash RAM.
-            addr = addr & self._arch["DATA_ADDR_MASK"]
+        This function expects a physical address within the SRAM segment.
+        """
 
         if size is None or size < 1:
             self.msg_q(MsgLevel.WARN, f"Warning: cannot set memory fetch size = {size}; using 1")
@@ -1538,6 +1534,8 @@ class Debugger(object):
     def get_flash(self, addr, size=1):
         """
         Return data from Flash on the instance.
+
+        This function expects a physical address within the Flash segment.
         """
 
         result = self.send_cmd([protocol.DBG_OP_FLASHADDR, size, addr], Debugger.RESULT_ONELINE)

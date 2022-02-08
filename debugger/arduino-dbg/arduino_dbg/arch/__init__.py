@@ -54,6 +54,12 @@ class ArchInterface(object):
     def __repr__(self):
         return self.__class__.__name__
 
+    def memory_map(self):
+        """
+        Return the memory map for this device.
+        """
+        raise ArchNotSupportedError('No memory model defined for this architecture')
+
     def reg_word_mask(self):
         """
         Return a bitmask representing the width of one machine register.

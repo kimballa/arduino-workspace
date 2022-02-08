@@ -12,6 +12,7 @@ format_accessed_val(): a method to pretty-print a value retrieved by the Memory 
 import elftools.dwarf.dwarf_expr as dwarf_expr
 
 import arduino_dbg.debugger as dbg
+import arduino_dbg.memory_map as memory_map
 import arduino_dbg.types as types
 
 
@@ -281,8 +282,28 @@ class Memory(object):
             within an object, and the result word is retrieved from *(addrs + offset).
         @param expr_machine the invoking DWARFExprMachine, if any.
         """
+        # Check const addr flag to see if we should be segment-aware in our data retrieval.
+        const_addr = flags & LookupFlags.CONST_ADDR
+
         out = 0  # scalar result
         for (addr, piece_size) in addrs:
+            mem_fn = self.mem
+            if const_addr and isinstance(addr, int):
+                # We got a flat-address-space addr directly from compiler output.
+                # Translate that into the segment-aware memory space and
+                # choose the correct address to read and segment accessor function.
+                mmap = self._debugger.arch_iface.memory_map()
+                access = mmap.access_mechanism_for_addr(addr)
+                addr = mmap.logical_to_physical_addr(addr)  # Convert addr to in-segment addr.
+                if access == memory_map.ACCESS_TYPE_PGM:
+                    mem_fn = self.flash  # Use self.flash() to load const from .text
+                    flags |= LookupFlags.FLASH_ADDR
+                else:
+                    assert access == memory_map.ACCESS_TYPE_RAM
+                    # mem_fn already set to self.mem.
+                    # logical_to_physical_addr() will have e.g. stripped AVR 0x800000 .data prefix.
+                    pass
+
             if piece_size == DWARFExprMachine.ALL:
                 piece_size = size  # There is only one piece, and it is the caller-decl'd size
             elif offset != 0:
@@ -290,7 +311,7 @@ class Memory(object):
 
             if isinstance(addr, int):
                 assert piece_size > 0
-                out = (out << (8 * piece_size)) | self.mem(addr + offset, piece_size)
+                out = (out << (8 * piece_size)) | mem_fn(addr + offset, piece_size)
             if isinstance(addr, ImplicitPtr):
                 # Return the ImplicitPtr as the value (the "addr" in this pointer is just
                 # the fact that it's "implicit")
@@ -337,27 +358,27 @@ class Memory(object):
         """
         # Check const addr flag to see if we should be segment-aware in our data retrieval.
         const_addr = flags & LookupFlags.CONST_ADDR
-        arch = self._debugger.get_arch_conf('instruction_set')
 
         out = 0  # for scalar result
         new_shift = 0
         existing_mask = 0
         for (addr, piece_size) in addrs:
             mem_fn = self.mem
-            if const_addr and arch == "avr":
+            if const_addr and isinstance(addr, int):
                 # We got a flat-address-space addr directly from compiler output.
-                # Translate that into the AVR segment-aware memory space and
+                # Translate that into the segment-aware memory space and
                 # choose the correct address to read and segment accessor function.
-                # (nb this check is not needed in __access_big_endian since AVR is
-                # little endian-only.)
-
-                data_seg_mask = self._debugger.get_arch_conf("DATA_ADDR_MASK")
-                if isinstance(addr, int) and addr == addr & data_seg_mask:
-                    # It's a constant address and it's not in .data (i.e., it's in .text).
-                    mem_fn = self.flash  # Use self.flash() to load from .text
+                mmap = self._debugger.arch_iface.memory_map()
+                access = mmap.access_mechanism_for_addr(addr)
+                addr = mmap.logical_to_physical_addr(addr)  # Convert addr to in-segment addr.
+                if access == memory_map.ACCESS_TYPE_PGM:
+                    mem_fn = self.flash  # Use self.flash() to load const from .text
                     flags |= LookupFlags.FLASH_ADDR
-                elif isinstance(addr, int) and addr != addr & data_seg_mask:
-                    addr = addr & data_seg_mask  # remove 0x800000 .data prefix from addr.
+                else:
+                    assert access == memory_map.ACCESS_TYPE_RAM
+                    # mem_fn already set to self.mem.
+                    # logical_to_physical_addr() will have e.g. stripped AVR 0x800000 .data prefix.
+                    pass
 
             if piece_size == DWARFExprMachine.ALL:
                 piece_size = size  # There is only one piece, and it is the caller-decl'd size

@@ -7,6 +7,7 @@ AVR-specific architecture interface.
 import elftools.dwarf.callframe as callframe
 
 import arduino_dbg.arch as arch
+import arduino_dbg.memory_map as mmap
 from arduino_dbg.term import MsgLevel
 
 
@@ -19,6 +20,34 @@ class AVRArchInterface(arch.ArchInterface):
     def __init__(self, debugger):
         super().__init__(debugger)
         self.has_sph = debugger.get_arch_conf('has_sph')
+        self._mem_map = None
+
+    def memory_map(self):
+        if self._mem_map is not None:
+            return self._mem_map
+
+        self._mem_map = mmap.MemoryMap()
+        self._mem_map.add_segment(mmap.Segment('.text', mmap.MEM_FLASH, mmap.ACCESS_TYPE_PGM,
+                                               0x0, 0x0,
+                                               self.debugger.get_arch_conf('FLASHEND') + 1))
+
+        data_mask = self.debugger.get_arch_conf("DATA_ADDR_MASK")
+        logical_data_start = data_mask + 1
+        phys_ram_offset = self.debugger.get_arch_conf("RAMSTART")
+        phys_ram_size = self.debugger.get_arch_conf("RAMSIZE")
+
+        # Registers are memory-mapped in the same address space as .data / RAM (e.g. starting at
+        # logical address 0x800000 on ATMega32u4), running from physical addrs 0..0x100 (RAMSTART).
+        self._mem_map.add_segment(mmap.Segment('registers', mmap.MEM_OTHER, mmap.ACCESS_TYPE_RAM,
+                                               logical_data_start, 0x0, phys_ram_offset))
+        # Actual .data and .bss start at 0x800100 and run for RAMSIZE bytes up from there.
+        # The physical RAM addresses start just after the registers at 0x100 (RAMSTART).
+        self._mem_map.add_segment(mmap.Segment('.data', mmap.MEM_RAM, mmap.ACCESS_TYPE_RAM,
+                                               logical_data_start + phys_ram_offset,
+                                               phys_ram_offset, phys_ram_size))
+
+        self._mem_map.validate()
+        return self._mem_map
 
     def sp_width_bytes(self):
         # AVR: SP may be composed of 2 8-bit registers: SPH:SPL or if the particular
