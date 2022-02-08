@@ -765,22 +765,18 @@ class Repl(object):
         MAX_WIDTH = 65
 
         # Width of a hex-formatted register value for this arch: 2 chars per byte * word size
-        int_width = self._debugger.get_arch_conf("int_size") * 2
-        sp_width = int_width  # by default, format $SP like other register values.
-        sp_pad = 1
-
-        if self._debugger.get_arch_conf("instruction_set") == "avr":
-            if self._debugger.get_arch_conf("has_sph"):
-                sp_width = 4  # AVR-specific: AVR platforms with $SPH have $SP as short int-wide, not
-                              # char-width..
-                sp_pad = 0
+        int_width = self._debugger.arch_iface.reg_width_bytes() * 2
+        sp_width = self._debugger.arch_iface.sp_width_bytes() * 2  # [AVR] $SP may be extra-wide.
+        if sp_width > int_width:
+            sp_pad = ''  # Eliminate extra padding in column formatting.
+        else:
+            sp_pad = ' '
 
         cur_width = 0
         reg_strs = []
         for (reg, regval) in registers.items():
             if reg == "SP":
-                # On AVR, $SP (may) uniquely be a 16-bit register, requiring special padding.
-                this_reg = f"{reg.rjust(4)}: 0x{regval:0{sp_width}x} " + (sp_pad * ' ')
+                this_reg = f"{reg.rjust(4)}: 0x{regval:0{sp_width}x} {sp_pad}"
             else:
                 # normal register
                 this_reg = f"{reg.rjust(4)}: 0x{regval:0{int_width}x}  "

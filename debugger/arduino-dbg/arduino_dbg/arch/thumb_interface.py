@@ -19,9 +19,12 @@ class ArmThumbArchInterface(arch.ArchInterface):
         # Thumb is 32-bit machine word size.
         assert debugger.get_arch_conf('int_size') == 4
 
-    def true_pc(self, mem_pc):
+    def true_pc(self, reg_pc):
         # ARM: low-order bit of 32-bit $PC is the arm/thumb state; should be
         # held to zero for true instruction pointer address.
-        return mem_pc & ~0x1
+        return reg_pc & ~0x1
+
+    def mem_to_pc(self, mem_pc):
+        return self.true_pc(mem_pc)
 
 

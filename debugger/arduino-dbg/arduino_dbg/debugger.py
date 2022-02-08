@@ -1748,16 +1748,8 @@ class Debugger(object):
         return address pushed onto the stack, return the associated return address.
         """
         ret_addr_size = self._arch["ret_addr_size"]  # nr of bytes on stack for a return address.
-        ret_addr = 0
-        for i in range(0, ret_addr_size):
-            # Because AVR is a little-endian machine, it pushes the low-byte of the return
-            # address, then the high byte -- but since the stack grows downward, this means
-            # the high byte will actually be at the lower memory address (essentially making
-            # return addrs on the stack a single 'big endian' exception to the memory order).
-            v = self.get_sram(stack_addr + i, 1)
-            ret_addr = (ret_addr << 8) | (v & 0xFF)
-        ret_addr = ret_addr << 1  # AVR: LSH all PC values read from memory by 1.
-        return ret_addr
+        ret_addr = self.get_sram(stack_addr, ret_addr_size)
+        return self.arch_iface.mem_to_pc(ret_addr)
 
 
     def discover_current_breakpoint(self, sig):

@@ -8,7 +8,8 @@ import arduino_dbg.binutils as binutils
 from arduino_dbg.term import MsgLevel
 
 _debugger_methods = [
-  "__vector_17",     # timer interrupt
+  "__vector_17",     # AVR timer interrupt
+  "TC4_Handler",     # SAMD51 timer interrupt
   "__dbg_service",   # The debugger interactive service loop
 ]
 
@@ -116,9 +117,12 @@ class CallFrame(object):
         # Get the architecture-specific register mapping from the configuration.
         stack_unwind_registers = self._debugger.get_arch_conf('stack_unwind_registers')
         num_general_regs = self._debugger.get_arch_conf('general_regs')
-        has_sph = self._debugger.get_arch_conf('has_sph')
         push_word_len = self._debugger.get_arch_conf('push_word_len')  # width of one PUSHed word.
         ret_addr_size = self._debugger.get_arch_conf('ret_addr_size')  # width of return site addr on stack
+
+        reg_width = self._debugger.arch_iface.reg_width_bytes()
+        reg_word_mask = self._debugger.arch_iface.reg_word_mask()  # Bitmask for reg_width bytes.
+        sp_width = self._debugger.arch_iface.sp_width_bytes()  # on AVR, SP is wider than a gen reg.
 
         if not self.sym or not self.sym.frame_info:
             self._debugger.msg_q(MsgLevel.WARN,
@@ -129,10 +133,12 @@ class CallFrame(object):
         if pc is None:
             raise KeyError("No $PC value in input regs for to FrameInfo.unwind_registers()")
 
-        # If the method is an ISR that saves SREG in prologue, we need to
-        # monkeypatch the FDE to account for it, since gcc doesn't account for it when
-        # generating .debug_frames.
-        _patch_isr_debug_frames(self._debugger, self.sym, self.sym.frame_info, pc)
+        # In some cases (e.g., ISRs on AVR that save SREG in prologue), we need to
+        # monkeypatch the FDE to account for all the pushed data, since due to a bug
+        # gcc may not account for it when generating .debug_frames. Use arch-specific
+        # debug_frame patching method.
+        if not self.sym.isr_frame_ok:
+            self._debugger.arch_iface.patch_debug_frame(self.sym, self.sym.frame_info, pc)
 
         decoded_info = self.sym.frame_info.get_decoded()
         cfi_table = decoded_info.table
@@ -164,9 +170,11 @@ class CallFrame(object):
 
         cfa_base = regs_in[cfa_reg]  # Read the mapped register to get the baseline for CFA
 
-        if cfa_rule.reg < num_general_regs and has_sph:
-            # cfa_reg points to e.g. r28, but $SP is 16 bits wide. Also use the next register.
-            cfa_base = (regs_in[stack_unwind_registers[cfa_rule.reg + 1]] << 8) | (cfa_base & 0xFF)
+        if cfa_rule.reg < num_general_regs and sp_width > reg_width:
+            # cfa_reg points to e.g. r28, but $SP is wider than r28: also use the next register.
+            assert sp_width == 2 * reg_width
+            cfa_base = (regs_in[stack_unwind_registers[cfa_rule.reg + 1]] << (8 * reg_width)) | \
+                (cfa_base & reg_word_mask)
 
         cfa_addr = cfa_base + cfa_rule.offset   # We've established the call frame address.
                                                 # This is where SP would point if the entire
@@ -184,6 +192,8 @@ class CallFrame(object):
             rule = rule_row[reg_num]  # type is RegisterRule
             reg_name = stack_unwind_registers[reg_num]
 
+            # TODO(aaron): Is this $LR special-casing just for AVR? Should we assign to $PC
+            # on ARM, which *does* have a dedicated link register?
             if reg_name == 'LR' or reg_name == 'PC':
                 reg_name = 'PC'  # This return site will be assigned to PC after frame 'ret'.
                 reg_width = ret_addr_size
@@ -197,9 +207,7 @@ class CallFrame(object):
                 # the assigned register.
                 data = self._debugger.get_sram(cfa_addr + rule.arg, reg_width)
                 if reg_name == 'PC':
-                    # AVR: For $PC, swap the order of the two bytes retrieved, LSH the result by 1.
-                    # TODO Move this PC-from-stack cleanup into AVRArchInterface.
-                    data = (((data & 0xFF) << 8) | ((data >> 8) & 0xFF)) << 1
+                    data = self._debugger.arch_iface.mem_to_pc(data)
                 regs_out[reg_name] = data
                 self._debugger.verboseprint(
                     f'{reg_name}    <- LD({(cfa_addr + rule.arg):x}) (CFA+{rule.arg:x}) '
@@ -234,138 +242,13 @@ class CallFrame(object):
 
         regs_out['SP'] = cfa_addr  # As established earlier.
 
-        # TODO(aaron): gcc doesn't regard 'SREG' as unwindable; there won't be instructions on
-        # how to restore the prior version of it, if it was saved within the method. So the
+        # TODO(aaron): [AVR] gcc doesn't regard 'SREG' as unwindable; there won't be instructions
+        # on how to restore the prior version of it, if it was saved within the method. So the
         # regs_in.copy() will include the child frame's SREG as-is.
 
         self._unwound_registers = regs_out  # Cache for reuse if necessary.
         return regs_out
 
-
-def _patch_isr_debug_frames(debugger, sym, frame_info, pc):
-    # TODO(aaron): Move this entire AVR-specific method into AVRArchInterface
-
-
-    if sym.isr_frame_ok:
-        return  # Already handled / not an issue for this method.
-
-    sreg_save_sequence = debugger.get_arch_conf("GCC_ISR_SREG_SAVE_OPS")
-    if not sreg_save_sequence:
-        return  # Not an issue for this architecture.
-
-    fn_body = debugger.image_for_symbol(sym.name)
-    default_fetch_width = debugger.get_arch_conf("default_op_width")  # standard instruction decode size
-
-    fn_start_pc = sym.addr
-    fn_size = sym.size
-    fn_end_pc = fn_start_pc + fn_size
-
-    frame_table = frame_info.get_decoded().table
-    last_prologue_pc = frame_table[-1]['pc']
-
-    # Scan the prologue only, not the entire method.
-    last_scan_pc = min(last_prologue_pc, fn_end_pc)
-
-    patch_pc = None
-    for virt_pc in range(fn_start_pc, last_scan_pc, default_fetch_width):
-        sliding_window = fn_body[virt_pc - fn_start_pc: virt_pc - fn_start_pc + len(sreg_save_sequence)]
-        if sliding_window == sreg_save_sequence:
-            # We found the SREG save sequence.
-            patch_pc = virt_pc + len(sreg_save_sequence)
-            break
-
-    if patch_pc is None:
-        # No SREG save in prologue of this method.
-        sym.isr_frame_ok = True
-        return
-
-    # For all rows where row['pc'] >= patch_pc:
-    # - Adjust CFARule to have offset += 1
-    # - Any new OFFSET RegisterRule gets an offset -= 1
-    # - Any REGISTER RegisterRule is no-op.
-    # - Any other kind of RegRule we don't know how to adjust, and should fail.
-    #
-    # This is shallow-copied, so we shouldn't need to modify too many RegisterRules.
-    # But we want to adjust each CFARule exactly once. Keep a list of 'seen' objects
-    # and don't modify more than once
-    # TODO(aaron): what if it sets up a frame ptr in Y and shifts the CFARule?
-    debugger.verboseprint(
-        f"Adjusting frame table for PC >= {patch_pc:04x} in method {sym.name} due to $SREG save bug.")
-
-    seen_rules = {}  # Keep track of rules already visited
-
-    for row in frame_table:
-        row_pc = row['pc']
-        if row_pc >= patch_pc:
-            # $SP offsets created at / after this point are affected by SREG push
-            # and need a further offset.
-            for (reg, rule) in row.items():
-                if reg == 'pc':
-                    continue  # Not a real rule.
-                if seen_rules.get(rule) is not None:
-                    continue  # Rule already seen/adjusted.
-
-                if isinstance(rule, callframe.CFARule):
-                    if rule.offset is not None:
-                        # Add 1 to CFA offset because the register is below the CFA, and we
-                        # calculate the CFA relative to the register in question.
-                        rule.offset += 1
-                    elif rule.expr is not None:
-                        debugger.msg_q(
-                            MsgLevel.WARN,
-                            f"Warning: CFA Rule at PC {row_pc:04x} has DWARF expr; unsupported")
-                elif isinstance(rule, callframe.RegisterRule):
-                    if rule.type == callframe.RegisterRule.UNDEFINED:
-                        pass  # No modification needed.
-                    elif rule.type == callframe.RegisterRule.SAME_VALUE:
-                        pass  # No modification needed.
-                    elif rule.type == callframe.RegisterRule.OFFSET:
-                        # Adjust the offset by subtracting 1 for SREG's position on the stack.
-                        # We subtract here (vs add) because the data is below the CFA, and
-                        # we calculate this register's position relative to the CFA.
-                        rule.arg -= 1
-                    elif rule.type == callframe.RegisterRule.VAL_OFFSET:
-                        # Don't have an example of one of these, so I don't know if we need to
-                        # adjust, or in which direction.
-                        debugger.msg_q(
-                            MsgLevel.WARN,
-                            f"Warning: Got a VAL_OFFSET for reg {reg}; does it need an offset?!??")
-                    elif rule.type == callframe.RegisterRule.REGISTER:
-                        pass  # No modification needed.
-                    elif rule.type == callframe.RegisterRule.EXPRESSION:
-                        debugger.msg_q(
-                            MsgLevel.WARN,
-                            f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type EXPR')
-                    elif rule.type == callframe.RegisterRule.VAL_EXPRESSION:
-                        debugger.msg_q(
-                            MsgLevel.WARN,
-                            f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type VAL_EXPR')
-                    elif rule.type == callframe.RegisterRule.ARCHITECTURAL:
-                        debugger.msg_q(
-                            MsgLevel.WARN,
-                            f'Warning: Reg rule at PC {row_pc:04x}, reg {reg} is unsupported type ARCH')
-                    else:
-                        debugger.msg_q(
-                            MsgLevel.WARN,
-                            f'Warning: Do not know how to process reg rule type={rule.type}')
-                else:
-                    # No idea how to process this...
-                    debugger.msg_q(
-                        MsgLevel.WARN,
-                        f"Warning: Got rule for register {reg} of instance {rule.__class__}")
-
-                seen_rules[rule] = True  # Mark rule as seen so we don't double-process.
-        else:
-            # $SP offsets not yet affected by SREG push at this point in the prologue.
-            # Add all members of this row to the seen rule list so we preserve them as-is.
-            for (reg, rule) in row.items():
-                if reg == 'pc':
-                    continue  # Not a real rule.
-                seen_rules[rule] = True
-
-    # Now that the frame_table has been corrected, don't perform this procedure on this
-    # method again.
-    sym.isr_frame_ok = True
 
 
 def get_stack_autoskip_count(debugger):
@@ -388,6 +271,9 @@ def get_stack_autoskip_count(debugger):
     # All the debugger methods are on the stack. Last frame holds the key: its offset
     # from the current stack pointer /plus/ the frame size & retaddr
     last_frame = frames[len(_debugger_methods) - 1]
+    # TODO(aaron): Some architectures (ARM, Thumb...) require stack frame alignment padding
+    # greater than a single machine word. Do we need to account for that here? Or will that
+    # be taken care of in frame_size?
     return (last_frame['sp'] - sp) + last_frame['frame_size'] + ret_addr_size
 
 
