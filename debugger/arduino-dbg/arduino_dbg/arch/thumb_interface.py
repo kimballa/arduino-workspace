@@ -56,4 +56,9 @@ class ArmThumbArchInterface(arch.ArchInterface):
     def mem_to_pc(self, mem_pc):
         return self.true_pc(mem_pc)
 
+    def sym_addr_to_pc(self, sym_pc):
+        # Thumb methods will have the lsb of the starting $PC set to 1 but
+        # the actual address must be halfword aligned.
+        return self.true_pc(sym_pc)
+
 

@@ -110,6 +110,13 @@ class ArchInterface(object):
         """
         return mem_pc
 
+    def sym_addr_to_pc(self, sym_pc):
+        """
+        Given a $PC value as read from a .symtab entry (elf_sym.entry['st_value']) as the first
+        $PC within a given method, convert it to the actual starting address of the method.
+        """
+        return sym_pc
+
     def stack_frame_size(self, frame, regs_in):
         """
         Given a CallFrame with a program counter ($PC) somewhere within the body of the `frame.sym`

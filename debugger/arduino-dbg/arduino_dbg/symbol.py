@@ -14,10 +14,10 @@ class Symbol(object):
     as well as other internal cached data
     """
 
-    def __init__(self, elf_sym):
+    def __init__(self, elf_sym, start_addr):
         self.name = elf_sym.name
         self.size = elf_sym.entry['st_size']
-        self.addr = elf_sym.entry['st_value']
+        self.addr = start_addr
         self.demangled = binutils.demangle(self.name)
         self.elf_sym = elf_sym
         self.type_info = None  # The VariableInfo or MethodInfo associated with this symbol.

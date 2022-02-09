@@ -204,16 +204,26 @@ class CallFrame(object):
         regs_out = regs_in.copy()
 
         self._debugger.verboseprint('Input registers: ', regs_in)
+        self._debugger.verboseprint('Stack unwind registers: ', stack_unwind_registers)
+        self._debugger.verboseprint('cfi_register_order: ', cfi_register_order)
+        self._debugger.verboseprint('cfi table: ', cfi_table)
         self._debugger.verboseprint('Rule row: ', rule_row)
 
         regs_to_process = cfi_register_order.copy()
         regs_to_process.reverse()  # LIFO.
+        self._debugger.verboseprint('regs_to_process: ', regs_to_process)
         for reg_num in regs_to_process:
             reg_width = push_word_len
 
             self._debugger.verboseprint('Processing register number: ', reg_num)
 
-            rule = rule_row[reg_num]  # type is RegisterRule
+            try:
+                rule = rule_row[reg_num]  # type is RegisterRule
+            except KeyError:
+                # We do not have a rule to process this register. Assume it's unchanged
+                # from prior value. (gcc for arm7/thumb seems to omit no-op rules to save space?)
+                continue
+
             self._debugger.verboseprint('Rule: ', rule)
             reg_name = stack_unwind_registers[reg_num]
             self._debugger.verboseprint('Reg name: ', reg_name)

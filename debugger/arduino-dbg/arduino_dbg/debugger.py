@@ -744,7 +744,7 @@ class Debugger(object):
                 sym_type = sym.entry['st_info']['type']
                 if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
                     # This has a location worth memorizing
-                    dbg_sym = Symbol(sym)
+                    dbg_sym = Symbol(sym, self.arch_iface.sym_addr_to_pc(sym.entry['st_value']))
                     self._addr_to_symbol[dbg_sym.addr] = dbg_sym
                     self._symbols[dbg_sym.name] = dbg_sym
                     self._demangled_to_symbol[dbg_sym.demangled] = dbg_sym
@@ -764,6 +764,9 @@ class Debugger(object):
                 for cfi_e in self._dwarf_info.CFI_entries():
                     if isinstance(cfi_e, CIE):
                         # This is the Common Information Entry (CIE). Save with the debugger.
+                        # TODO: What if there are multiple CIEs? (gcc-arm-eabi-none seems to
+                        # generate several CIEs, but they're all identical... but that doesn't
+                        # need to be the case.)
                         self._frame_cie = cfi_e
                         continue
 
@@ -772,6 +775,7 @@ class Debugger(object):
                     frame_sym = self.function_sym_by_pc(cfi_e.header['initial_location'])
                     if frame_sym:
                         frame_sym.setFrameInfo(cfi_e)
+                        self.verboseprint("Binding CFI: ", frame_sym, "\n--to--\n", cfi_e.header)
                         # self.verboseprint(f"Bound CFI to method {frame_sym.name}.")
                     else:
                         # We have a CFI that claims to start at this $PC, but no method

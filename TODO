@@ -16,6 +16,25 @@ On-device service capabilities:
 
 Client:
   * Get `backtrace` fn working 
+    * CFA common block notes 'return addr column: 14' -- r14 is LR and holds ret val. Do we process
+      correctly?
+      -- note that ArchInterface.stack_frame_size() currently subtracts `ret_addr_size` from 
+         the CFA because we want the 'pre-return' point to adjust to so we can then do an sram read
+         of the ret addr. But we shouldn't assume ret_addr is pushed on frame entry. ARM doesn't;
+         we need an arch-specific way of getting the ret addr. (Or, just read the CIE block more
+         carefully.)
+      -- Make the ret_addr_size subtraction an AVR-specific thing
+         (Or, adjust our definition of 'frame size' to also include the ret addr bytes and AVR
+         should adjust down from there?)
+      -- don't just blindly read the next few bytes of sram up from the CFA as the ret addr; either
+         handle this in the unwind_registers properly, or add an ArchInterface method to get the
+         return address after the debug_frame instructions / method epilogue has unwound the stack.
+    * (OK) It also looks like __dbg_service has the cfi_e for TC4_Handler. what's up?
+      * (OK) __dbg_service starts at 43b0h but the sym has it at 43b1h. Which isn't a valid addr; $PC
+        needs to be halfword-aligned. But the thumb-state-bit = 1 so the PC reg will show 43b1h 
+        even if the actual memory addr is 43b0h. For ARM/Thumb, we need to cleanse the symtab $PC
+        values.
+
   * Verify `empty.elf` CFA records are actually useful?
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.

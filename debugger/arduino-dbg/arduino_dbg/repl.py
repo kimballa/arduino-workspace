@@ -1837,6 +1837,8 @@ class Repl(object):
             # Error interrupting the sketch to send command.
             term.write(f"Error running '{pretty_cmd}': {str(e)}", term.ERR)
         except Exception as e:
+            if e.__class__ != Exception:
+                term.write(f"Got exception of type {e.__class__.__name__}", term.ERR)
             term.write(f"Error running '{pretty_cmd}': {e}", term.ERR)
             if self._debugger.get_conf("dbg.verbose"):
                 traceback.print_tb(e.__traceback__)
