@@ -15,7 +15,7 @@ On-device service capabilities:
 
 
 Client:
-  * Get `backtrace` fn working (Need CFA-sensitive stack_frame_size_for_prologue() in ArmThumbAI)
+  * Get `backtrace` fn working 
   * Verify `empty.elf` CFA records are actually useful?
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.

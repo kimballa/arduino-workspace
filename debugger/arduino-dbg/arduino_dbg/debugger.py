@@ -1635,7 +1635,7 @@ class Debugger(object):
         if self._cached_frames:
             if self._frame_cache_complete:
                 # We've traced all the backtrace there is, just return it.
-                return self._cached_frames
+                return self._cached_frames[0:limit]
             elif limit is not None and len(self._cached_frames) >= limit:
                 # We already have a backtrace cache long enough to accommodate this request
                 return self._cached_frames[0:limit]

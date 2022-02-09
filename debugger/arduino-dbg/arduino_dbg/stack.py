@@ -47,7 +47,6 @@ class CallFrame(object):
         # be within more methods.
         self.inline_chain = debugger.get_debug_info().getMethodsForPC(addr)
 
-        self.frame_size = self._calculate_stack_frame_size()
         self._calculate_source_line(debugger.elf_name)
         self._demangle()
 
@@ -59,6 +58,7 @@ class CallFrame(object):
             # registers (reg snapshot in this method's caller at its resume $PC).
             self.unwind_registers(regs_in)
 
+        self.frame_size = self._calculate_stack_frame_size(regs_in)
 
 
     def __repr__(self):
@@ -90,10 +90,12 @@ class CallFrame(object):
         """
         self.source_line = binutils.pc_to_source_line(elf_name, self.addr)
 
-    def _calculate_stack_frame_size(self):
+    def _calculate_stack_frame_size(self, regs_in):
         """
-        Given a program counter ($PC) somewhere within the body of `method_sym`, determine
-        the size of the current stack frame at that point and return it.
+        Given a program counter ($PC, held in self.addr) somewhere within the body of `self.sym`,
+        determine the size of the current stack frame at that point and return it.
+
+        `regs_in` holds the register snapshot at the current $PC.
         """
         if self.sym is None:
             self._debugger.msg_q(
@@ -101,7 +103,7 @@ class CallFrame(object):
                 "Error: No function symbol for method; method frame size = ???")
             self.frame_size = None
         else:
-            self.frame_size = self._debugger.arch_iface.stack_frame_size(self.addr, self.sym)
+            self.frame_size = self._debugger.arch_iface.stack_frame_size(self, regs_in)
 
         return self.frame_size
 
@@ -173,7 +175,7 @@ class CallFrame(object):
             # Just use the rule from the CIE, which declares the return value position.
             rule_row = self._debugger.get_frame_cie().get_decoded().table[-1]
 
-        # The dict in 'best_row' now contains the current unwind info for the frame.
+        # The dict in 'rule_row' now contains the current unwind info for the frame.
         row_pc = rule_row['pc']
         self._debugger.verboseprint(f"In method {self.sym.demangled} at PC {pc:04x}, use rowPC {row_pc:04x}")
 
@@ -201,13 +203,20 @@ class CallFrame(object):
 
         regs_out = regs_in.copy()
 
+        self._debugger.verboseprint('Input registers: ', regs_in)
+        self._debugger.verboseprint('Rule row: ', rule_row)
+
         regs_to_process = cfi_register_order.copy()
         regs_to_process.reverse()  # LIFO.
         for reg_num in regs_to_process:
             reg_width = push_word_len
 
+            self._debugger.verboseprint('Processing register number: ', reg_num)
+
             rule = rule_row[reg_num]  # type is RegisterRule
+            self._debugger.verboseprint('Rule: ', rule)
             reg_name = stack_unwind_registers[reg_num]
+            self._debugger.verboseprint('Reg name: ', reg_name)
 
             # TODO(aaron): Is this $LR special-casing just for AVR? Should we assign to $PC
             # on ARM, which *does* have a dedicated link register?
@@ -277,20 +286,13 @@ def get_stack_autoskip_count(debugger):
     regs = debugger.get_registers()
     sp = regs["SP"]
 
-    ret_addr_size = debugger.get_arch_conf("ret_addr_size")
-
     frames = debugger.get_backtrace(limit=len(_debugger_methods))
     for frame in frames:
         if frame['name'] not in _debugger_methods:
             # This frame is not part of the debugger service, it's a real frame.
             return frame['sp'] - sp  # Skip count == diff between this frame's SP and real SP
 
-    # All the debugger methods are on the stack. Last frame holds the key: its offset
-    # from the current stack pointer /plus/ the frame size & retaddr
-    last_frame = frames[len(_debugger_methods) - 1]
-    # TODO(aaron): Some architectures (ARM, Thumb...) require stack frame alignment padding
-    # greater than a single machine word. Do we need to account for that here? Or will that
-    # be taken care of in frame_size?
-    return (last_frame['sp'] - sp) + last_frame['frame_size'] + ret_addr_size
-
-
+    # The _debugger_methods list contains methods that are mutually exclusive;
+    # only a subset will ever be appropriate for a given architecture. We shouldn't get
+    # here, because it implies the debugger's stack frames are the entire stack; not possible.
+    raise RuntimeError("No viable stack frame found")

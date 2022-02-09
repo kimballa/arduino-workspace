@@ -70,9 +70,14 @@ class AVRArchInterface(arch.ArchInterface):
         # as per true_pc().
         return (((mem_pc & 0xFF) << 8) | ((mem_pc >> 8) & 0xFF)) << 1
 
-    def stack_frame_size(self, pc, method_sym):
-        # Use prologue analysis to identify the size of the stack frame.
-        return self.stack_frame_size_for_prologue(pc, method_sym)
+    def stack_frame_size(self, frame, regs_in):
+        # Try to use CFI record to deduce stack frame size
+        size_by_cfi = self.stack_frame_size_by_cfi(frame, regs_in)
+        if size_by_cfi is not None:
+            return size_by_cfi  # Found it!
+
+        # No CFI? Fallback: use prologue analysis to identify the size of the stack frame.
+        return self.stack_frame_size_for_prologue(frame.addr, frame.sym)
 
     def stack_frame_size_for_prologue(self, pc, method_sym):
         """
@@ -80,7 +85,7 @@ class AVRArchInterface(arch.ArchInterface):
         the size of the current stack frame at that point and return it.
 
         i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
-        filled by the method (x+1..x+4) and the (2 byte AVR) return address is at
+        filled by the method (x+1..x+4) and the (e.g., 2 bytes for AVR) return address is at
         x+5..x+6.
 
         This method uses prologue analysis to determine the size of the stack frame: by

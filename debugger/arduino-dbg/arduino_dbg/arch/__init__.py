@@ -110,10 +110,10 @@ class ArchInterface(object):
         """
         return mem_pc
 
-    def stack_frame_size(self, pc, method_sym):
+    def stack_frame_size(self, frame, regs_in):
         """
-        Given a program counter ($PC) somewhere within the body of `method_sym`, determine
-        the size of the current stack frame at that point and return it.
+        Given a CallFrame with a program counter ($PC) somewhere within the body of the `frame.sym`
+        method, determine the size of the current stack frame at that point and return it.
 
         i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
         filled by the method (x+1..x+4) and the return address is just below that on the stack
@@ -125,8 +125,34 @@ class ArchInterface(object):
 
         This returns the size of the stack frame for the current method at a particular
         intra-method program point identified by $PC.
+
+        @param frame -- The CallFrame to analyze.
+        @param regs_in -- The register snapshot at $PC.
         """
+
+        size_by_cfi = self.stack_frame_size_by_cfi(frame, regs_in)
+        if size_by_cfi is not None:
+            return size_by_cfi  # Found it!
+
+        # We don't have any other mechanism to deduce this value.
         raise ArchNotSupportedError()
+
+    def stack_frame_size_by_cfi(self, frame, regs_in):
+        """
+        If we have the current register snapshot (regs_in) and a CallFrame with a CFI record,
+        we can unwind the registers in an architecture-neutral fashion and compare the value
+        of $SP before and after unwinding.
+
+        Returns the stack frame size in bytes if this can be deduced from CFI records,
+        otherwise returns None.
+        """
+        # Try using arch-neutral call-frame analysis
+        regs_out = frame.unwind_registers(regs_in)
+        if regs_out is not None and regs_in is not None and 'SP' in regs_out and 'SP' in regs_in:
+            return (abs(regs_out['SP'] - regs_in['SP']) -
+                    self.debugger.get_arch_conf('ret_addr_size'))
+
+        return None
 
 
     def patch_debug_frame(self, sym, frame_info, pc):
