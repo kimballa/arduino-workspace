@@ -13,8 +13,14 @@ __arch_interfaces_loaded = False
 
 def iface(cls):
     """
-    Decorator that adds an ArchInterface class to the set that can be spawned based on the selected
-    arch_conf.
+    Decorator for ArchInterface subclasses that adds the subclass to the set that can be spawned
+    based on the selected arch_conf.
+
+    e.g.:
+
+    @iface
+    class MyArchInterface(ArchInterface):
+        pass
     """
     ARCH_INTERFACES[cls.__name__] = cls
     return cls
@@ -104,7 +110,22 @@ class ArchInterface(object):
         """
         return mem_pc
 
-    def stack_frame_size_for_prologue(self, pc, method_sym):
+    def stack_frame_size(self, pc, method_sym):
+        """
+        Given a program counter ($PC) somewhere within the body of `method_sym`, determine
+        the size of the current stack frame at that point and return it.
+
+        i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
+        filled by the method (x+1..x+4) and the return address is just below that on the stack
+        (e.g., starting at x+5, in a descending stack).
+
+        ArchInterface implementations may use one or more methods to determine stack frame
+        size, such as frame pointer examination (where frame pointers are mandated by ABI),
+        CFA record lookup, or prologue analysis.
+
+        This returns the size of the stack frame for the current method at a particular
+        intra-method program point identified by $PC.
+        """
         raise ArchNotSupportedError()
 
 

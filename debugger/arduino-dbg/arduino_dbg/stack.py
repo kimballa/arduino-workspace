@@ -20,7 +20,7 @@ class CallFrame(object):
     method.
     """
 
-    def __init__(self, debugger, addr, sp):
+    def __init__(self, debugger, addr, sp, regs_in=None):
         self._debugger = debugger
 
         self.addr = addr  # $PC
@@ -51,8 +51,15 @@ class CallFrame(object):
         self._calculate_source_line(debugger.elf_name)
         self._demangle()
 
-        self._unwound_registers = None  # Cached map of register values pre-call (unwound)
-        self._cfa = None                # Cached canonical frame address
+        self.unwound_registers = None   # Cached map of register values pre-call (unwound)
+        self.cfa = None                 # Cached canonical frame address
+
+        if regs_in is not None:
+            # If register snapshot is available at the point $PC, calculate unwound
+            # registers (reg snapshot in this method's caller at its resume $PC).
+            self.unwind_registers(regs_in)
+
+
 
     def __repr__(self):
         out = f"{self.addr:04x}: {self.demangled}"
@@ -84,19 +91,29 @@ class CallFrame(object):
         self.source_line = binutils.pc_to_source_line(elf_name, self.addr)
 
     def _calculate_stack_frame_size(self):
-        # TODO(aaron): Does self.sym have stack frame info attached we can use w/o going fishing?
-        self.frame_size = stack_frame_size_for_method(self._debugger, self.addr, self.sym)
+        """
+        Given a program counter ($PC) somewhere within the body of `method_sym`, determine
+        the size of the current stack frame at that point and return it.
+        """
+        if self.sym is None:
+            self._debugger.msg_q(
+                MsgLevel.ERR,
+                "Error: No function symbol for method; method frame size = ???")
+            self.frame_size = None
+        else:
+            self.frame_size = self._debugger.arch_iface.stack_frame_size(self.addr, self.sym)
+
         return self.frame_size
 
     def get_cfa(self, regs_in):
         """
         Return the canonical frame address as calculated through the .debug_frame instructions.
         """
-        if self._cfa is not None:
-            return self._cfa
+        if self.cfa is not None:
+            return self.cfa
 
         self.unwind_registers(regs_in)  # CFA calculated thru unwind process.
-        return self._cfa  # As saved by unwind_registers().
+        return self.cfa  # As saved by unwind_registers().
 
     def unwind_registers(self, regs_in):
         """
@@ -110,9 +127,9 @@ class CallFrame(object):
         The return value is a 'regs' dict with the same format & keys, with register
         values as seen by the calling method at that point.
         """
-        if self._unwound_registers is not None:
+        if self.unwound_registers is not None:
             # We've already cached this value; return immediately.
-            return self._unwound_registers
+            return self.unwound_registers
 
         # Get the architecture-specific register mapping from the configuration.
         stack_unwind_registers = self._debugger.get_arch_conf('stack_unwind_registers')
@@ -180,7 +197,7 @@ class CallFrame(object):
                                                 # This is where SP would point if the entire
                                                 # frame went away via the epilogue + 'ret'.
         self._debugger.verboseprint(f'Canonical frame addr (CFA) = {cfa_addr:04x}')
-        self._cfa = cfa_addr  # Cache this for later.
+        self.cfa = cfa_addr  # Cache this for later.
 
         regs_out = regs_in.copy()
 
@@ -246,7 +263,7 @@ class CallFrame(object):
         # on how to restore the prior version of it, if it was saved within the method. So the
         # regs_in.copy() will include the child frame's SREG as-is.
 
-        self._unwound_registers = regs_out  # Cache for reuse if necessary.
+        self.unwound_registers = regs_out  # Cache for reuse if necessary.
         return regs_out
 
 
@@ -275,43 +292,5 @@ def get_stack_autoskip_count(debugger):
     # greater than a single machine word. Do we need to account for that here? Or will that
     # be taken care of in frame_size?
     return (last_frame['sp'] - sp) + last_frame['frame_size'] + ret_addr_size
-
-
-def stack_frame_size_for_method(debugger, pc, method_sym):
-    """
-    Given a program counter ($PC) somewhere within the body of `method_sym`, determine
-    the size of the current stack frame at that point and return it.
-
-    i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
-    filled by the method (x+1..x+4) and the return address is just below that on the stack
-    (e.g., starting at x+5, in a descending stack).
-
-    This method uses prologue analysis to determine the size of the stack frame: by
-    analyzing the disassembly of the method containing the indicated $PC, we establish
-    the size of the stack frame in question.
-
-    TODO(aaron): For architectures with a frame pointer (e.g. the ARM ABI), use frame
-    pointer walking.
-
-    TODO(aaron): When .debug_frame is available, implement CFA record analysis-based
-    approach.
-    """
-
-    if method_sym is None:
-        debugger.msg_q(
-            MsgLevel.ERR,
-            "Error: No function symbol for method; method frame size = ???")
-        return None
-
-    return debugger.arch_iface.stack_frame_size_for_prologue(pc, method_sym)
-
-
-def stack_frame_size_by_pc(debugger, pc):
-    """
-    Given a program counter (PC), determine what method we're in and return the size
-    of the stack frame.
-    """
-    method = debugger.function_sym_by_pc(pc)
-    return stack_frame_size_for_method(debugger, pc, method)
 
 

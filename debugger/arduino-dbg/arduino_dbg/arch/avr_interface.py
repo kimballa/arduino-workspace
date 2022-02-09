@@ -70,6 +70,10 @@ class AVRArchInterface(arch.ArchInterface):
         # as per true_pc().
         return (((mem_pc & 0xFF) << 8) | ((mem_pc >> 8) & 0xFF)) << 1
 
+    def stack_frame_size(self, pc, method_sym):
+        # Use prologue analysis to identify the size of the stack frame.
+        return self.stack_frame_size_for_prologue(pc, method_sym)
+
     def stack_frame_size_for_prologue(self, pc, method_sym):
         """
         Given a program counter ($PC) somewhere within the body of `method_sym`, determine

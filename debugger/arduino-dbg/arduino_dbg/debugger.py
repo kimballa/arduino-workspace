@@ -1654,13 +1654,16 @@ class Debugger(object):
             sp = regs["SP"]
 
             frames = []
-            frame = stack.CallFrame(self, pc, sp)
+            frame = stack.CallFrame(self, pc, sp, regs)
             frames.append(frame)
         else:
             # We have some backtrace already available.
             frames = self._cached_frames
             frame = frames[-1]
 
+            # We can pass None to frame.unwind_registers() b/c its output should be cached.
+            regs = None
+            assert frame.unwound_registers is not None  # Should be cached.
             pc = frame.addr
             sp = frame.sp
 
@@ -1668,6 +1671,7 @@ class Debugger(object):
         # to where we are, up to either the limits of traceability, the top of the stack,
         # or the user-requested limit..
         while sp < ramend and pc != 0 and (limit is None or len(frames) < limit):
+            regs = frame.unwind_registers(regs)
             if frame.name is None:
                 self._frame_cache_complete = True
                 break  # We've hit the limit of traceable methods
@@ -1686,7 +1690,10 @@ class Debugger(object):
             if sp >= ramend or pc == 0:
                 break  # Not at a place valid to record as a frame.
 
-            frame = stack.CallFrame(self, pc, sp)
+            assert regs['PC'] == pc
+            assert regs['SP'] == sp
+
+            frame = stack.CallFrame(self, pc, sp, regs)
             frames.append(frame)
 
         self._cached_frames = frames  # Cache this backtrace for further lookups.
@@ -1712,6 +1719,9 @@ class Debugger(object):
         if len(frames) <= frame_num:
             # Cannot find a frame that deep in the backtrace.
             return None
+        elif frame_num > 0 and frames[frame_num - 1].unwound_registers is not None:
+            # The answer we're looking for is cached. Skip the calculations below.
+            return frames[frame_num - 1].unwound_registers
 
         # start with the current regs.
         regs = self.get_registers()

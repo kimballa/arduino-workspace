@@ -15,14 +15,15 @@ On-device service capabilities:
 
 
 Client:
+  * Get `backtrace` fn working (Need CFA-sensitive stack_frame_size_for_prologue() in ArmThumbAI)
+  * Verify `empty.elf` CFA records are actually useful?
+
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
     a conflict. We need to either retain only fully-canonicalized names ('typ.name') OR only
     retain nesting-level-0 names at the CUNS name level. See comment at types.py, line 222.
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
-  * Verify `empty.elf` CFA records are actually useful?
-  * Get `backtrace` fn working (Expects AVR prolog_opcodes list in stack.py)
 
 
   --------
