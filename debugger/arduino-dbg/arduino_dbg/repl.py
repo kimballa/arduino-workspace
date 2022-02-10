@@ -1112,7 +1112,7 @@ class Repl(object):
 
         sp = frame.sp
         frame_size = frame.frame_size
-        if frame_size < 0:
+        if frame_size is None or frame_size < 0:
             frame_size = 16
             self._debugger.msg_q(
                 MsgLevel.WARN,
@@ -1122,7 +1122,7 @@ class Repl(object):
             MsgLevel.INFO,
             f'Frame {frame_num} at PC {frame.addr:#04x} in method {frame.demangled}')
 
-        ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size + 1)
+        ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size - 1)
         ret_fn_sym = self._debugger.function_sym_by_pc(ret_addr)
         if ret_fn_sym:
             ret_fn = ret_fn_sym.demangled or ret_fn_sym.name

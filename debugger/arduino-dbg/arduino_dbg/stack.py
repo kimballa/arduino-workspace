@@ -27,7 +27,7 @@ class CallFrame(object):
         self.sp = sp
         self.name = None
         self.demangled = '???'
-        self.frame_size = -1
+        self.frame_size = None
         self.source_line = None
         self.inline_chain = []
         self.demangled_inline_chain = []
@@ -56,9 +56,9 @@ class CallFrame(object):
         if regs_in is not None:
             # If register snapshot is available at the point $PC, calculate unwound
             # registers (reg snapshot in this method's caller at its resume $PC).
-            self.unwind_registers(regs_in)
+            self.unwind_registers(regs_in)  # Set self.unwound_registers.
 
-        self.frame_size = self._calculate_stack_frame_size(regs_in)
+        self._calculate_stack_frame_size(regs_in)  # Set self.frame_size.
 
 
     def __repr__(self):

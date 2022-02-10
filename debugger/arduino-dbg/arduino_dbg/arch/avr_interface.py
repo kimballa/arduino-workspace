@@ -84,9 +84,9 @@ class AVRArchInterface(arch.ArchInterface):
         Given a program counter ($PC) somewhere within the body of `method_sym`, determine
         the size of the current stack frame at that point and return it.
 
-        i.e., if SP is 'x' and this method returns 4, then 4 bytes of stack RAM have been
-        filled by the method (x+1..x+4) and the (e.g., 2 bytes for AVR) return address is at
-        x+5..x+6.
+        i.e., if SP is 'x' and this method returns 6, then 6 bytes of stack RAM have been
+        filled by the method body (x+1..x+4) along with the (e.g., 2 bytes for AVR) return
+        address is at x+5..x+6.
 
         This method uses prologue analysis to determine the size of the stack frame: by
         analyzing the disassembly of the method containing the indicated $PC, we establish
@@ -134,7 +134,9 @@ class AVRArchInterface(arch.ArchInterface):
         # we can't just safely read linearly. If we do need to debug methods with this kind of
         # operation, we need to be able to rely on an explicit frame pointer we can identify
         # in the prologue.
-        depth = 0
+
+        # At minimum, we've got a ret addr pushed on entry. Start with that.
+        depth = debugger.get_arch_conf("ret_addr_size")
         virt_pc = fn_start_pc
 
         # State machine to detect IN SPL/SPH -> SBIW/SUBI -> OUT SPL/SPH instruction sequence pattern

@@ -156,8 +156,7 @@ class ArchInterface(object):
         # Try using arch-neutral call-frame analysis
         regs_out = frame.unwind_registers(regs_in)
         if regs_out is not None and regs_in is not None and 'SP' in regs_out and 'SP' in regs_in:
-            return (abs(regs_out['SP'] - regs_in['SP']) -
-                    self.debugger.get_arch_conf('ret_addr_size'))
+            return abs(regs_out['SP'] - regs_in['SP'])
 
         return None
 

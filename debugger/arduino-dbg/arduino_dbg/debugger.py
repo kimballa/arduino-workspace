@@ -1685,10 +1685,9 @@ class Debugger(object):
 
             sp += frame.frame_size  # move past the stack frame
 
-            # next 'ret_addr_size' bytes are the return address consumed by RET opcode.
-            # pop the bytes off 1-by-1 and consume them as the ret_addr (PC in next fn)
-            pc = self.get_return_addr_from_stack(sp + 1)
-            sp += ret_addr_size
+            # top two 'ret_addr_size' bytes are the return address consumed by RET opcode.
+            # read the last 2 popped bytes 1-by-1 and consume them as the ret_addr (PC in next fn)
+            pc = self.get_return_addr_from_stack(sp - 1)
             self.verboseprint(f"returning to pc {pc:04x}, sp {sp:04x}")
 
             if sp >= ramend or pc == 0:

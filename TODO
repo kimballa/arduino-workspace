@@ -23,7 +23,15 @@ Client:
          of the ret addr. But we shouldn't assume ret_addr is pushed on frame entry. ARM doesn't;
          we need an arch-specific way of getting the ret addr. (Or, just read the CIE block more
          carefully.)
-      -- Make the ret_addr_size subtraction an AVR-specific thing
+
+         see debugger.py:1690 `pc = self.get_return_addr_from_stack(sp + 1)`
+         Just use the values directly in unwound 'regs' dict.
+         - Keep 'manual' PC and SP assignment as a fallback in case regs is None (i.e., we
+           calculate frame.frame_size via prologue analysis b/c there was no CFI). 
+
+         nb that Repl._frame() also uses get_return_addr_from_stack().
+
+      -- (OK) Make the ret_addr_size subtraction an AVR-specific thing
          (Or, adjust our definition of 'frame size' to also include the ret addr bytes and AVR
          should adjust down from there?)
       -- don't just blindly read the next few bytes of sram up from the CFA as the ret addr; either
@@ -36,6 +44,7 @@ Client:
         values.
 
   * Verify `empty.elf` CFA records are actually useful?
+  * Verify `frame <n>` command uses proper push-word width on stack displays.
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
