@@ -34,6 +34,7 @@ class CallFrame(object):
         self.demangled_inline_chain = []
         self.sym = None
 
+        self.break_registers = regs_in  # Cached map of register values at breakpoint in backtrace.
         self.unwound_registers = None   # Cached map of register values pre-call (unwound)
         self.cfa = None                 # Cached canonical frame address
 
@@ -125,7 +126,8 @@ class CallFrame(object):
         immediately after this function/frame's return.
 
         The input to this method is a 'regs' dict from register names to values, as seen
-        within this method at its active PC.
+        within this method at its active PC. If this is None, then the 'break_registers'
+        field set in the constructor is used instead.
 
         The return value is a 'regs' dict with the same format & keys, with register
         values as seen by the calling method at that point.
@@ -133,6 +135,9 @@ class CallFrame(object):
         if self.unwound_registers is not None:
             # We've already cached this value; return immediately.
             return self.unwound_registers
+
+        if regs_in is None:
+            regs_in = self.break_registers  # live register set already provided in c'tor.
 
         # Get the architecture-specific register mapping from the configuration.
         abi_real_link_register = self._debugger.get_arch_conf('abi_uses_link_register')
@@ -337,6 +342,9 @@ class CallFrame(object):
         # on how to restore the prior version of it, if it was saved within the method. So the
         # regs_in.copy() will include the child frame's SREG as-is.
 
+        # Perform any final arch-specific postprocessing on register unwind operation.
+        self._debugger.arch_iface.finish_register_unwind(regs_out)
+
         self.unwound_registers = regs_out  # Cache for reuse if necessary.
         return regs_out
 
@@ -351,13 +359,16 @@ def get_stack_autoskip_count(debugger):
     regs = debugger.get_registers()
     sp = regs["SP"]
 
-    frames = debugger.get_backtrace(limit=len(_debugger_methods))
+    frames = debugger.get_backtrace(limit=len(_debugger_methods) + 1)
     for frame in frames:
-        if frame['name'] not in _debugger_methods:
+        if frame.name not in _debugger_methods:
             # This frame is not part of the debugger service, it's a real frame.
-            return frame['sp'] - sp  # Skip count == diff between this frame's SP and real SP
+            # Skip count == diff between this frame's SP and real SP
+            return frame.break_registers['SP'] - sp
 
     # The _debugger_methods list contains methods that are mutually exclusive;
     # only a subset will ever be appropriate for a given architecture. We shouldn't get
     # here, because it implies the debugger's stack frames are the entire stack; not possible.
     raise RuntimeError("No viable stack frame found")
+
+

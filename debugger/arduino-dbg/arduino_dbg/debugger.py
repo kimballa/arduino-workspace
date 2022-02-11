@@ -775,13 +775,14 @@ class Debugger(object):
                     frame_sym = self.function_sym_by_pc(cfi_e.header['initial_location'])
                     if frame_sym:
                         frame_sym.setFrameInfo(cfi_e)
-                        self.verboseprint("Binding CFI: ", frame_sym, "\n--to--\n", cfi_e.header)
+                        # self.verboseprint("Binding CFI: ", frame_sym, "\n--to--\n", cfi_e.header)
                         # self.verboseprint(f"Bound CFI to method {frame_sym.name}.")
                     else:
                         # We have a CFI that claims to start at this $PC, but no method
                         # claims this address.
                         missing_pc = cfi_e.header['initial_location']
-                        self.msg_q(MsgLevel.WARN, f"Warning: No method for CFI @ $PC={missing_pc:04x}")
+                        if missing_pc is not None and missing_pc != 0:
+                            self.msg_q(MsgLevel.WARN, f"Warning: No method for CFI @ $PC={missing_pc:04x}")
 
                     # for row in cfi_e.get_decoded().table:
                     #     row2 = row.copy()
@@ -1567,33 +1568,52 @@ class Debugger(object):
         """
         self.send_cmd([protocol.DBG_OP_SET_FLAG, bit_num, flags_addr, int(val)], Debugger.RESULT_SILENT)
 
-    def get_stack_snapshot(self, size=16, skip=-1):
+    def get_stack_snapshot(self, count=16, skip=-1):
         """
-        Retrieve the `size` bytes above SP+k (but not past RAMEND),
+        Retrieve the `count` words above SP+k (but not past RAMEND),
         where `k` is the number of bytes to skip.
 
         If `skip` >= 0, k = skip.
         If `skip` == -1, then "auto-skip" the debugger-specific frames.
 
-        @return ($SP, $SP + k + 1, snapshot_array). snapshot_array[0] holds the byte at $SP + 1;
-        subsequent entries hold mem at addresses through $SP + size. i.e., the "top of the
+        @return ($SP, $TOP, snapshot_array). snapshot_array[0] holds the word at $SP for
+        a full-descending stack, $SP + 1 for an empty-descending stack;
+        subsequent entries hold mem at addresses through $SP + count*word_len. i.e., the "top of the
         stack" is in array[0] and the bottom of the stack (highest physical addr) at array[n].
+        The top-of-stack addr '$TOP' is given by $SP + k (full descending) or $SP + k + 1 (empty
+        desc) stack.
         """
 
         if skip < 0:
             # calculate autoskip amount
             skip = stack.get_stack_autoskip_count(self)
 
+        push_word_len = self.get_arch_conf('push_word_len')
+        stack_model = self.get_arch_conf('stack_model')
+        stack_full = stack_model == 'full_desc' or stack_model == 'full_asc'
+        # TODO(aaron): Handle ascending stack architectures. This method only handles descending.
+
+        if stack_full:
+            sp_off = 0
+        else:
+            sp_off = 1
+
         regs = self.get_registers()
         sp = regs["SP"]
         ramend = self._arch["RAMEND"]
-        max_len = ramend - sp + skip + 1
-        size = min(size, max_len)
+        max_len = (ramend - sp + skip + sp_off) / push_word_len
+        count = min(count, max_len)
+        self.verboseprint(f'$SP=0x{sp:08x}, RAMEND=0x{ramend:08x}, cnt={count}, word_sz={push_word_len}')
+        start_addr = sp + skip + sp_off
+        last_addr = min(start_addr + count * push_word_len, ramend)
+        self.verboseprint(f'Iterating range {start_addr:08x} ... {last_addr:08x}')
         snapshot = []
-        for i in range(sp + skip + 1, sp + skip + 1 + size):
-            v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, 1, i], Debugger.RESULT_ONELINE), base=16)
+        for i in range(start_addr, last_addr, push_word_len):
+            v = int(self.send_cmd([protocol.DBG_OP_RAMADDR, push_word_len, i], Debugger.RESULT_ONELINE),
+                    base=16)
+            # self.verboseprint(f"reading {i:08x} -> {v:08x}")
             snapshot.append(v)
-        return (sp, sp + skip + 1, snapshot)
+        return (sp, start_addr, snapshot)
 
 
     def get_memstats(self):

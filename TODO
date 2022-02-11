@@ -17,15 +17,10 @@ On-device service capabilities:
 Client:
   * 'stack' command should take length in push_words, and show push_word per row, not just 1 byte at
     a time.
-  * If we get CFIs with $PC = 0000, just ignore silently, not give 'Warning: No method for CFI @'..
-  * remove tons of bonus verboseprints for CFI <> symbol binding phase.
 
   * When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
-    * Generally, keep MSP or PSP in sync with $SP in unwind_registers() based on which is the
-      current active stack..
 
-  * Verify `empty.elf` CFA records are actually useful?
   * Verify `frame <n>` command uses proper push-word width on stack displays.
     ... also that we get the return value properly (from the $LR if abi_uses_link_register is True)
 
@@ -35,6 +30,9 @@ Client:
     retain nesting-level-0 names at the CUNS name level. See comment at types.py, line 222.
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
+
+  * ARM headers create an absolutely massive number of types, which take us a long time to parse.
+    (~26s in empty.elf.) Roughly ~8 seconds of that is verboseprint(). Make that much faster.
 
   --------
 
@@ -67,6 +65,7 @@ SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
     checked in the irq fn.
 * Watchpoint unit support
 * Single-step support
-* ... cleaner backtrace via ARM-standard frame pointer record walking.
+* ... cleaner backtrace via ARM-standard frame pointer record walking?
+    (gcc seems to automatically -fomit-frame-pointer so maybe not, ABI be damned.)
 
 

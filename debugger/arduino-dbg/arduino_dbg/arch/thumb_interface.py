@@ -123,4 +123,9 @@ class ArmThumbArchInterface(arch.ArchInterface):
 
         return regs_out
 
+    def finish_register_unwind(self, regs):
+        # TODO(aaron): read the `SPSEL` bit in the `CONTROL` register to determine whether MSP or
+        # PSP is the active stack pointer.
+        regs['MSP'] = regs['SP']  # Keep $MSP in sync with $SP
+        return regs
 

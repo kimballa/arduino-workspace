@@ -992,36 +992,53 @@ class Repl(object):
         """
         Display memory from a range of addresses on the stack
 
-            Syntax: stack [<length>] [<offset>]
+            Syntax: stack [<count>] [<offset>]
 
-        * length is in bytes; default is 16.
-        * data printing starts at ($SP + offset).
+        * count is in words; default is 16 words.
+        * data printing starts at ($SP + offset). Offset is given in bytes.
         * If offset is omitted or -1, then "auto-skip" stack frames added by the debugger.
         """
+        push_word_len = self._debugger.get_arch_conf('push_word_len')
+        stack_model = self._debugger.get_arch_conf('stack_model')
+        stack_descending = stack_model == 'full_desc' or stack_model == 'empty_desc'
+        stack_full = stack_model == 'full_desc' or stack_model == 'full_asc'
+
         offset = -1  # auto
-        length = 16
+        count = 16
         if len(argv) == 1:
-            length = int(argv[0])
+            count = int(argv[0])
         elif len(argv) > 1:
-            length = int(argv[0])
+            count = int(argv[0])
             offset = int(argv[1])
 
-        (sp, top, snapshot) = self._debugger.get_stack_snapshot(length, offset)
-        length = len(snapshot)
+        (sp, top, snapshot) = self._debugger.get_stack_snapshot(count, offset)
+        count = len(snapshot)
 
-        snapshot.reverse()
-        highaddr = top + length - 1
+        if stack_descending:
+            snapshot.reverse()
+            dir_coefft = -1  # 'direction coefficient' for modifying printed memory addr.
+        else:
+            dir_coefft = 1
+
+        highaddr = top + (count * push_word_len)
+        if stack_full:
+            # Full-descending stack will include $SP but not the 'highaddr'
+            highaddr -= push_word_len
+
+        offset = top - sp  # TODO(aaron): this used to have a "- 1" .. check still accurate for AVR?
+                           # (if inaccurate, subtract one on 'not stack_full' condition.)
         addr = highaddr
-        offset = top - sp - 1
+
         ramend = self._debugger.get_arch_conf("RAMEND")
         is_at_ramend = addr == ramend
         self._debugger.msg_q(MsgLevel.INFO, f"$SP: {sp:#04x}  Top: {top:#04x}   skip: {offset}")
-        for b in snapshot:
-            self._debugger.msg_q(MsgLevel.INFO, f'{addr:04x}: {b:02x}')
-            addr -= 1
+        print_width = 2 * push_word_len
+        for word in snapshot:
+            self._debugger.msg_q(MsgLevel.INFO, f'{addr:04x}: {word:0{print_width}x}')
+            addr += push_word_len * dir_coefft
 
         if not is_at_ramend:
-            self._debugger.msg_q(MsgLevel.INFO, f'Next: stack 16 {length + offset}')
+            self._debugger.msg_q(MsgLevel.INFO, f'Next: stack 16 {count*push_word_len + offset}')
 
 
     @Command(keywords=['stackaddr', 'xs'], completions=[Completions.WORD_SIZE])
@@ -1035,7 +1052,7 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, "Syntax: stackaddr [<size>] <offset (hex)>")
             return
         elif len(argv) == 1:
-            size = 1
+            size = self._debugger.get_arch_conf("push_word_len")
             offset = int(argv[0], base=16)
         else:
             size = int(argv[0])

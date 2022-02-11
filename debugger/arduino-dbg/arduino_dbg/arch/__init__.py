@@ -202,6 +202,13 @@ class ArchInterface(object):
         """
         return regs  # By default, no further action is needed.
 
+    def finish_register_unwind(self, regs):
+        """
+        Perform any final post-processing needed at the end of CFI / unwind_registers() processing.
+        Modifies 'regs' in-place, if at all.
+        Returns 'regs'.
+        """
+        return regs
 
     @staticmethod
     def make_arch_interface(debugger):
