@@ -76,6 +76,45 @@ def write(text, color_code=None):
     print(fmt(text, color_code))
 
 
+def fmt_registers(registers, int_width=4, sp_width=4):
+    """
+    Format a string to print which displays a dict of registers & their values.
+
+    int_width and sp_width are given in bytes.
+    """
+
+    # Width of a hex-formatted register value for this arch: 2 chars per byte * word size
+    int_width *= 2
+    sp_width *= 2
+
+    MAX_WIDTH = 65
+    if sp_width > int_width:
+        sp_pad = ''  # Eliminate extra padding in column formatting.
+    else:
+        sp_pad = ' '
+
+    cur_width = 0
+    reg_strs = []  # registers within this line.
+    lines = []
+    for (reg, regval) in registers.items():
+        if reg == "SP":
+            this_reg = f"{reg.rjust(4)}: 0x{regval:0{sp_width}x} {sp_pad}"
+        else:
+            # normal register
+            this_reg = f"{reg.rjust(4)}: 0x{regval:0{int_width}x}  "
+
+        cur_width += len(this_reg)
+        reg_strs.append(this_reg)
+        if cur_width >= MAX_WIDTH:
+            cur_width = 0
+            lines.append(''.join(reg_strs))
+            reg_strs = []
+
+    if len(reg_strs):
+        lines.append(''.join(reg_strs))
+    return '\n'.join(lines)
+
+
 class MsgLevel(object):
     """
     Priority level codes for messages submitted to ConsolePrinter; used to colorize

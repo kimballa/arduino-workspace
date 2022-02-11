@@ -987,6 +987,8 @@ class Debugger(object):
         Helper method for _conn_listener(), when we need to send a message to the server
         and wait for a response.
         """
+        is_break_cmd = msgline == protocol.DBG_OP_BREAK + '\n'
+
         self._conn.write(msgline.encode("utf-8"))
         if response_type == Debugger.RESULT_SILENT:
             # Client isn't waiting for a response. Immediately reassert responsibility
@@ -1000,6 +1002,13 @@ class Debugger(object):
             while self._alive and (line is None or len(line) == 0):
                 line = self._conn.readline().decode("utf-8").strip()
                 if len(line) == 0:
+                    continue
+                elif not is_break_cmd and line.startswith(protocol.DBG_PAUSE_MSG):
+                    # We got an extra 'Paused' confirmation after a BREAK followed by another cmd.
+                    # Just silently ignore; if we're sending commands, we know we're in the BREAK
+                    # ProcessState.
+                    assert self._process_state == ProcessState.BREAK
+                    line = None  # Drop the line and wait for the real response.
                     continue
                 elif line.startswith(protocol.DBG_RET_PRINT):
                     # Send to the print queue.
@@ -1030,6 +1039,13 @@ class Debugger(object):
             while self._alive:
                 line = self._conn.readline().decode("utf-8").strip()
                 if len(line) == 0:
+                    continue
+                elif not is_break_cmd and line.startswith(protocol.DBG_PAUSE_MSG):
+                    # We got an extra 'Paused' confirmation after a BREAK followed by another cmd.
+                    # Just silently ignore; if we're sending commands, we know we're in the BREAK
+                    # ProcessState.
+                    assert self._process_state == ProcessState.BREAK
+                    line = None  # Drop the line and wait for the real response.
                     continue
                 elif line.startswith(protocol.DBG_RET_PRINT):
                     # Send to the print queue.
@@ -1648,7 +1664,18 @@ class Debugger(object):
 
         self.verboseprint(f'Scanning backtrace (limit={limit})')
         ramend = self._arch["RAMEND"]
-        ret_addr_size = self._arch["ret_addr_size"]  # nr of bytes on stack for a return address.
+
+        # Parameters for non-link-register-abi return addr calculations:
+        ret_addr_size = self.get_arch_conf("ret_addr_size")  # nr of bytes on stack for a return address.
+        stack_model = self.get_arch_conf("stack_model")
+        if stack_model == 'empty_desc':
+            stack_ret_addr_offset = 1
+        elif stack_model == 'full_desc':
+            stack_ret_addr_offset = 0
+        else:
+            raise Exception(
+                'Do not know how to calculate stack_frame offsets for stack model: '
+                f'{stack_model}')
 
         if not self._cached_frames or not len(self._cached_frames):
             # We are starting the backtrace at the top.
@@ -1662,6 +1689,7 @@ class Debugger(object):
             frames.append(frame)
         else:
             # We have some backtrace already available.
+            assert len(self._cached_frames) > 0
             frames = self._cached_frames
             frame = frames[-1]
 
@@ -1683,18 +1711,25 @@ class Debugger(object):
             self.verboseprint(f"function {frame.name} has frame {frame.frame_size}; "
                               f"sp: {sp:04x}, pc: {pc:04x}")
 
-            sp += frame.frame_size  # move past the stack frame
+            if regs is None:
+                # We didn't have a CFI record, so we fell back to prologue analysis to identify
+                # the frame size.
 
-            # top two 'ret_addr_size' bytes are the return address consumed by RET opcode.
-            # read the last 2 popped bytes 1-by-1 and consume them as the ret_addr (PC in next fn)
-            pc = self.get_return_addr_from_stack(sp - 1)
+                sp += frame.frame_size  # move past the stack frame
+
+                # top 'ret_addr_size' bytes are the return address consumed by RET opcode.
+                # read the last ret_addr_size popped bytes 1-by-1 and consume them as
+                # the ret_addr (PC in next fn)
+                pc = self.get_return_addr_from_stack(sp + stack_ret_addr_offset - ret_addr_size)
+            else:
+                # We used the CFI record to unwind the registers.
+                sp = regs['SP']  # move past the stack frame
+                pc = regs['PC']  # read the unwound $PC / return addr from the frame.
+
             self.verboseprint(f"returning to pc {pc:04x}, sp {sp:04x}")
 
             if sp >= ramend or pc == 0:
                 break  # Not at a place valid to record as a frame.
-
-            assert regs['PC'] == pc
-            assert regs['SP'] == sp
 
             frame = stack.CallFrame(self, pc, sp, regs)
             frames.append(frame)
@@ -1758,7 +1793,13 @@ class Debugger(object):
         Given a stack_addr pointing to the lowest memory address of a
         return address pushed onto the stack, return the associated return address.
         """
-        ret_addr_size = self._arch["ret_addr_size"]  # nr of bytes on stack for a return address.
+        # Note: This is possible for AVR, but ARM puts the ret addr in $LR so
+        # we'd be reading garbage.
+        if self.get_arch_conf("abi_uses_link_register"):
+            instruction_set = self.get_arch_conf("instruction_set")
+            raise Exception(f"Cannot read return addr from stack on {instruction_set} cpu")
+
+        ret_addr_size = self.get_arch_conf("ret_addr_size")  # nr of bytes on stack for a return address.
         ret_addr = self.get_sram(stack_addr, ret_addr_size)
         return self.arch_iface.mem_to_pc(ret_addr)
 

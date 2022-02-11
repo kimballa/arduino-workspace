@@ -375,6 +375,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
         addr &= ~1; // $PC must be short-aligned; disregard lsb (thumb state flag).
         DBG_SERIAL.println(addr, HEX);
         DBG_SERIAL.println(__get_xPSR(), HEX); // Return $xPSR status registers (IPSR/EPSR/APSR) view.
+        DBG_SERIAL.println(__get_MSP(), HEX);  // Return Main Stack Pointer ($MSP)
+        DBG_SERIAL.println(__get_PSP(), HEX);  // Return Process Stack Pointer ($PSP)
 
       #endif /* architecture select */
       DBG_SERIAL.println('$');

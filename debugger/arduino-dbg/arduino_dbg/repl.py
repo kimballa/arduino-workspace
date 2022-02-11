@@ -623,7 +623,7 @@ class Repl(object):
             size = 4
 
         # Resolve logical address to physical address.
-        mmap = self.arch_iface.memory_map()
+        mmap = self._debugger.arch_iface.memory_map()
         phys_addr = mmap.logical_to_physical_addr(addr)
         if mmap.access_mechanism_for_addr(addr) == memory_map.ACCESS_TYPE_PGM:
             # We're trying to read something in flash with 'mem'.
@@ -784,33 +784,9 @@ class Repl(object):
         """
         Actually format and print register values to the screen, for _regs() or _frame().
         """
-        MAX_WIDTH = 65
-
-        # Width of a hex-formatted register value for this arch: 2 chars per byte * word size
-        int_width = self._debugger.arch_iface.reg_width_bytes() * 2
-        sp_width = self._debugger.arch_iface.sp_width_bytes() * 2  # [AVR] $SP may be extra-wide.
-        if sp_width > int_width:
-            sp_pad = ''  # Eliminate extra padding in column formatting.
-        else:
-            sp_pad = ' '
-
-        cur_width = 0
-        reg_strs = []
-        for (reg, regval) in registers.items():
-            if reg == "SP":
-                this_reg = f"{reg.rjust(4)}: 0x{regval:0{sp_width}x} {sp_pad}"
-            else:
-                # normal register
-                this_reg = f"{reg.rjust(4)}: 0x{regval:0{int_width}x}  "
-
-            cur_width += len(this_reg)
-            reg_strs.append(this_reg)
-            if cur_width >= MAX_WIDTH:
-                cur_width = 0
-                self._debugger.msg_q(MsgLevel.INFO, ''.join(reg_strs))
-                reg_strs = []
-
-        self._debugger.msg_q(MsgLevel.INFO, ''.join(reg_strs))
+        int_width = self._debugger.arch_iface.reg_width_bytes()
+        sp_width = self._debugger.arch_iface.sp_width_bytes()  # [AVR] $SP may be extra-wide.
+        self._debugger.msg_q(MsgLevel.INFO, term.fmt_registers(registers, int_width, sp_width))
 
     @Command(keywords=['regs'])
     def _regs(self, argv):

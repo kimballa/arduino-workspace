@@ -86,6 +86,34 @@ class TestBacktrace(DbgTestCase):
         self.assertEqual(frame.sym.size, 1210)
         self.assertEqual(frame.sym.addr, 0x202e)
 
+    def test_frame_unwinds_equivalent_for_method(self):
+        """ Test that CFI and prologue analyzer agree on a normal method """
+        frames = self.debugger.get_backtrace()
+        regs = self.debugger.get_registers()
+
+        frame = frames[0]  # __dbg_service()
+
+        prologue_sz = self.debugger.arch_iface.stack_frame_size_for_prologue(frame.addr, frame.sym)
+        cfi_record_sz = self.debugger.arch_iface.stack_frame_size_by_cfi(frame, regs)
+
+        self.assertEqual(prologue_sz, cfi_record_sz)
+
+    def test_frame_unwinds_equivalent_for_ISR(self):
+        """ Test that CFI and prologue analyzer agree on an ISR """
+        frames = self.debugger.get_backtrace()
+
+        pre_frame = frames[0]  # __dbg_service()
+        regs = pre_frame.unwound_registers
+        frame = frames[1]  # TIMER1_COMPA_vect()
+
+        prologue_sz = self.debugger.arch_iface.stack_frame_size_for_prologue(frame.addr, frame.sym)
+        cfi_record_sz = self.debugger.arch_iface.stack_frame_size_by_cfi(frame, regs)
+
+        self.assertEqual(prologue_sz, cfi_record_sz)
+
+    # TODO(aaron): Need to test equivalent frame unwind agreement for a method that
+    # involves the $SP SUBI state machine.
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

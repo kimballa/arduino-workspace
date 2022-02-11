@@ -6,6 +6,7 @@ import elftools.dwarf.callframe as callframe
 
 import arduino_dbg.binutils as binutils
 from arduino_dbg.term import MsgLevel
+import arduino_dbg.term as term
 
 _debugger_methods = [
   "__vector_17",     # AVR timer interrupt
@@ -33,6 +34,9 @@ class CallFrame(object):
         self.demangled_inline_chain = []
         self.sym = None
 
+        self.unwound_registers = None   # Cached map of register values pre-call (unwound)
+        self.cfa = None                 # Cached canonical frame address
+
         func_sym = debugger.function_sym_by_pc(addr)
         if func_sym is None:
             debugger.msg_q(MsgLevel.WARN, f"Warning: could not resolve $PC={addr:#04x} to method symbol")
@@ -49,9 +53,6 @@ class CallFrame(object):
 
         self._calculate_source_line(debugger.elf_name)
         self._demangle()
-
-        self.unwound_registers = None   # Cached map of register values pre-call (unwound)
-        self.cfa = None                 # Cached canonical frame address
 
         if regs_in is not None:
             # If register snapshot is available at the point $PC, calculate unwound
@@ -134,6 +135,7 @@ class CallFrame(object):
             return self.unwound_registers
 
         # Get the architecture-specific register mapping from the configuration.
+        abi_real_link_register = self._debugger.get_arch_conf('abi_uses_link_register')
         stack_unwind_registers = self._debugger.get_arch_conf('stack_unwind_registers')
         num_general_regs = self._debugger.get_arch_conf('general_regs')
         push_word_len = self._debugger.get_arch_conf('push_word_len')  # width of one PUSHed word.
@@ -142,6 +144,10 @@ class CallFrame(object):
         reg_width = self._debugger.arch_iface.reg_width_bytes()
         reg_word_mask = self._debugger.arch_iface.reg_word_mask()  # Bitmask for reg_width bytes.
         sp_width = self._debugger.arch_iface.sp_width_bytes()  # on AVR, SP is wider than a gen reg.
+
+        frame_cie = self._debugger.get_frame_cie()  # CIE (common info entry) for this ELF
+        return_addr_reg = frame_cie['return_address_register']
+        has_unwound_pc = False  # Set to true once $PC is updated.
 
         if not self.sym or not self.sym.frame_info:
             self._debugger.msg_q(MsgLevel.WARN,
@@ -173,11 +179,12 @@ class CallFrame(object):
             # We broke into this method before any register moves or stack operations
             # were performed. (i.e., on the start $PC for the method itself.)
             # Just use the rule from the CIE, which declares the return value position.
-            rule_row = self._debugger.get_frame_cie().get_decoded().table[-1]
+            rule_row = frame_cie.get_decoded().table[-1]
 
         # The dict in 'rule_row' now contains the current unwind info for the frame.
         row_pc = rule_row['pc']
-        self._debugger.verboseprint(f"In method {self.sym.demangled} at PC {pc:04x}, use rowPC {row_pc:04x}")
+        self._debugger.verboseprint(
+            f"\nIn method {self.sym.demangled} at PC {pc:04x}, use rowPC {row_pc:04x}")
 
         cfa_rule = rule_row['cfa']
         cfa_reg = stack_unwind_registers[cfa_rule.reg]  # cfa gives us an index into the unwind
@@ -198,16 +205,25 @@ class CallFrame(object):
         cfa_addr = cfa_base + cfa_rule.offset   # We've established the call frame address.
                                                 # This is where SP would point if the entire
                                                 # frame went away via the epilogue + 'ret'.
-        self._debugger.verboseprint(f'Canonical frame addr (CFA) = {cfa_addr:04x}')
         self.cfa = cfa_addr  # Cache this for later.
 
         regs_out = regs_in.copy()
 
-        self._debugger.verboseprint('Input registers: ', regs_in)
-        self._debugger.verboseprint('Stack unwind registers: ', stack_unwind_registers)
-        self._debugger.verboseprint('cfi_register_order: ', cfi_register_order)
-        self._debugger.verboseprint('cfi table: ', cfi_table)
-        self._debugger.verboseprint('Rule row: ', rule_row)
+        if self._debugger.get_conf("dbg.verbose"):
+            self._debugger.verboseprint(f'Canonical frame addr (CFA) = {cfa_addr:04x}')
+            self._debugger.verboseprint('Return address register: ', return_addr_reg)
+            self._debugger.verboseprint('')
+            self._debugger.verboseprint('Input registers:')
+            self._debugger.verboseprint(term.fmt_registers(regs_in, reg_width, sp_width))
+            self._debugger.verboseprint('')
+
+            self._debugger.verboseprint('CFI table: ')
+            for row in cfi_table:
+                row_pc = row['pc']
+                self._debugger.verboseprint(f'    PC >= 0x{row_pc:x}:    {row}')
+
+            self._debugger.verboseprint('')
+            self._debugger.verboseprint('Rule row: ', rule_row)
 
         regs_to_process = cfi_register_order.copy()
         regs_to_process.reverse()  # LIFO.
@@ -224,29 +240,38 @@ class CallFrame(object):
                 # from prior value. (gcc for arm7/thumb seems to omit no-op rules to save space?)
                 continue
 
-            self._debugger.verboseprint('Rule: ', rule)
             reg_name = stack_unwind_registers[reg_num]
             self._debugger.verboseprint('Reg name: ', reg_name)
+            self._debugger.verboseprint('Applying rule: ', rule)
 
-            # TODO(aaron): Is this $LR special-casing just for AVR? Should we assign to $PC
-            # on ARM, which *does* have a dedicated link register?
-            if reg_name == 'LR' or reg_name == 'PC':
+            if not abi_real_link_register and reg_name == 'LR':
+                # Special-case $LR for e.g. AVR -- CFI record defines return addr site through
+                # an "unwind register" we call $LR but this does not correspond to a real $LR.
+                # In which case, we actually want to assign its unwind result directly to $PC.
                 reg_name = 'PC'  # This return site will be assigned to PC after frame 'ret'.
+
+                # TODO(aaron): Should this be checking for 'LR' in our reg_name? Or should
+                # we be checking for reg_num == return_addr_reg as in the "real" handler after
+                # the end of the main rule.type switchcase below?
+
+            if reg_name == 'PC' or reg_name == 'LR' or reg_num == return_addr_reg:
+                # $LR / $PC assignment is definitionally `ret_addr_size` bytes wide even
+                # if standard register width is smaller (e.g. on AVR)
                 reg_width = ret_addr_size
 
             if rule.type == callframe.RegisterRule.UNDEFINED:
-                continue  # Nothing to do.
+                pass  # Nothing to do.
             elif rule.type == callframe.RegisterRule.SAME_VALUE:
-                continue  # We did not change this register value.
+                pass  # We did not change this register value.
             elif rule.type == callframe.RegisterRule.OFFSET:
                 # We've got an offset from the CFA; load the value at that memory address into
                 # the assigned register.
                 data = self._debugger.get_sram(cfa_addr + rule.arg, reg_width)
-                if reg_name == 'PC':
+                if reg_name == 'PC' or reg_name == 'LR':
                     data = self._debugger.arch_iface.mem_to_pc(data)
                 regs_out[reg_name] = data
                 self._debugger.verboseprint(
-                    f'{reg_name}    <- LD({(cfa_addr + rule.arg):x}) (CFA+{rule.arg:x}) '
+                    f'{reg_name}    <- LD(0x{(cfa_addr + rule.arg):x}) (CFA + {rule.arg:x}h) '
                     f'[= {regs_out[reg_name]:x} ]')
             elif rule.type == callframe.RegisterRule.VAL_OFFSET:
                 # Based on https://dwarfstd.org/ShowIssue.php?issue=030812.2 I believe this
@@ -276,7 +301,37 @@ class CallFrame(object):
                     "Error: Cannot process architecture-specific register rule")
                 return None
 
+            if reg_num == return_addr_reg and abi_real_link_register:
+                # Now that we've processed the current register update... if this operation
+                # restored the register that contained the return address (i.e., it's $LR),
+                # then we also want to apply this value to $PC.
+                regs_out['PC'] = regs_out[reg_name]
+                has_unwound_pc = True  # $PC updated.
+                self._debugger.verboseprint(
+                    f'** $PC    <- {reg_name} [= {regs_out[reg_name]:x} ]')
+
+            if reg_name == 'PC':
+                has_unwound_pc = True  # $PC updated.
+
         regs_out['SP'] = cfa_addr  # As established earlier.
+
+        if not has_unwound_pc and abi_real_link_register:
+            # We did not explicitly update the $PC register based on stack unwind operations.
+            # However, we have a true link register available to us. We should update the $PC
+            # now. We can encounter this situation if we experience an interrupt immediately
+            # within the prologue of a method before entry stacking operations have occured.
+            # The $LR will hold the return addr and will not have itself been stacked yet.
+            regs_out['PC'] = regs_out[stack_unwind_registers[return_addr_reg]]
+            has_unwound_pc = True
+            self._debugger.verboseprint(f'** Final $PC from link register: {regs_out["PC"]:x}')
+
+        if self._debugger.arch_iface.is_exception_return(regs_out['PC']):
+            # We are returning from an exception stack frame onto the normal program stack.
+            # The hardware has performed special stacking operations before entering the
+            # exception handler (and thus not part of the exc handler's CFI) and we must
+            # now do architecture-specific destacking of those registers.
+            self._debugger.verboseprint("Exception return detected -- unwinding exception stacking")
+            regs_out = self._debugger.arch_iface.unwind_exception_registers(regs_out)
 
         # TODO(aaron): [AVR] gcc doesn't regard 'SREG' as unwindable; there won't be instructions
         # on how to restore the prior version of it, if it was saved within the method. So the

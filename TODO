@@ -15,36 +15,19 @@ On-device service capabilities:
 
 
 Client:
-  * Get `backtrace` fn working 
-    * CFA common block notes 'return addr column: 14' -- r14 is LR and holds ret val. Do we process
-      correctly?
-      -- note that ArchInterface.stack_frame_size() currently subtracts `ret_addr_size` from 
-         the CFA because we want the 'pre-return' point to adjust to so we can then do an sram read
-         of the ret addr. But we shouldn't assume ret_addr is pushed on frame entry. ARM doesn't;
-         we need an arch-specific way of getting the ret addr. (Or, just read the CIE block more
-         carefully.)
+  * 'stack' command should take length in push_words, and show push_word per row, not just 1 byte at
+    a time.
+  * If we get CFIs with $PC = 0000, just ignore silently, not give 'Warning: No method for CFI @'..
+  * remove tons of bonus verboseprints for CFI <> symbol binding phase.
 
-         see debugger.py:1690 `pc = self.get_return_addr_from_stack(sp + 1)`
-         Just use the values directly in unwound 'regs' dict.
-         - Keep 'manual' PC and SP assignment as a fallback in case regs is None (i.e., we
-           calculate frame.frame_size via prologue analysis b/c there was no CFI). 
-
-         nb that Repl._frame() also uses get_return_addr_from_stack().
-
-      -- (OK) Make the ret_addr_size subtraction an AVR-specific thing
-         (Or, adjust our definition of 'frame size' to also include the ret addr bytes and AVR
-         should adjust down from there?)
-      -- don't just blindly read the next few bytes of sram up from the CFA as the ret addr; either
-         handle this in the unwind_registers properly, or add an ArchInterface method to get the
-         return address after the debug_frame instructions / method epilogue has unwound the stack.
-    * (OK) It also looks like __dbg_service has the cfi_e for TC4_Handler. what's up?
-      * (OK) __dbg_service starts at 43b0h but the sym has it at 43b1h. Which isn't a valid addr; $PC
-        needs to be halfword-aligned. But the thumb-state-bit = 1 so the PC reg will show 43b1h 
-        even if the actual memory addr is 43b0h. For ARM/Thumb, we need to cleanse the symtab $PC
-        values.
+  * When returning from interrupt, $LR has a bunch of special flag values that do things like
+    switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
+    * Generally, keep MSP or PSP in sync with $SP in unwind_registers() based on which is the
+      current active stack..
 
   * Verify `empty.elf` CFA records are actually useful?
   * Verify `frame <n>` command uses proper push-word width on stack displays.
+    ... also that we get the return value properly (from the $LR if abi_uses_link_register is True)
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
@@ -52,7 +35,6 @@ Client:
     retain nesting-level-0 names at the CUNS name level. See comment at types.py, line 222.
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
-
 
   --------
 

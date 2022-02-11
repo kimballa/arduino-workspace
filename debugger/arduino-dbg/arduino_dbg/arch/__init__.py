@@ -178,6 +178,30 @@ class ArchInterface(object):
         # Default implementation does not change frame_info.
         sym.isr_frame_ok = True
 
+    def is_exception_return(self, lr):
+        """
+        On some architectures (ARM), the link register holds a special value when returning
+        from an exception, which triggers a further hardware-defined stack unwind process
+        to restore the pre-exception state.
+
+        This function returns true if its argument (the $LR value) represents an exception
+        return flag.
+        """
+        return False  # By default, architectures do not have special exception return process.
+
+    def unwind_exception_registers(self, regs):
+        """
+        If is_exception_return() returned true, this function can be called by
+        CallFrame.unwind_registers() to perform the further unwinding necessary to
+        fully restore the pre-exception state.
+
+        This function takes the register snapshot after the CFI-driven register unwind is
+        complete and returns a new register snapshot representing the fully-unwound state.
+
+        If is_exception_return() would have returned False, this method's response is undefined.
+        """
+        return regs  # By default, no further action is needed.
+
 
     @staticmethod
     def make_arch_interface(debugger):
