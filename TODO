@@ -15,14 +15,8 @@ On-device service capabilities:
 
 
 Client:
-  * 'stack' command should take length in push_words, and show push_word per row, not just 1 byte at
-    a time.
-
   * When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
-
-  * Verify `frame <n>` command uses proper push-word width on stack displays.
-    ... also that we get the return value properly (from the $LR if abi_uses_link_register is True)
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have

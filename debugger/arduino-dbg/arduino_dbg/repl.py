@@ -1115,7 +1115,7 @@ class Repl(object):
             MsgLevel.INFO,
             f'Frame {frame_num} at PC {frame.addr:#04x} in method {frame.demangled}')
 
-        ret_addr = self._debugger.get_return_addr_from_stack(sp + frame_size - 1)
+        ret_addr = frame.unwound_registers['PC']
         ret_fn_sym = self._debugger.function_sym_by_pc(ret_addr)
         if ret_fn_sym:
             ret_fn = ret_fn_sym.demangled or ret_fn_sym.name
@@ -1125,14 +1125,35 @@ class Repl(object):
             MsgLevel.INFO,
             f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
-        for addr in range(sp + frame_size, sp, -1):
-            b = self._debugger.get_sram(addr, 1)
-            self._debugger.msg_q(MsgLevel.INFO, f'{addr:04x}: {b:02x}')
+        push_word_len = self._debugger.get_arch_conf('push_word_len')
+        stack_model = self._debugger.get_arch_conf('stack_model')
+        stack_descending = stack_model == 'full_desc' or stack_model == 'empty_desc'
+        stack_full = stack_model == 'full_desc' or stack_model == 'full_asc'
+        if stack_descending:
+            dir_coefft = -1  # 'direction coefficient' for modifying printed memory addr.
+        else:
+            dir_coefft = 1
 
-        if frame_size == 0:
-            addr = sp + frame_size + 1  # Ensure `addr` initialized in case frame_size == 0.
+        if stack_full:
+            start_addr = sp + frame_size - push_word_len
+            last_addr = sp - push_word_len
+        else:
+            start_addr = sp + frame_size
+            last_addr = sp
 
-        self._debugger.msg_q(MsgLevel.INFO, f'{addr-1:04x} <-- $SP')
+        for addr in range(start_addr, last_addr, dir_coefft * push_word_len):
+            word = self._debugger.get_sram(addr, push_word_len)
+            sp_indicator = ''
+            if stack_full and addr == sp:
+                sp_indicator = ' <-- $SP'
+            self._debugger.msg_q(MsgLevel.INFO,
+                                 f'{addr:04x}: 0x{word:0{push_word_len*2}x}{sp_indicator}')
+
+        if not stack_full or frame_size == 0:
+            # Print $SP indicator line for empty-descending stack afterward, or print
+            # dedicated $SP indicator line for full-descending stack only if this frame
+            # uses no stack memory.
+            self._debugger.msg_q(MsgLevel.INFO, f'{sp:04x} <-- $SP')
 
         registers = self._debugger.get_frame_regs(frame_num)
         if registers:
