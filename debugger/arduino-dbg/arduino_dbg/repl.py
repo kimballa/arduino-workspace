@@ -589,10 +589,8 @@ class Repl(object):
         self._debugger.msg_q(MsgLevel.INFO, f'      (free):  {free_ram:>8}')
         self._debugger.msg_q(MsgLevel.INFO, f'   Heap size:  {heap_size:>8}')
         self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>8} (.data + .bss)')
-        self._debugger.msg_q(MsgLevel.INFO, f'     Globals:  {global_size:>8} (.data + .bss)')
         self._debugger.msg_q(MsgLevel.INFO, f'')
         self._debugger.msg_q(MsgLevel.INFO, repr(self._debugger.arch_iface.memory_map()))
-
 
 
     @Command(keywords=['mem', 'x', '\\m'], completions=[Completions.WORD_SIZE])
@@ -603,7 +601,7 @@ class Repl(object):
             Syntax: mem [<size>] <addr (hex)>
 
         On a segmented memory system, you must provide a logical address, not a physical in-segment
-        memory address to write. On AVR, SRAM addresses begin at 0x800000.
+        memory address to write. On AVR, logical SRAM addresses begin at 0x800000.
 
         size must be 1, 2, or 4.
         """
@@ -611,7 +609,7 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.INFO, "Syntax: mem [<size>] <addr (hex)>")
             return
         elif len(argv) == 1:
-            size = 1
+            size = self._debugger.get_arch_conf('push_word_len')
             addr = int(argv[0], base=16)
         else:
             size = int(argv[0])
@@ -632,12 +630,7 @@ class Repl(object):
                 f"Error: Cannot read flash segment at address {addr:x} with 'mem'; try 'flash'.")
 
         v = self._debugger.get_sram(phys_addr, size)
-        if size == 1:
-            self._debugger.msg_q(MsgLevel.INFO, f"{v:02x}")
-        elif size == 2:
-            self._debugger.msg_q(MsgLevel.INFO, f"{v:04x}")
-        elif size == 4:
-            self._debugger.msg_q(MsgLevel.INFO, f"{v:08x}")
+        self._debugger.msg_q(MsgLevel.INFO, f"0x{v:0{2 * size}x}")
 
 
     @Command(
@@ -653,7 +646,7 @@ class Repl(object):
         To set the value of a global variable with a known symbol, see the `setv` command.
 
         On a segmented memory system, you must provide a logical address, not a physical in-segment
-        memory address to write. On AVR, SRAM addresses begin at 0x800000.
+        memory address to write. On AVR, logical SRAM addresses begin at 0x800000.
         """
         base = 10
         if len(argv) < 2:
@@ -772,12 +765,7 @@ class Repl(object):
                 # We're requesting something in SRAM:
                 v = self._debugger.get_sram(phys_addr, size)
 
-            if size == 1:
-                self._debugger.msg_q(MsgLevel.INFO, f"0x{v:02x}")
-            elif size == 2:
-                self._debugger.msg_q(MsgLevel.INFO, f"0x{v:04x}")
-            elif size == 4:
-                self._debugger.msg_q(MsgLevel.INFO, f"0x{v:08x}")
+            self._debugger.msg_q(MsgLevel.INFO, f"0x{v:0{2*size}x}")
 
 
     def __format_registers(self, registers):

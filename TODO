@@ -15,8 +15,9 @@ On-device service capabilities:
 
 
 Client:
-  * When returning from interrupt, $LR has a bunch of special flag values that do things like
+  * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
+    * As well as update correct MSP/PSP in ARMThumbArchInterface.finish_register_unwind().
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have

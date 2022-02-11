@@ -86,6 +86,8 @@ class CompilationUnitNamespace(object):
             self._cu_ranges = None  # PCRange objects defining the CU itself, if any.
             self._low_pc = top_die.attributes['DW_AT_low_pc'].value
             self._high_pc = top_die.attributes['DW_AT_high_pc'].value
+            if top_die.attributes['DW_AT_high_pc'].form != 'DW_FORM_addr':
+                self._high_pc += self._low_pc  # Not absolute addr; it's offset from low pc.
         except KeyError:
             # Ordinarily location ranges are relative to the compilation unit base address,
             # but if the compilation unit is itself defined as a set of ranges, they are absolute.
@@ -2136,7 +2138,18 @@ class ParsedDebugInfo(object):
 
             if dieattr('low_pc'):
                 # has a PC range associated with it.
-                cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, name)
+                low_pc = dieattr('low_pc')
+                if 'DW_AT_high_pc' in die.attributes:
+                    hi_pc_attr = die.attributes['DW_AT_high_pc']
+                    if hi_pc_attr.form == 'DW_FORM_addr':
+                        # It's an absolute address
+                        hi_pc = hi_pc_attr.value
+                    else:
+                        # It's an offset from low_pc
+                        hi_pc = low_pc + hi_pc_attr.value
+                else:
+                    hi_pc = None
+                cuns.define_pc_range(low_pc, hi_pc, method, name)
 
             frame_base_loc = _get_locations('frame_base')
             if frame_base_loc is not None:
@@ -2168,8 +2181,18 @@ class ParsedDebugInfo(object):
                 name, return_type, cuns, definition.member_of, definition.virtual,
                 definition.accessibility, is_decl, is_def, definition, die)
 
+
             if dieattr('low_pc') and dieattr('high_pc'):
-                cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), method, definition.name)
+                # has a PC range associated with it.
+                low_pc = dieattr('low_pc')
+                hi_pc_attr = die.attributes['DW_AT_high_pc']
+                if hi_pc_attr.form == 'DW_FORM_addr':
+                    # It's an absolute address
+                    hi_pc = hi_pc_attr.value
+                else:
+                    # It's an offset from low_pc
+                    hi_pc = low_pc + hi_pc_attr.value
+                cuns.define_pc_range(low_pc, hi_pc, method, definition.name)
             elif dieattr('ranges'):
                 # Some inlined methods have a DW_AT_entry_pc and a 'DW_AT_ranges' field.
                 # Use multiple PCRanges to record this.
@@ -2199,7 +2222,15 @@ class ParsedDebugInfo(object):
             lexical_scope = LexicalScope(origin, context['method'])
             _add_entry(lexical_scope, None, die.offset)
             if dieattr('low_pc') and dieattr('high_pc'):
-                cuns.define_pc_range(dieattr('low_pc'), dieattr('high_pc'), lexical_scope, None)
+                low_pc = dieattr('low_pc')
+                hi_pc_attr = die.attributes['DW_AT_high_pc']
+                if hi_pc_attr.form == 'DW_FORM_addr':
+                    # It's an absolute address
+                    hi_pc = hi_pc_attr.value
+                else:
+                    # It's an offset from low_pc
+                    hi_pc = low_pc + hi_pc_attr.value
+                cuns.define_pc_range(low_pc, hi_pc, lexical_scope, None)
 
             ctxt = context.copy()
             ctxt['nesting'] += 1
