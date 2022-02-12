@@ -1743,12 +1743,17 @@ class ParsedDebugInfo(object):
         except Exception:
             pass  # We don't need to print the entire DIE tree below here.
 
-        # Declare various helper methods needed internally within DIE-parsing process.
+        # Early-return conditions that terminate recursion.
+        if not die.tag:
+            return  # null DIE to terminate nested set.
+        elif cuns.has_addr_entry(die.offset):
+            return  # Our seek-driven parsing has already parsed this entry, don't double-process.
 
+        # Declare various helper methods needed internally within DIE-parsing process.
         def _fresh_context():
             """
-                Return a context that is 'clean' of any nested DIE state, for use in non-local
-                parsing requirements.
+            Return a context that is 'clean' of any nested DIE state, for use in non-local
+            parsing requirements.
             """
             ctxt = {}
             for key in ParsedDebugInfo._default_context_keys:
@@ -1761,8 +1766,8 @@ class ParsedDebugInfo(object):
 
         def _lookup_type(param='type'):
             """
-                Look up the 'DW_AT_type' attribute and resolve it to a PrgmType within the current
-                CU Namespace..
+            Look up the 'DW_AT_type' attribute and resolve it to a PrgmType within the current
+            CU Namespace..
             """
             # This attr value is offset relative to the compile unit, but it refers
             # to elements of our address-oriented lookup table which is global across
@@ -1794,8 +1799,16 @@ class ParsedDebugInfo(object):
             return typ.getOrigin()
 
         def _add_entry(typ, name, addr):
+            """
+            Add entry to the compilation unit namespace.
+            Only add by name if it's a top-level
+            """
             typ.set_die(die)
-            cuns.add_entry(typ, name, addr)
+            if nesting == 0:
+                set_name = name
+            else:
+                set_name = None
+            cuns.add_entry(typ, set_name, addr)
 
         def dieattr(name, default_value=None):
             """
@@ -1828,11 +1841,6 @@ class ParsedDebugInfo(object):
                 return None
 
 
-        if not die.tag:
-            return  # null DIE to terminate nested set.
-        elif cuns.has_addr_entry(die.offset):
-            return  # Our seek-driven parsing has already parsed this entry, don't double-process.
-
         ### In verbose mode, print the DIE tree as we parse it.
         if debugger.get_conf('dbg.verbose'):
             abs_origin = None
@@ -1849,12 +1857,13 @@ class ParsedDebugInfo(object):
                 debugger.verboseprint('')
                 debugger.verboseprint(die)
 
+        name = dieattr('name')
 
-        if nesting == 0 and dieattr('name') and cuns.entry_by_name(dieattr('name')):
+        if nesting == 0 and name and cuns.entry_by_name(name):
             # We're redefining a top-level type name or symbol that already exists.
             # Just copy the existing definition into this address.
-            debugger.verboseprint('(Redefining existing ', dieattr("name"), '); copying existing')
-            _add_entry(cuns.entry_by_name(dieattr('name')), None, die.offset)
+            debugger.verboseprint('(Redefining existing ', name, '); copying existing')
+            _add_entry(cuns.entry_by_name(name), None, die.offset)
             return
 
 
@@ -1868,7 +1877,6 @@ class ParsedDebugInfo(object):
             # it's just the primitive type all over again.
             # If it has a different name and size, it's a fundamental C type we didn't already add.
             # If it has a different name and same size it's a typedef.
-            name = dieattr('name')
             size = dieattr('byte_size')
             prim = self._encodings[dieattr('encoding')]
 
@@ -1900,13 +1908,11 @@ class ParsedDebugInfo(object):
         elif die.tag == 'DW_TAG_typedef':
             # name, type
             base = _lookup_type()
-            name = dieattr('name')
             _add_entry(AliasType(name, base), name, die.offset)
         elif die.tag == 'DW_TAG_array_type':
             # type
             base = _lookup_type()
             arr = ArrayType(base)
-            # TODO(aaron): if this causes collision problems, remove arr.name below.
             _add_entry(arr, arr.name, die.offset)
             ctxt = context.copy()
             ctxt['nesting'] += 1
@@ -1927,7 +1933,6 @@ class ParsedDebugInfo(object):
             context['array'].setLength(length)
         elif die.tag == 'DW_TAG_enumeration_type':
             # name, type, byte_size
-            name = dieattr('name')
             if name is None:
                 name = dieattr('linkage_name', None)
             base = _lookup_type()
@@ -1940,13 +1945,11 @@ class ParsedDebugInfo(object):
                 self.parseTypesFromDIE(child, cuns, ctxt)
         elif die.tag == 'DW_TAG_enumerator':  # Member of enumeration
             # name, const_value
-            name = dieattr('name')
             val = dieattr('const_value')
             context['enum'].addEnum(name, val)
         elif die.tag == 'DW_TAG_structure_type' or die.tag == 'DW_TAG_class_type':  # class or struct
             # name, byte_size, containing_type
             # TODO(aaron): can have 1+ DW_TAG_inheritance that duplicate or augment containing_type
-            name = dieattr('name')
             if name is None:
                 name = dieattr('linkage_name', None)
             size = dieattr('byte_size')
@@ -1965,7 +1968,6 @@ class ParsedDebugInfo(object):
             for child in die.iter_children():
                 self.parseTypesFromDIE(child, cuns, ctxt)
         elif die.tag == 'DW_TAG_union_type':
-            name = dieattr('name')
             if name is None:
                 name = dieattr('linkage_name', None)
             size = dieattr('byte_size')
@@ -1987,7 +1989,6 @@ class ParsedDebugInfo(object):
             # accessibility (1=public, 2=protected, 3=private)
             # data_member_location is a multibyte sequence:
             # [23h, Xh] means 'at offset Xh' (DW_OP_plus_uconst)
-            name = dieattr('name')
             base = _lookup_type()
             if context['class'].is_union():
                 # This is a member field of a union; no offset info.
@@ -2049,7 +2050,6 @@ class ParsedDebugInfo(object):
             # * An inlined_subroutine can have a low_pc--high_pc range.
             #   It has an abstract_origin that points to a subprogram canonically defining it within a
             #   CU. You may need to recursively follow 'specification' from there to get the real CU.
-            name = dieattr('name')
 
             # 'name' itself is going to be a mangled name, which isn't super useful to the user.
             # Get this in demangled form.
@@ -2241,7 +2241,6 @@ class ParsedDebugInfo(object):
             # Used only for 'pointers to methods'. Establishes a type for a pointer to
             # a method with a specified return type & formal arg types.
             # This is used as a target for a TAG_pointer_type to a vtable entry.
-            name = dieattr('name')
             enclosing_class = context.get("class") or None
             return_type = _lookup_type() or _VOID
             method_type = MethodPtrType(name, self.addr_size, return_type, enclosing_class)
@@ -2254,7 +2253,6 @@ class ParsedDebugInfo(object):
         elif die.tag == 'DW_TAG_ptr_to_member_type':
             # Used for pointers to member methods or fields of a class/struct.
             # Establishes a type for the pointer. This type may be named or anonymous.
-            name = dieattr('name')
             member_type = _lookup_type()
             class_type = _lookup_type('containing_type')
             member_ptr_type = PtrToMember(name, self.addr_size, member_type, class_type)
@@ -2266,7 +2264,6 @@ class ParsedDebugInfo(object):
             if dieattr('abstract_origin'):
                 origin = _resolve_abstract_origin()
 
-            name = dieattr('name')
             base = _lookup_type()
             artificial = bool(dieattr('artificial', False))
 
@@ -2291,7 +2288,6 @@ class ParsedDebugInfo(object):
             elif dieattr('specification'):
                 origin = _resolve_abstract_origin('specification')
 
-            name = dieattr('name')
             if name is None and origin is not None:
                 name = origin.var_name
             base = _lookup_type()

@@ -1,5 +1,6 @@
 # (c) Copyright 2022 Aaron Kimball
 
+import arduino_dbg.binutils as binutils
 import arduino_dbg.dump as dump
 import arduino_dbg.term as term
 
@@ -83,6 +84,8 @@ class DbgTestCase(unittest.TestCase):
 
         if cls.console_printer:
             cls.console_printer.shutdown()
+
+        binutils.close_demangle_threads()
 
 
     def _get_datatype_for(self, sym_or_type):

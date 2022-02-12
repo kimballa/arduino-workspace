@@ -26,6 +26,7 @@ def main():
     from .debugger import Debugger
     from .repl import Repl
     from .term import ConsolePrinter
+    import arduino_dbg.binutils as binutils
     import arduino_dbg.dump as dump
     import arduino_dbg.io as io
 
@@ -57,6 +58,9 @@ def main():
         # ourselves, first, to prevent its thread from hanging up program exit.
         if main_owns_printer:
             console_printer.shutdown()
+
+        # Close any global c++filt DemangleThread instances opened up.
+        binutils.close_demangle_threads()
 
     try:
         ret = repl.loop()

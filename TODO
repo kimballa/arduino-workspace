@@ -15,9 +15,6 @@ On-device service capabilities:
 
 
 Client:
-  * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
-    switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
-    * As well as update correct MSP/PSP in ARMThumbArchInterface.finish_register_unwind().
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
@@ -26,10 +23,11 @@ Client:
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
 
-  * ARM headers create an absolutely massive number of types, which take us a long time to parse.
-    (~26s in empty.elf.) Roughly ~8 seconds of that is verboseprint(). Make that much faster.
-
   --------
+
+  * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
+    switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
+    * As well as update correct MSP/PSP in ARMThumbArchInterface.finish_register_unwind().
 
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
@@ -40,7 +38,7 @@ Client:
       intermediate frame.
 
   * types.py should handle union type? bit fields?
-  * Filter __dbg_service and __vector17 out of stack trace report and `frame` commands?
+  * Filter __dbg_service, __vector17, TC4_Handler out of stack trace report and `frame` commands?
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`, locals, etc?
