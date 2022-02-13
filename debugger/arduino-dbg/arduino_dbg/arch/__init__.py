@@ -217,7 +217,10 @@ class ArchInterface(object):
         current debugger config.
         """
         iface_name = debugger.get_arch_conf("arch_interface")
-        if iface_name not in ARCH_INTERFACES:
+        if iface_name is None:
+            debugger.msg_q(MsgLevel.WARN, f"Warning: No architecture interface specified")
+            return ArchInterface(debugger)  # Attempt to use the default ArchInterface.
+        elif iface_name not in ARCH_INTERFACES:
             debugger.msg_q(MsgLevel.WARN, f"Warning: Unknown architecture interface: {iface_name}")
             return None
 
