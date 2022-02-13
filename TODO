@@ -28,14 +28,12 @@ Client:
     helpful; we need the 'real' $PC from entering the breakpoint method in order to register
     break sites.
 
+  * 'step' command should report the newly-stepped-to $PC.
+    (May require implementing "debugger service stack frame hiding")
+
   --------
 
   * ARM: r12 actually seems to be a clobber register?
-
-  * Bug: why does `info debug_status` insist that debug_status is at addr 0x2000011c
-    when both inspection of disassembly as well as peeking at the RAM validate that the true
-    addr is at 0x2000011d ? Both .debug_info and the symtab confirm the ..11d addr. We are 
-    misinterpreting it when we load it -- why?
 
   * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
@@ -57,18 +55,12 @@ Client:
 
   * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
 
-SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
+SAM D51 support: (See Cortex-M4 Technical Reference Manual)
 * Breakpoint unit support
   * Create HW breakpoint
   * Delete HW breakpoint
   * Disable/enable HW breakpoint
-  * ... timer-irq-driven breaks need a way to 'kick off' single-step such that it gets back
-    to the bottom of the timer irq fn, enables single-step mode, and then returns from the irq
-    to execute the 1 opcode. __dbg_service() probably needs to return a value or set a status flag
-    checked in the irq fn.
 * Watchpoint unit support
 * Single-step support
-* ... cleaner backtrace via ARM-standard frame pointer record walking?
-    (gcc seems to automatically -fomit-frame-pointer so maybe not, ABI be damned.)
 
 

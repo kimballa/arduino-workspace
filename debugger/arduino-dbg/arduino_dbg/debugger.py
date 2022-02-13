@@ -752,7 +752,11 @@ class Debugger(object):
                 sym_type = sym.entry['st_info']['type']
                 if sym_type == "STT_NOTYPE" or sym_type == "STT_OBJECT" or sym_type == "STT_FUNC":
                     # This has a location worth memorizing
-                    dbg_sym = Symbol(sym, self.arch_iface.sym_addr_to_pc(sym.entry['st_value']))
+                    if sym_type == "STT_FUNC":
+                        addr = self.arch_iface.sym_addr_to_pc(sym.entry['st_value'])
+                    else:
+                        addr = sym.entry['st_value']
+                    dbg_sym = Symbol(sym, addr)
                     self._addr_to_symbol[dbg_sym.addr] = dbg_sym
                     self._symbols[dbg_sym.name] = dbg_sym
                     self._demangled_to_symbol[dbg_sym.demangled] = dbg_sym
