@@ -1140,6 +1140,9 @@ class Debugger(object):
             else:
                 msg = f'Paused at breakpoint, {bp}'
                 bp.enabled = True  # Definitionally, it's enabled, whether or not we thought so.
+        elif hwAddr != 0:
+            msg = f'Paused at breakpoint; $PC=0x{hwAddr:04x}'
+            # TODO(aaron): breakpoint.Breakpoint needs to register hwAddr.
         else:
             msg = "Paused by debugger."
 

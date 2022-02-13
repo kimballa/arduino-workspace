@@ -44,6 +44,12 @@ static inline void _set_dbg_status(uint8_t new_status) {
 #define DBG_STATUS_HARD_BKPT    (0x2)  // True if a hardware BKPT triggered the debugger service.
 #define DBG_STATUS_DEBUG_MON_EN (0x4)  // True if we've enabled the onboard debug monitor (SAMD51).
 
+#if defined (ARDUINO_ARCH_SAMD)
+  // This device supports monitor-mode debugging of hardware breakpoints.
+  static constexpr uint8_t _hw_bkpt_supported = 1;
+#else
+  static constexpr uint8_t _hw_bkpt_supported = 0;
+#endif /* Arch select */
 
 /** Debugger wire protocol definition **/
 
@@ -272,6 +278,11 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
 
   static uint8_t cmd;
   __dbg_report_pause(bp_num, breakpoint_flags, hw_addr);
+
+  #ifdef ARDUINO_ARCH_SAMD
+    // Clear Debug Fault Status Register (DFSR) bits in System Control Block (SCB).
+    SCB->DFSR &= ~0x7;  // Clear DWTTRAP, BKPT, HALTED bits.
+  #endif /* SAMD */
 
   while (true) {
     while (!DBG_SERIAL.available()) { };
@@ -673,7 +684,15 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  __dbg_service(flag_num, flags, 0);
+  if (_hw_bkpt_supported && debug_status & DBG_STATUS_DEBUG_MON_EN) {
+    // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
+    // to shift into the debug monitor irq (and from there to the dbg service).
+    // This enables us to enter single-step mode cleanly if desired by the user.
+    asm volatile("BKPT \n\t":::"memory");
+  } else {
+    // Invoke __dbg_service() directly on the thread-mode call stack.
+    __dbg_service(flag_num, flags, 0);
+  }
 }
 
 void __dbg_break(const uint8_t flag_num, uint16_t* flags,
@@ -776,6 +795,12 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
 
     // Record that we are in hardware-break status.
     _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);
+
+    // Somewhat uniquely, on entry to this IRQ, BKPT instructions will stack the $pc of
+    // the BKPT instruction itself rather than the next $PC. Meaning when we exit this handler,
+    // we'll resume execution... right on top of the breakpoint (infinite loop back to here).
+    // We need to advance the $PC ourselves.
+    ((CortexM_IRQ_Frame*)(SP_entry))->PC += 2;
 
     // Invoke __dbg_service() with the return addr from the triggering breakpoint.
     __dbg_service(0, NULL, return_pc);

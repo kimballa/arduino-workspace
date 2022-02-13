@@ -23,6 +23,11 @@ Client:
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
 
+  * breakpoint.Breakpoint() needs ability to register a hw addr as discovered in
+    __acknowledge_pause(). nb that the literal BKPT instruction inside __dbg_break() is not
+    helpful; we need the 'real' $PC from entering the breakpoint method in order to register
+    break sites.
+
   --------
 
   * ARM: r12 actually seems to be a clobber register?
@@ -52,8 +57,6 @@ SAM D21 support: (See Cortex-M0+ Technical Reference Manual)
   * Create HW breakpoint
   * Delete HW breakpoint
   * Disable/enable HW breakpoint
-  * ... should DBGBREAK() use `BKPT` instr on ARM? By invoking the debug mon irq, we can then
-    do a proper single-step from there.
   * ... timer-irq-driven breaks need a way to 'kick off' single-step such that it gets back
     to the bottom of the timer irq fn, enables single-step mode, and then returns from the irq
     to execute the 1 opcode. __dbg_service() probably needs to return a value or set a status flag
