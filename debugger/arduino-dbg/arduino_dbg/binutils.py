@@ -35,6 +35,9 @@ class DemangleThread(threading.Thread):
         self._in_q = queue.Queue(maxsize=1)  # Queues to communicate w/ main thread
         self._out_q = queue.Queue(maxsize=1)
 
+        # Requests to demangle can only be made if you hold the lock.
+        self._user_lock = threading.Lock()
+
         self._running = True
         self.proc = subprocess.Popen(args,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
@@ -55,10 +58,14 @@ class DemangleThread(threading.Thread):
             self.join()
             return
 
-        self._running = False
-        self._in_q.put(None)  # Bounce the loop to detect _running == False condition.
-        self._in_q.join()
-        self.join()
+        self._user_lock.acquire()
+        try:
+            self._running = False
+            self._in_q.put(None)  # Bounce the loop to detect _running == False condition.
+            self._in_q.join()
+            self.join()
+        finally:
+            self._user_lock.release()
 
     def run(self):
         """
@@ -116,14 +123,20 @@ class DemangleThread(threading.Thread):
         if not self._running:
             raise Exception(f"Demangler thread ({self}) has shut down")
 
-        self._in_q.put(name)
-        self._in_q.join()
-        demangled = self._out_q.get()
-        self._out_q.task_done()  # Acknowledge receipt.
+        acquired = self._user_lock.acquire(blocking=True)
+        if not acquired:
+            raise Exception("Could not lock demangler thread.")
+        try:
+            self._in_q.put(name)
+            self._in_q.join()
+            demangled = self._out_q.get()
+            self._out_q.task_done()  # Acknowledge receipt.
 
-        if self.proc.returncode is not None:
-            self._print_q.put(('Warning: c++filt process terminated', term.WARN))
-            self._print_q.put((f'Last I/O: "{name}" -> "{demangled}"', term.WARN))
+            if self.proc.returncode is not None:
+                self._print_q.put(('Warning: c++filt process terminated', term.WARN))
+                self._print_q.put((f'Last I/O: "{name}" -> "{demangled}"', term.WARN))
+        finally:
+            self._user_lock.release()
 
         return demangled
 
