@@ -57,9 +57,10 @@ class ProcessState:
     command--response interactions to originate from the local client.
     """
 
-    UNKNOWN = 0  # Don't know if sketch is running or note. Bias to assuming it is running.
-    RUNNING = 1  # The sketch is definitely running.
-    BREAK = 2    # The sketch is definitely parked at a breakpoint / interrupt in the dbg service.
+    UNKNOWN = 0     # Don't know if sketch is running or note. Bias to assuming it is running.
+    RUNNING = 1     # The sketch is definitely running.
+    BREAK = 2       # The sketch is definitely parked at a breakpoint / interrupt in the dbg service.
+    ONE_STEP = 3    # We instructed the CPU to perform one step of execution only.
 
 
 class ConnRestart:
@@ -1103,7 +1104,7 @@ class Debugger(object):
             # Nothing further to process in this thread; no response.
             pass
         else:
-            self.msg_q(MsgLevel.ERR, f'Error: unkonwn response_type {response_type}')
+            self.msg_q(MsgLevel.ERR, f'Error: unknown response_type {response_type}')
 
     def __flush_recv_q(self):
         """
@@ -1135,11 +1136,16 @@ class Debugger(object):
         @return True if the listener thread still owns the cmd lock. False if we handed
             ownership off to the client
         """
+        prior_state = self._process_state
         self._process_state = ProcessState.BREAK  # Confirm the BREAK status first.
         own_lock = True
 
         flagBitNum, flagsAddr, hwAddr = self._parse_break_response(pause_notification)
-        if flagsAddr != 0:
+        if prior_state == ProcessState.ONE_STEP:
+            # The CPU just ran a single step and has returned to the debug service.
+            # Print the hwAddr we arrived at.
+            msg = f'$PC=0x{hwAddr:04x}'
+        elif flagsAddr != 0:
             # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
             sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
             bp = self._breakpoints.get_bp_for_sig(sig)
@@ -1206,7 +1212,7 @@ class Debugger(object):
                     self.__send_msg(msgline, response_type)
                     self._restart_responsibility = ConnRestart.INTERNAL
                 else:
-                    # Process state is either RUNNING or UNKNOWN.
+                    # Process state is either RUNNING, ONE_STEP, or UNKNOWN.
 
                     # We need to listen for traffic from the device in case it spontaneously
                     # emits a debug_print() or trace() message, or hits a breakpoint and
@@ -1409,7 +1415,18 @@ class Debugger(object):
         if not self.is_open():
             raise NoServerConnException("Error: No debug server connection open")
 
-        if self._process_state != ProcessState.BREAK and dbg_cmd != protocol.DBG_OP_BREAK:
+        if self._process_state == ProcessState.ONE_STEP and dbg_cmd == protocol.DBG_OP_STEP:
+            # In the ONE_STEP state, we expect to be sending a STEP command.
+            # Do not trigger the pre-command break below.
+            if self._protocol_version is None:
+                # One exception to that: if we don't know the protocol version spoken by the
+                # sketch, we do need to process a break first.
+                if not self.send_break():
+                    raise InvalidConnStateException("Could not pause device sketch to send command.")
+                # We are, however, going to send a 'step' command next. So remain in the
+                # one-step state. (send_break() will have reset it to the BREAK state.)
+                self._process_state = ProcessState.ONE_STEP
+        elif self._process_state != ProcessState.BREAK and dbg_cmd != protocol.DBG_OP_BREAK:
             # We need to be in the BREAK state to send any commands to the service
             # besides the break command itself. Send that first..
             if not self.send_break():
@@ -1470,9 +1487,14 @@ class Debugger(object):
 
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
         if break_ok.startswith(protocol.DBG_PAUSE_MSG):
+            prior_state = self._process_state
             self._process_state = ProcessState.BREAK
             flagBitNum, flagsAddr, hwAddr = self._parse_break_response(break_ok)
-            if flagsAddr != 0:
+            if prior_state == ProcessState.ONE_STEP:
+                # The CPU just ran a single step and has returned to the debug service.
+                # Print the hwAddr we arrived at.
+                self.msg_q(MsgLevel.INFO, f'$PC=0x{hwAddr:04x}')
+            elif flagsAddr != 0:
                 # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
                 sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
                 bp = self._breakpoints.get_bp_for_sig(sig)
@@ -1483,6 +1505,9 @@ class Debugger(object):
                 else:
                     self.msg_q(MsgLevel.INFO, f'Paused at breakpoint, {bp}')
                     bp.enabled = True  # Definitionally, it's enabled, whether or not we thought so.
+            elif hwAddr != 0:
+                self.msg_q(MsgLevel.INFO, f'Paused at breakpoint; $PC=0x{hwAddr:04x}')
+                # TODO(aaron): breakpoint.Breakpoint needs to register hwAddr.
             else:
                 self.msg_q(MsgLevel.INFO, "Paused by debugger.")
 
@@ -1507,11 +1532,14 @@ class Debugger(object):
 
     def send_step(self):
         """ Continue execution for a single step. """
+        if not self.get_arch_conf('single_step_supported'):
+            raise RuntimeError("Single-step mode not supported on this architecture.")
+
         self.clear_frame_cache()  # Backtrace is invalidated
         self.msg_q(MsgLevel.INFO, "Stepping...")
+        self._process_state = ProcessState.ONE_STEP
         self.send_cmd(protocol.DBG_OP_STEP, Debugger.RESULT_SILENT)
         # TODO(aaron): Should this return an acknowledgement?
-        self._process_state = ProcessState.UNKNOWN
 
 
     def reset_sketch(self):

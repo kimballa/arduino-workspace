@@ -16,6 +16,10 @@ On-device service capabilities:
 
 Client:
 
+  * BUG: It seems possible to get binutils.DemangleThread into a borked state if something
+    goes wrong in c++filt (Errno 32, broken pipe). [Maybe because our ^C's are getting passed
+    along to the subprocesses? Or other issues like if the serial conn experiences a reset?]
+
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
     a conflict. We need to either retain only fully-canonicalized names ('typ.name') OR only
@@ -28,14 +32,7 @@ Client:
     helpful; we need the 'real' $PC from entering the breakpoint method in order to register
     break sites.
 
-  * 'step' command should report the newly-stepped-to $PC.
-
   --------
-
-  * BUG: It seems possible to get binutils.DemangleThread into a borked state if something
-    goes wrong in c++filt (Errno 32, broken pipe).
-
-  * ARM: r12 actually seems to be a clobber register?
 
   * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.

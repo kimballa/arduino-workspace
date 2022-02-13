@@ -26,7 +26,7 @@ class DemangleThread(threading.Thread):
     def __init__(self, hide_params, print_q):
         super().__init__(name=f'DemangleThread({hide_params})', daemon=True)
         self.hide_params = hide_params
-        self.print_q = print_q
+        self._print_q = print_q
 
         args = ['c++filt']
         if hide_params:
@@ -50,6 +50,11 @@ class DemangleThread(threading.Thread):
         """
         Shut down the demangle thread process.
         """
+        if not self._running:
+            # Don't submit to a queue to a thread that's no longer active.
+            self.join()
+            return
+
         self._running = False
         self._in_q.put(None)  # Bounce the loop to detect _running == False condition.
         self._in_q.join()
@@ -84,6 +89,9 @@ class DemangleThread(threading.Thread):
             self._print_q.put((f'Exception in {repr(self)}: {e}', term.ERR))
             self._print_q.put((f'Last input to demangler: "{name}"', term.ERR))
         finally:
+            # No matter how we got here (normal shutdown or exception) mark the thread as done.
+            self._running = False
+
             # Close the pipe.
             try:
                 self.proc.stdin.close()  # Should cause the subprocess to stop.
@@ -105,10 +113,17 @@ class DemangleThread(threading.Thread):
         """
         Send `name` to c++filt for demangling; return the demangled name.
         """
+        if not self._running:
+            raise Exception(f"Demangler thread ({self}) has shut down")
+
         self._in_q.put(name)
         self._in_q.join()
         demangled = self._out_q.get()
         self._out_q.task_done()  # Acknowledge receipt.
+
+        if self.proc.returncode is not None:
+            self._print_q.put(('Warning: c++filt process terminated', term.WARN))
+            self._print_q.put((f'Last I/O: "{name}" -> "{demangled}"', term.WARN))
 
         return demangled
 
