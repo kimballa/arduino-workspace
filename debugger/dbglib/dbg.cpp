@@ -18,7 +18,7 @@
 
 /** Forward declarations needed later in this file **/
 extern "C" {
-  static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags)
+  static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint32_t hw_addr)
       __attribute__((no_instrument_function));
 
   static inline void __dbg_reset() __attribute__((no_instrument_function));
@@ -40,10 +40,15 @@ static inline void _set_dbg_status(uint8_t new_status) {
   #endif /* ARCH_SAMD */
 }
 
-#define DBG_STATUS_IN_BREAK  (0x1)  // True if we are inside the debugger service.
+#define DBG_STATUS_IN_BREAK     (0x1)  // True if we are inside the debugger service.
+#define DBG_STATUS_HARD_BKPT    (0x2)  // True if a hardware BKPT triggered the debugger service.
+#define DBG_STATUS_DEBUG_MON_EN (0x4)  // True if we've enabled the onboard debug monitor (SAMD51).
 
 
 /** Debugger wire protocol definition **/
+
+// Version of debugger wire protocol implemented by this library.
+static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 
 // The debugger client sends sentences beginning with a DBG_OP_ and ending with DBG_END.
 // The sentences may usually contain one or more whitespace-delimited base-10 integer arguments.
@@ -121,6 +126,7 @@ static inline void _set_dbg_status(uint8_t new_status) {
   // server. We want to run at a lower priority than any capability we may need
   // within the debugger service. Meaning that we run at the *lowest* priority.
   #define TC4_IRQ_PRIORITY (255)
+  #define DebugMon_IRQ_PRIORITY (255)
 
 #endif /* ARDUINO_ARCH_SAMD */
 
@@ -191,6 +197,33 @@ void __dbg_setup() {
     TC4->COUNT16.CTRLA.bit.ENABLE = 1;
     TC4_wait_for_sync();
 
+    // Set up "monitor-mode" debugging--if we encounter a BKPT instruction, trigger
+    // our own exception handler rather than hardware-halting for a JTAG debugger to probe.
+    // See https://interrupt.memfault.com/blog/cortex-m-debug-monitor
+    if (CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) {
+      // DHCSR register bit C_DEBUGEN is set; hardware debugger is attached, and we cannot
+      // unset it from software. Warn the attached arduino_dbg that this is the case.
+      // (Notwithstanding that this warning may be missed if the usb debugger isn't yet attached.)
+      static const char _hardware_debugger_attached_msg[] PROGMEM =
+          ">WARNING: hardware debugger is attached; dbg cannot trap BKPT instructions.";
+      DBG_SERIAL.println(_hardware_debugger_attached_msg);
+    } else {
+      // Set DebugMon IRQ priority to lowest priority level; other interrupts may still operate
+      // (to ensure USB link remains active).
+      NVIC_SetPriority(DebugMonitor_IRQn, DebugMon_IRQ_PRIORITY);
+
+      // Enable DebugMon interrupt.
+      CoreDebug->DEMCR |= 1 << CoreDebug_DEMCR_MON_EN_Pos;
+
+      static const char _software_debugger_en_msg[] PROGMEM =
+          ">Enabled DebugMon interrupt for onboard software debugger.";
+      DBG_SERIAL.println(_software_debugger_en_msg);
+
+      // Mark this as enabled for our own tracking (i.e., to let __dbg_status() know we can operate
+      // on hardware breakpoints safely).
+      _set_dbg_status(debug_status | DBG_STATUS_DEBUG_MON_EN);
+    }
+
   #endif /* (architecture select) */
   interrupts();
 }
@@ -200,29 +233,45 @@ void __dbg_setup() {
 static const char _paused_msg[] PROGMEM = "Paused ";
 
 /**
+ * Report to the attached debugger that we are in the Paused state.
+ */
+static inline void __dbg_report_pause(const uint8_t bp_num,
+    const uint16_t *const breakpoint_flags,
+    uint32_t hw_addr) {
+
+  // Report pause as: "Paused {dbgver:x} {swFlagNum:x} {swFlagsAddr:x} {hwAddr:x}\n"
+  DBG_SERIAL.print(FPSTR(_paused_msg));
+  DBG_SERIAL.print(DBG_PROTOCOL_VER, HEX);
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print(bp_num, HEX);
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.print((unsigned)breakpoint_flags, HEX);
+  DBG_SERIAL.print(' ');
+  DBG_SERIAL.println(hw_addr, HEX);
+}
+
+/**
  * Called at breakpoint in user code (or via ISR if serial traffic arrives). Starts a service
  * that communicates over DBG_SERIAL about the state of the CPU until released to continue by
  * the client.
  *
- * @param bp_num Represents the breakpoint number within its translation unit. Each invocation
+ * @param bp_num Represents the SW breakpoint number within its translation unit. Each invocation
  *    of BREAK() has a distinct breakpoint id.
  * @param breakpoint_flags Pointer to breakpoint-enabling flags for the translation unit containing
- *    the breakpoint. If the debugger itself invoked a program break, this will be NULL.
+ *    the SW breakpoint. If the debugger itself invoked a program break, this will be NULL.
+ * @param hw_addr The return $PC value associated with a hardware trap / breakpoint that triggered
+ *    this breakpoint / debug service.
  */
-static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
-  debug_status |= DBG_STATUS_IN_BREAK; // Mark the service as started so we don't recursively re-enter.
+static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint32_t hw_addr) {
+  // Mark the service as started so we don't recursively re-enter.
+  _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK);
   // In order to communicate over UART or USB Serial, we need to keep servicing interrupts within
   // debugger, even if called via IRQ.
   interrupts();
   // TODO(aaron): Give user a way to disable interrupts of theirs via callback SPI before sei?
 
   static uint8_t cmd;
-
-  // Report pause as: "Paused {flagNum:x} {flagsAddr:x}\n"
-  DBG_SERIAL.print(FPSTR(_paused_msg));
-  DBG_SERIAL.print(bp_num, HEX);
-  DBG_SERIAL.print(' ');
-  DBG_SERIAL.println((unsigned)breakpoint_flags, HEX);
+  __dbg_report_pause(bp_num, breakpoint_flags, hw_addr);
 
   while (true) {
     while (!DBG_SERIAL.available()) { };
@@ -241,11 +290,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags) {
     volatile register uint32_t SP asm("sp");
     switch(cmd) {
     case DBG_OP_BREAK:
-      // Report pause as: "Paused {flagNum:x} {flagsAddr:x}\n"
-      DBG_SERIAL.print(FPSTR(_paused_msg));
-      DBG_SERIAL.print(bp_num, HEX);
-      DBG_SERIAL.print(' ');
-      DBG_SERIAL.println((unsigned)breakpoint_flags, HEX);
+      __dbg_report_pause(bp_num, breakpoint_flags, hw_addr);
       break;
     case DBG_OP_RESET:
       __dbg_reset();
@@ -628,7 +673,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  __dbg_service(flag_num, flags);
+  __dbg_service(flag_num, flags, 0);
 }
 
 void __dbg_break(const uint8_t flag_num, uint16_t* flags,
@@ -647,7 +692,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  __dbg_service(flag_num, flags);
+  __dbg_service(flag_num, flags, 0);
 }
 
 
@@ -663,11 +708,24 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
       // Enter debug service if serial traffic available, and we are not already within the dbg
       // service.
-      __dbg_service(0, NULL);
+      __dbg_service(0, NULL, 0);
     }
   }
 
 #elif defined(ARDUINO_ARCH_SAMD)
+
+	// Immediately before IRQ entry, the following register state is pushed
+	// to the stack by hardware.
+	typedef struct __attribute__((packed)) _CortexM_IRQ_Frame_s {
+		uint32_t r0;
+		uint32_t r1;
+		uint32_t r2;
+		uint32_t r3;
+		uint32_t r12;
+		uint32_t LR;
+		uint32_t PC;
+		uint32_t xPSR;
+	} CortexM_IRQ_Frame;
 
   extern "C" void TC4_Handler(void) __attribute__((interrupt, used, no_instrument_function));
   extern "C" void TC4_Handler(void) {
@@ -678,9 +736,66 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
       if (!(debug_status & DBG_STATUS_IN_BREAK) && DBG_SERIAL.available()) {
         // Enter debug service if serial traffic available, and we are not already
         // within the dbg service.
-        __dbg_service(0, NULL);
+        __dbg_service(0, NULL, 0);
       }
     }
   }
 
+  extern "C" void DebugMon_Handler(void) __attribute__((naked, interrupt, used, no_instrument_function));
+  extern "C" void DebugMon_Handler(void) {
+    // Handler fired when a debug event occurs (BKPT instruction, or hardware breakpoint/watchpoint)
+
+    // This is a naked ISR. Start with our own prologue that matches what we believe
+    // gcc would emit, to eliminate surprises. We want to guarantee our ability to
+    // read specific stack data above the current call frame.
+    asm volatile (
+        ".cfi_def_cfa sp, 0 \n\t"
+        "mov   r0, sp       \n\t"
+        ".cfi_undefined 0   \n\t" // r0 is clobbered.
+        "mov   r12, sp      \n\t"
+        ".cfi_undefined 12  \n\t" // r12 is clobbered.
+        "bic.w r1, r0, #7   \n\t"
+        ".cfi_register 13, 1\n\t" // The "real" $SP is held in r1.
+        "mov   sp, r1       \n\t"
+        ".cfi_restore 13    \n\t" // $SP holds its own value again.
+        "push  {r0, lr}     \n\t"
+        ".cfi_offset 14, -4 \n\t"   // $LR is reg #14; pushed at $entrySP - 4.
+                                            // $r0 pushed @ $entrySP - 8 but we don't need
+                                            // to be able to unwind that within this method
+                                            // since it's an ISR-prestacked value.
+        ".cfi_adjust_cfa_offset 8\n\t"
+    :
+    :
+    : "memory"                      // Modifies $SP and RAM. Tell gcc not to optimize this.
+    );
+
+    volatile register uint32_t SP_entry asm("r12");  // $r12 contains $SP on entry.
+                                                     // (Old r12 was already stacked on IRQ entry)
+                                                     // This points to a CortexM_IRQ_Frame of data.
+    uint32_t return_pc = ((CortexM_IRQ_Frame*)(SP_entry))->PC;
+
+    // Record that we are in hardware-break status.
+    _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);
+
+    // Invoke __dbg_service() with the return addr from the triggering breakpoint.
+    __dbg_service(0, NULL, return_pc);
+
+    // Withdraw from hardware-break status.
+    _set_dbg_status(debug_status & ~(DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT));
+
+    // Hard-coded ISR epilogue.
+    asm volatile (
+        "ldmia.w sp!, {r0, lr}    \n\t"
+        ".cfi_register 13, 0      \n\t" // After the POP, the 'real' $SP is in r0.
+        ".cfi_restore 14          \n\t" // $LR is restored.
+        ".cfi_adjust_cfa_offset -8\n\t" // $SP -= 8, is now sitting on its CFA again.
+        "mov     sp, r0           \n\t"
+        ".cfi_restore 13          \n\t" // $SP is now stored in itself.
+        "bx      lr               \n\t" // Adios!
+        "nop                      \n\t"
+    :
+    :
+    : "memory"                      // Full epilogue including return instruction. Force non-opt.
+    );
+  }
 #endif /* architecture select */

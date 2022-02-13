@@ -25,6 +25,8 @@ Client:
 
   --------
 
+  * ARM: r12 actually seems to be a clobber register?
+
   * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
     * As well as update correct MSP/PSP in ARMThumbArchInterface.finish_register_unwind().

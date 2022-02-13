@@ -22,6 +22,9 @@ import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
 
+# The maximum protocol version id we speak.
+_HOST_MAX_PROTOCOL_VERSION = 1
+
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
 _DEFAULT_HISTORY_FILENAME = os.path.expanduser("~/.arduino_dbg_history")
 
@@ -107,6 +110,10 @@ class DebuggerIOError(Exception):
     pass
 
 
+class UnsupportedDebuggerProtocolException(DebuggerIOError):
+    """ We cannot interact with a sketch running a newer version of dbglib. """
+    pass
+
 class NoServerConnException(DebuggerIOError):
     """ We're not actually connected in the first place. """
     pass
@@ -140,6 +147,7 @@ class Debugger(object):
             change.
         @param history_change_hook a function to call when the history filename is changed.
         """
+        self._protocol_version = None  # Protocol version running on attached sketch.
         self._print_q = print_q  # Data from serial conn to print directly to console.
         self._history_change_hook = history_change_hook
 
@@ -1117,7 +1125,7 @@ class Debugger(object):
         self._process_state = ProcessState.BREAK  # Confirm the BREAK status first.
         own_lock = True
 
-        flagBitNum, flagsAddr = self._parse_break_response(pause_notification)
+        flagBitNum, flagsAddr, hwAddr = self._parse_break_response(pause_notification)
         if flagsAddr != 0:
             # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
             sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
@@ -1391,6 +1399,12 @@ class Debugger(object):
             if not self.send_break():
                 raise InvalidConnStateException("Could not pause device sketch to send command.")
 
+        if dbg_cmd != protocol.DBG_OP_BREAK and self._protocol_version > _HOST_MAX_PROTOCOL_VERSION:
+            # We are not forwards-compatible and unexpected results may occur if we attempt to
+            # debug a device running a newer version of the protocol than we speak. Stop here.
+            raise UnsupportedDebuggerProtocolException(
+                f'Cannot send command to device running debugger protocol v{self._protocol_version}')
+
         if type(dbg_cmd) == list:
             dbg_cmd = [str(x) for x in dbg_cmd]
             dbg_cmd = " ".join(dbg_cmd) + "\n"
@@ -1441,7 +1455,7 @@ class Debugger(object):
         break_ok = self.send_cmd(protocol.DBG_OP_BREAK, Debugger.RESULT_ONELINE)
         if break_ok.startswith(protocol.DBG_PAUSE_MSG):
             self._process_state = ProcessState.BREAK
-            flagBitNum, flagsAddr = self._parse_break_response(break_ok)
+            flagBitNum, flagsAddr, hwAddr = self._parse_break_response(break_ok)
             if flagsAddr != 0:
                 # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
                 sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
@@ -1847,20 +1861,36 @@ class Debugger(object):
         self.msg_q(MsgLevel.INFO, msg)
 
     def _parse_break_response(self, pause_notification):
-        # The pause notification is of the form: 'Paused {flagBitNum:x} {flagsAddr:x}'
+        # The pause notification is of the form: 'Paused {ver:x} {flagBitNum:x} {flagsAddr:x} {hwAddr:x}'
         tokens = pause_notification.split()
-        if len(tokens) < 3:
+        if len(tokens) < 5:
+            protoVer = 0
             flagBitNum = 0
             flagsAddr = 0
+            hwAddr = 0
         else:
             try:
-                flagBitNum = int(tokens[1], base=16)
-                flagsAddr = int(tokens[2], base=16)
+                protoVer = int(tokens[1], base=16)
+                flagBitNum = int(tokens[2], base=16)
+                flagsAddr = int(tokens[3], base=16)
+                hwAddr = int(tokens[4], base=16)
             except ValueError:
                 # Couldn't parse breakpoint addr. Ignore it.
+                protoVer = None
                 flagBitNum = 0
                 flagsAddr = 0
+                hwAddr = 0
 
-        return flagBitNum, flagsAddr
+        if self._protocol_version is None:
+            self._protocol_version = protoVer
+            if protoVer > _HOST_MAX_PROTOCOL_VERSION:
+                self.msg_q(
+                    MsgLevel.ERR,
+                    f'Attached to sketch compiled with debugger protocol {protoVer}; '
+                    f'debugger max_ver is {_HOST_MAX_PROTOCOL_VERSION}. Unexpected behavior may occur.')
+                self.msg_q(
+                    MsgLevel.ERR, 'You may need to upgrade this debugger to interact with this sketch.')
+
+        return flagBitNum, flagsAddr, hwAddr
 
 

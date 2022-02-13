@@ -9,9 +9,10 @@ from arduino_dbg.term import MsgLevel
 import arduino_dbg.term as term
 
 _debugger_methods = [
-  "__vector_17",     # AVR timer interrupt
-  "TC4_Handler",     # SAMD51 timer interrupt
-  "__dbg_service",   # The debugger interactive service loop
+  "__vector_17",         # AVR timer interrupt
+  "TC4_Handler",         # SAMD51 timer interrupt
+  "DebugMon_Handler",    # SAMD51 breakpoint / debug monitor interrupt
+  "__dbg_service",       # The debugger interactive service loop
 ]
 
 
