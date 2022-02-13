@@ -12,6 +12,7 @@ import time
 import traceback
 
 import arduino_dbg.arch as arch
+import arduino_dbg.binutils as binutils
 import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.conf_files as conf_files
 import arduino_dbg.protocol as protocol
@@ -23,7 +24,7 @@ from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
 
 # The maximum protocol version id we speak.
-_HOST_MAX_PROTOCOL_VERSION = 1
+HOST_MAX_PROTOCOL_VERSION = 1
 
 _LOCAL_CONF_FILENAME = os.path.expanduser("~/.arduino_dbg.conf")
 _DEFAULT_HISTORY_FILENAME = os.path.expanduser("~/.arduino_dbg_history")
@@ -41,7 +42,8 @@ _dbg_conf_keys = [
     "dbg.historyfile",
     "dbg.poll.retry",    # Attempt to listen how many times in __wait_response() ?
     "dbg.poll.timeout",  # When listening to recv_q in __wait_response(), wait how long?
-    'dbg.print_die.offset',
+    "dbg.print_die.offset",
+    "dbg.internal.stack.frames",  # True: show all backtrace frames. False: hide debugger internals.
     "dbg.verbose",
 ]
 
@@ -114,6 +116,7 @@ class UnsupportedDebuggerProtocolException(DebuggerIOError):
     """ We cannot interact with a sketch running a newer version of dbglib. """
     pass
 
+
 class NoServerConnException(DebuggerIOError):
     """ We're not actually connected in the first place. """
     pass
@@ -153,6 +156,11 @@ class Debugger(object):
 
         self._recv_q = None       # Main debugger client receives responses from server via this q.
         self._send_q = None       # Client(s) may enqueue comms to the server (commands) via this q.
+
+        # We will need demangling service to load an ELF file. While the demangler threads
+        # were started as part of main(), they may have been closed in the interim. Ensure
+        # they're running now.
+        binutils.start_demangle_threads(self._print_q)
 
         # A thread wishing to send on the send_q must acquire the 'submit lock' first. You must
         # acquire this *before* calling any methods that may submit commands, as a compound method
@@ -399,6 +407,7 @@ class Debugger(object):
         conf_map["dbg.conn.retries"] = _DEFAULT_MAX_CONN_RETRIES
         conf_map["dbg.poll.retry"] = _DEFAULT_MAX_POLL_RETRIES
         conf_map["dbg.poll.timeout"] = _DEFAULT_POLL_TIMEOUT
+        conf_map["dbg.internal.stack.frames"] = False
 
         return conf_map
 
@@ -1406,7 +1415,7 @@ class Debugger(object):
             if not self.send_break():
                 raise InvalidConnStateException("Could not pause device sketch to send command.")
 
-        if dbg_cmd != protocol.DBG_OP_BREAK and self._protocol_version > _HOST_MAX_PROTOCOL_VERSION:
+        if dbg_cmd != protocol.DBG_OP_BREAK and self._protocol_version > HOST_MAX_PROTOCOL_VERSION:
             # We are not forwards-compatible and unexpected results may occur if we attempt to
             # debug a device running a newer version of the protocol than we speak. Stop here.
             raise UnsupportedDebuggerProtocolException(
@@ -1695,20 +1704,78 @@ class Debugger(object):
 
     ######### Highest-level debugging functions built on top of low-level capabilities
 
-    def get_backtrace(self, limit=None):
+    def __is_internal_method_name(self, method_name):
+        """
+        Return True if method_name is an 'internal' method name according to
+        dbg.internal.stack.frames and thus gets hidden from users by default.
+        """
+        return method_name in stack.DEBUGGER_METHODS
+
+    def __is_internal_stack_frame(self, stack_frame):
+        """
+        Return True if stack_frame is an 'internal' frame according to
+        dbg.internal.stack.frames and thus gets hidden from users by default.
+        """
+        return (self.__is_internal_method_name(stack_frame.name) or
+                self.__is_internal_method_name(stack_frame.demangled))
+
+    def __get_internal_method_cnt(self, frame_list):
+        """
+        Return the number of items on this stack frame list that qualify as internal methods.
+        """
+        cnt = 0
+        for frame in frame_list:
+            if self.__is_internal_stack_frame(frame):
+                cnt += 1
+            else:
+                break  # We found the first non-internal method. Internals are never below this.
+
+        return cnt
+
+    def __get_user_backtrace_list(self, show_all_frames, frame_list, limit):
+        """
+        If show_all_frames is false, return the first 'limit' elements of frame_list that are *not*
+        internal stack frames.  If show_all_frames is true, return the first 'limit' elements.
+
+        This is a helper method to be used only within get_backtrace().
+        """
+        if show_all_frames:
+            return frame_list[0:limit]
+
+        start = self.__get_internal_method_cnt(frame_list)
+
+        if limit is None:
+            return frame_list[start:]
+        else:
+            return frame_list[start:limit + start]
+
+
+    def get_backtrace(self, limit=None, force_unhide=False):
         """
         Retrieve a list of memory addresses representing the top `limit` function calls
         on the call stack. (If limit=None, list all.)
 
+        This method checks the conf prop dbg.internal.stack.frames; if False, this hides
+        frames belonging to debugger-internal service methods (like __dbg_service()). Methods
+        that call this thus refer to frame ids in a list where such service methods are discarded.
+
+        If force_unhide is True, this overrides dbg.internal.stack.frames
+
         Return a list of dicts that describe each frame of the stack.
         """
+        all_frames = force_unhide or self.get_conf('dbg.internal.stack.frames')
+
         if self._cached_frames:
+            internal_cnt = self.__get_internal_method_cnt(self._cached_frames)
             if self._frame_cache_complete:
                 # We've traced all the backtrace there is, just return it.
-                return self._cached_frames[0:limit]
-            elif limit is not None and len(self._cached_frames) >= limit:
+                return self.__get_user_backtrace_list(all_frames, self._cached_frames, limit)
+            elif limit is not None and len(self._cached_frames) >= limit and all_frames:
                 # We already have a backtrace cache long enough to accommodate this request
                 return self._cached_frames[0:limit]
+            elif limit is not None and len(self._cached_frames) >= limit + internal_cnt:
+                # We already have a backtrace cache long enough to accommodate this request
+                return self._cached_frames[internal_cnt:limit + internal_cnt]
 
         # We need to go deeper.
 
@@ -1727,6 +1794,8 @@ class Debugger(object):
                 'Do not know how to calculate stack_frame offsets for stack model: '
                 f'{stack_model}')
 
+        num_skip = 0  # Number of method frames to skip because they're internal
+
         if not self._cached_frames or not len(self._cached_frames):
             # We are starting the backtrace at the top.
             # Start by establishing where we are right now.
@@ -1737,6 +1806,8 @@ class Debugger(object):
             frames = []
             frame = stack.CallFrame(self, pc, sp, regs)
             frames.append(frame)
+            if not all_frames and self.__is_internal_stack_frame(frame):
+                num_skip += 1
         else:
             # We have some backtrace already available.
             assert len(self._cached_frames) > 0
@@ -1749,10 +1820,15 @@ class Debugger(object):
             pc = frame.addr
             sp = frame.sp
 
+            if not all_frames:
+                # For purposes of counting toward 'limit', disregard any frames we already
+                # have that are internal methods.
+                num_skip += self.__get_internal_method_cnt(self._cached_frames)
+
         # Walk back through the stack to establish the method calls that got us
         # to where we are, up to either the limits of traceability, the top of the stack,
         # or the user-requested limit..
-        while sp < ramend and pc != 0 and (limit is None or len(frames) < limit):
+        while sp < ramend and pc != 0 and (limit is None or len(frames) < (num_skip + limit)):
             regs = frame.unwind_registers(regs)
             if frame.name is None:
                 self._frame_cache_complete = True
@@ -1784,6 +1860,11 @@ class Debugger(object):
             frame = stack.CallFrame(self, pc, sp, regs)
             frames.append(frame)
 
+            if not all_frames and self.__is_internal_stack_frame(frame):
+                # We added a valid stack frame, but it's for an internal method, so it doesn't
+                # count toward limit.
+                num_skip += 1
+
         self._cached_frames = frames  # Cache this backtrace for further lookups.
 
         if sp >= ramend or pc == 0:
@@ -1791,46 +1872,33 @@ class Debugger(object):
             self._frame_cache_complete = True
 
         # Return the requested subset of the stack trace.
-        return frames[0:limit]
+        return self.__get_user_backtrace_list(all_frames, self._cached_frames, limit)
 
     def clear_frame_cache(self):
         """ Clear cached backtrace information. """
         self._cached_frames = None
         self._frame_cache_complete = False
 
-    def get_frame_regs(self, frame_num):
+    def get_frame_regs(self, frame_num, force_unhide=False):
         """
         Return register snapshot as of the specified frame.
         """
 
-        frames = self.get_backtrace(limit=frame_num+1)
+        frames = self.get_backtrace(limit=frame_num+1, force_unhide=force_unhide)
         if len(frames) <= frame_num:
             # Cannot find a frame that deep in the backtrace.
             return None
-        elif frame_num > 0 and frames[frame_num - 1].unwound_registers is not None:
-            # The answer we're looking for is cached. Skip the calculations below.
-            return frames[frame_num - 1].unwound_registers
+        else:
+            return frames[frame_num].break_registers
 
-        # start with the current regs.
-        regs = self.get_registers()
-
-        # frame[i].unwind_registers() will reverse the register operations within that
-        # frame, giving the register state for frame i+1. So if frame_num=0, this loop
-        # doesn't run and the real registers are the current registers. Otherwise, we
-        # apply this reversal function on all frames prior to the target frame.
-        for i in range(0, frame_num):
-            regs = frames[i].unwind_registers(regs)
-
-        return regs
-
-    def get_frame_vars(self, frame_num):
+    def get_frame_vars(self, frame_num, force_unhide=False):
         """
         Return information about variables in scope at the $PC within a stack frame.
 
         Returns a list of types.MethodType and types.LexicalScope objects that enclose
         the $PC at the requested stack frame, or None if there is no such frame.
         """
-        frame_regs = self.get_frame_regs(frame_num)
+        frame_regs = self.get_frame_regs(frame_num, force_unhide)
         if frame_regs is None:
             return None  # No such frame.
 
@@ -1865,7 +1933,7 @@ class Debugger(object):
         """
         # Get partial backtrace to establish breakpoint location. Top of stack is
         # the dbg_service; breakpoint is in whatever's below that.
-        frames = self.get_backtrace(limit=2)
+        frames = self.get_backtrace(limit=2, force_unhide=True)
         if len(frames) < 2:
             # Not really at a useful breakpoint? Nothing to register w/o a $PC.
             msg = 'Paused at unknown breakpoint.'
@@ -1899,11 +1967,11 @@ class Debugger(object):
 
         if self._protocol_version is None:
             self._protocol_version = protoVer
-            if protoVer > _HOST_MAX_PROTOCOL_VERSION:
+            if protoVer > HOST_MAX_PROTOCOL_VERSION:
                 self.msg_q(
                     MsgLevel.ERR,
                     f'Attached to sketch compiled with debugger protocol {protoVer}; '
-                    f'debugger max_ver is {_HOST_MAX_PROTOCOL_VERSION}. Unexpected behavior may occur.')
+                    f'debugger max_ver is {HOST_MAX_PROTOCOL_VERSION}. Unexpected behavior may occur.')
                 self.msg_q(
                     MsgLevel.ERR, 'You may need to upgrade this debugger to interact with this sketch.')
 

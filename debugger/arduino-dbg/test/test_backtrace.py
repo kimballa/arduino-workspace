@@ -20,6 +20,7 @@ class TestBacktrace(DbgTestCase):
 
     def setUp(self):
         self.debugger.clear_frame_cache()  # Clear backtraces from prior testcases.
+        self.debugger.set_conf('dbg.internal.stack.frames', True)  # Reset this conf
 
     def test_backtrace_size(self):
         frames = self.debugger.get_backtrace()
@@ -34,6 +35,35 @@ class TestBacktrace(DbgTestCase):
         self.assertEqual(len(frames), 4)  # ... and now four
         frames = self.debugger.get_backtrace()  # Get the rest.
         self.assertEqual(len(frames), 7)  # We expect 7 backtrace frames
+
+    def test_hiding_frames(self):
+        """ Test that we can gracefully hide service frames from the user """
+        try:
+            # initial state: show service frames enabled
+            frames = self.debugger.get_backtrace(2)
+            self.assertEqual(len(frames), 2)  # We expect 2 so far.
+            self.assertEqual(frames[0].name, '__dbg_service')
+
+            self.debugger.set_conf('dbg.internal.stack.frames', False)
+            frames = self.debugger.get_backtrace(2)  # Reprocess. Will need to grab 3 total frames.
+            self.assertEqual(len(frames), 2)  # But we expect only 2 response frames.
+            self.assertEqual(frames[0].demangled, 'I2CParallel::getByte()')  # 1st user method!
+
+            frames = self.debugger.get_backtrace()  # Get all user frames.
+            self.assertEqual(len(frames), 6)  # We expect 6 user frames.
+
+            self.debugger.set_conf('dbg.internal.stack.frames', True)
+            frames = self.debugger.get_backtrace()  # Get all frames.
+            self.assertEqual(len(frames), 7)  # We expect 7 total frames.
+
+            self.debugger.set_conf('dbg.internal.stack.frames', False)
+            frames = self.debugger.get_backtrace()  # Get all frames.
+            self.assertEqual(len(frames), 6)  # ... now back to just 6 frames.
+
+            frames = self.debugger.get_backtrace(force_unhide=True)  # Override conf.
+            self.assertEqual(len(frames), 7)  # We expect 7 total frames.
+        finally:
+            self.debugger.set_conf('dbg.internal.stack.frames', True)  # Reset this conf.
 
     def test_backtrace_incremental_2(self):
         frames = self.debugger.get_backtrace(2)

@@ -29,9 +29,11 @@ Client:
     break sites.
 
   * 'step' command should report the newly-stepped-to $PC.
-    (May require implementing "debugger service stack frame hiding")
 
   --------
+
+  * BUG: It seems possible to get binutils.DemangleThread into a borked state if something
+    goes wrong in c++filt (Errno 32, broken pipe).
 
   * ARM: r12 actually seems to be a clobber register?
 
@@ -48,7 +50,6 @@ Client:
       intermediate frame.
 
   * types.py should handle union type? bit fields?
-  * Filter __dbg_service, __vector17, TC4_Handler out of stack trace report and `frame` commands?
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`, locals, etc?

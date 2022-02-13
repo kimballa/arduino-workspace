@@ -8,7 +8,7 @@ import arduino_dbg.binutils as binutils
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.term as term
 
-_debugger_methods = [
+DEBUGGER_METHODS = [
   "__vector_17",         # AVR timer interrupt
   "TC4_Handler",         # SAMD51 timer interrupt
   "DebugMon_Handler",    # SAMD51 breakpoint / debug monitor interrupt
@@ -355,19 +355,19 @@ def get_stack_autoskip_count(debugger):
     """
     Return the number of bytes in the stack to skip when dumping the stack
     to the user console. This is the number of bytes required to skip all
-    _debugger_methods[] entries on the top of the call stack.
+    DEBUGGER_METHODS[] entries on the top of the call stack.
     """
     regs = debugger.get_registers()
     sp = regs["SP"]
 
-    frames = debugger.get_backtrace(limit=len(_debugger_methods) + 1)
+    frames = debugger.get_backtrace(limit=len(DEBUGGER_METHODS) + 1, force_unhide=True)
     for frame in frames:
-        if frame.name not in _debugger_methods:
+        if frame.name not in DEBUGGER_METHODS:
             # This frame is not part of the debugger service, it's a real frame.
             # Skip count == diff between this frame's SP and real SP
             return frame.break_registers['SP'] - sp
 
-    # The _debugger_methods list contains methods that are mutually exclusive;
+    # The DEBUGGER_METHODS list contains methods that are mutually exclusive;
     # only a subset will ever be appropriate for a given architecture. We shouldn't get
     # here, because it implies the debugger's stack frames are the entire stack; not possible.
     raise RuntimeError("No viable stack frame found")

@@ -155,6 +155,10 @@ def load_dump(filename, print_q, config=None, history_change_hook=None):
         history_change_hook=history_change_hook, is_locked=True)
     dbg.set_process_state(debugger.ProcessState.BREAK)  # It's definitionally always paused.
 
+    # The debugger will not send a 'break' out of the gate, so the protocol version handshake
+    # won't happen. Pre-initialize the protocol version from the handshake to the ver we speak.
+    dbg._protocol_version = debugger.HOST_MAX_PROTOCOL_VERSION
+
     # Create a service that acts like the __dbg_service() in C.
     # Connect it to the ram/image and the 'right' pipe.
     dbg_serv = HostedDebugService(dump_data, dbg, right)
@@ -243,7 +247,7 @@ class HostedDebugService(object):
                 self._send(f'{data:x}')
             elif cmd == protocol.DBG_OP_BREAK:
                 # We're always paused.
-                self._send(protocol.DBG_PAUSE_MSG)
+                self._send(f'{protocol.DBG_PAUSE_MSG} {debugger.HOST_MAX_PROTOCOL_VERSION:x} 0 0 0')
             elif cmd == protocol.DBG_OP_CONTINUE:
                 self._send_comment("Cannot continue in image debugger")
                 # Debugger expects a RESULT_ONELINE, so send a formal response that is not

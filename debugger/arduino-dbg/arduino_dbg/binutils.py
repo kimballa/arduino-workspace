@@ -9,6 +9,9 @@ import re
 import subprocess
 import threading
 
+import arduino_dbg.term as term
+
+
 # undesirable suffixes on demangled names
 _clone_regex = re.compile(r'\[clone \.[A-Za-z_]+.*\]$')
 
@@ -20,9 +23,10 @@ class DemangleThread(threading.Thread):
     causes significant lag when parsing debug info, we open a single long-lived
     instance and pass names one-by-one.
     """
-    def __init__(self, hide_params):
+    def __init__(self, hide_params, print_q):
         super().__init__(name=f'DemangleThread({hide_params})', daemon=True)
         self.hide_params = hide_params
+        self.print_q = print_q
 
         args = ['c++filt']
         if hide_params:
@@ -39,6 +43,9 @@ class DemangleThread(threading.Thread):
 
         self.start()
 
+    def __repr__(self):
+        return f"DemangleThread(hide_params={self.hide_params})"
+
     def close(self):
         """
         Shut down the demangle thread process.
@@ -52,6 +59,7 @@ class DemangleThread(threading.Thread):
         """
         Interact with an instance of `c++filt` running as a subprocess.
         """
+        name = None
         try:
             while self._running:
                 name = self._in_q.get()
@@ -72,6 +80,9 @@ class DemangleThread(threading.Thread):
 
                 demangled = demangled.strip()
                 self._out_q.put(demangled)
+        except Exception as e:
+            self._print_q.put((f'Exception in {repr(self)}: {e}', term.ERR))
+            self._print_q.put((f'Last input to demangler: "{name}"', term.ERR))
         finally:
             # Close the pipe.
             try:
@@ -129,6 +140,19 @@ def close_demangle_threads():
     _hide_param_demangle_thread = None
 
 
+def start_demangle_threads(print_q):
+    """
+    Bootstrap global DemangleThread instances.
+    """
+    global _main_demangle_thread, _hide_param_demangle_thread
+
+    if _hide_param_demangle_thread is None:
+        _hide_param_demangle_thread = DemangleThread(hide_params=True, print_q=print_q)
+
+    if _main_demangle_thread is None:
+        _main_demangle_thread = DemangleThread(hide_params=False, print_q=print_q)
+
+
 def demangle(name, hide_params=False):
     """
         Use c++filt in binutils to demangle a C++ name into a human-readable one.
@@ -141,12 +165,8 @@ def demangle(name, hide_params=False):
 
     global _hide_param_demangle_thread, _main_demangle_thread
     if hide_params:
-        if _hide_param_demangle_thread is None:
-            _hide_param_demangle_thread = DemangleThread(hide_params=True)
         demangle_thread = _hide_param_demangle_thread
     else:
-        if _main_demangle_thread is None:
-            _main_demangle_thread = DemangleThread(hide_params=False)
         demangle_thread = _main_demangle_thread
 
     demangled = demangle_thread.demangle(name)

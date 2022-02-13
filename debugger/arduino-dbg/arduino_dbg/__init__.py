@@ -39,6 +39,7 @@ def main():
     main_owns_printer = True
     console_printer = ConsolePrinter()
     try:
+        binutils.start_demangle_threads(console_printer.print_q)
         console_printer.start()
         if args.dump:
             # Create a Debugger for the specfified dump file.

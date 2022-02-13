@@ -33,7 +33,8 @@ class DbgTestCase(unittest.TestCase):
         """
         config = {
             'dbg.verbose': False,  # Don't spam terminal with debug output.
-            'dbg.colors': False,   # Don't use VT100 colors on output
+            'dbg.colors': False,   # Don't use VT100 colors on output.
+            'dbg.internal.stack.frames': True,  # Show all stack frames.
         }
 
         return config
@@ -62,6 +63,8 @@ class DbgTestCase(unittest.TestCase):
 
         cls.console_printer = term.NullPrinter()
         cls.console_printer.start()
+
+        binutils.start_demangle_threads(cls.console_printer.print_q)
 
         (debugger, dbg_service) = dump.load_dump(filename, cls.console_printer.print_q,
                                                  config=DbgTestCase.get_debug_config())
