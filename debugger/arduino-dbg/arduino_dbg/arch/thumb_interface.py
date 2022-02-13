@@ -37,6 +37,9 @@ class ArmThumbArchInterface(arch.ArchInterface):
         logical_code_min = self.debugger.get_arch_conf("TEXT_SEGMENT_MIN")
         physical_code_min = 0
 
+        peripheral_min = self.debugger.get_arch_conf("PERIPHERAL_SEGMENT_MIN")
+        peripheral_max = self.debugger.get_arch_conf("PERIPHERAL_SEGMENT_MAX")
+
         # Flash for .text starts at address 0 but is mem-mapped on-device to use the same access
         # as you would for ordinary SRAM. No Flash-specific accessors required.
         self._mem_map.add_segment(mmap.Segment('.text', mmap.MEM_FLASH, mmap.ACCESS_TYPE_RAM,
@@ -45,6 +48,11 @@ class ArmThumbArchInterface(arch.ArchInterface):
         # .data and .bss start at 0x20000000  and run for RAMSIZE bytes up from there.
         self._mem_map.add_segment(mmap.Segment('.data', mmap.MEM_RAM, mmap.ACCESS_TYPE_RAM,
                                                logical_data_min, physical_data_min, data_size))
+
+        # Other memory-mapped peripherals consume the addr space above 0x30000000
+        self._mem_map.add_segment(mmap.Segment('peripherals', mmap.MEM_RAM, mmap.ACCESS_TYPE_RAM,
+                                               peripheral_min, peripheral_min,
+                                               peripheral_max - peripheral_min + 1))
 
         self._mem_map.validate()
         return self._mem_map
