@@ -43,6 +43,7 @@ static inline void _set_dbg_status(uint8_t new_status) {
 #define DBG_STATUS_IN_BREAK     (0x1)  // True if we are inside the debugger service.
 #define DBG_STATUS_HARD_BKPT    (0x2)  // True if a hardware BKPT triggered the debugger service.
 #define DBG_STATUS_DEBUG_MON_EN (0x4)  // True if we've enabled the onboard debug monitor (SAMD51).
+#define DBG_STATUS_STEP_BKPT    (0x8)  // True if a single-step triggered debugging.
 
 #if defined (ARDUINO_ARCH_SAMD)
   // This device supports monitor-mode debugging of hardware breakpoints.
@@ -65,15 +66,16 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 #define DBG_OP_RAMADDR   '@' // Return data at RAM address
 #define DBG_OP_STACKREL  '$' // Return data at addr relative to SP.
 #define DBG_OP_BREAK     'B' // Break execution of the program. (Redundant if within server)
-#define DBG_OP_CONTINUE  'C' // continue execution
+#define DBG_OP_CONTINUE  'C' // Continue execution.
 #define DBG_OP_FLASHADDR 'f' // Return data at Flash address.
 #define DBG_OP_SET_FLAG  'L' // Set bit flag in int high or low.
 #define DBG_OP_POKE      'K' // Insert data to RAM address.
-#define DBG_OP_MEMSTATS  'm' // Describe memory usage
-#define DBG_OP_PORT_IN   'p' // read gpio pin
-#define DBG_OP_PORT_OUT  'P' // write gpio pin
+#define DBG_OP_MEMSTATS  'm' // Describe memory usage.
+#define DBG_OP_PORT_IN   'p' // Read gpio pin.
+#define DBG_OP_PORT_OUT  'P' // write gpio pin.
 #define DBG_OP_RESET     'R' // Reset CPU.
-#define DBG_OP_REGISTERS 'r' // Dump registers
+#define DBG_OP_STEP      'S' // Single-step execution.
+#define DBG_OP_REGISTERS 'r' // Dump registers.
 #define DBG_OP_TIME      't' // Return cpu timekeeping info.
 #define DBG_OP_NONE      DBG_END
 
@@ -257,6 +259,20 @@ static inline void __dbg_report_pause(const uint8_t bp_num,
 }
 
 /**
+ * Consume remaining user input on line.
+ * Performed before we leave the __dbg_service(), otherwise the timer interrupt
+ * will detect Serial.available() is True and immediately reenter the debug service.
+ */
+static inline void _eat_remaining_input() {
+  // Eat remainder of the line.
+  uint8_t b = 0;
+  while ((char)b != DBG_END) {
+    while (!DBG_SERIAL.available()) { }
+    b = DBG_SERIAL.read(); // consume expected EOL marker before debugger exit.
+  }
+}
+
+/**
  * Called at breakpoint in user code (or via ISR if serial traffic arrives). Starts a service
  * that communicates over DBG_SERIAL about the state of the CPU until released to continue by
  * the client.
@@ -281,7 +297,11 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
 
   #ifdef ARDUINO_ARCH_SAMD
     // Clear Debug Fault Status Register (DFSR) bits in System Control Block (SCB).
-    SCB->DFSR &= ~0x7;  // Clear DWTTRAP, BKPT, HALTED bits.
+    static constexpr uint32_t DFSR_TRAP_BITS =
+        SCB_DFSR_HALTED_Msk | SCB_DFSR_BKPT_Msk | SCB_DFSR_DWTTRAP_Msk;
+    SCB->DFSR &= ~DFSR_TRAP_BITS;  // Clear DWTTRAP, BKPT, HALTED bits.
+    // If we ran a single-step instruction, clear the MON_STEP bit of DEMCR register.
+    CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_STEP_Pos);
   #endif /* SAMD */
 
   while (true) {
@@ -484,13 +504,27 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
       }
 #endif /* DBG_NO_TIME */
       break;
+    case DBG_OP_STEP: // Single-step execution forward by one op.
+      #ifdef ARDUINO_ARCH_SAMD
+        if (!(debug_status & DBG_STATUS_DEBUG_MON_EN)) {
+          // We do not have the debug monitor enabled, and so cannot single-step.
+          DBG_SERIAL.print(DBG_RET_PRINT);
+          DBG_SERIAL.println(F("Error: Single-step is currently disabled."));
+        } else {
+          // SAMD51: Set MON_STEP bit in DEMCR register to activate single-step after this IRQ
+          // returns.
+          CoreDebug->DEMCR |= 1 << CoreDebug_DEMCR_MON_STEP_Pos;
+          _eat_remaining_input();
+          goto exit_loop; // Leave dbg service; allow instruction execution to occur.
+        }
+      #else
+        // This CPU architecture does not support single-step monitor-mode debugging.
+        DBG_SERIAL.print(DBG_RET_PRINT);
+        DBG_SERIAL.println(F("Error: Unsupported"));
+      #endif
+      break;
     case DBG_OP_CONTINUE: // Continue main program execution; exit debugger.
-      // Eat remainder of the line.
-      b = 0;
-      while ((char)b != DBG_END) {
-        while (!DBG_SERIAL.available()) { }
-        b = DBG_SERIAL.read(); // consume expected EOL marker before debugger exit.
-      }
+      _eat_remaining_input();
       DBG_SERIAL.println(F("Continuing")); // client expects this exact string
       goto exit_loop;
       break;
@@ -793,20 +827,27 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
                                                      // This points to a CortexM_IRQ_Frame of data.
     uint32_t return_pc = ((CortexM_IRQ_Frame*)(SP_entry))->PC;
 
-    // Record that we are in hardware-break status.
-    _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);
+    if (SCB->DFSR & (1 << SCB_DFSR_HALTED_Pos)) {
+      // This was triggered by single-stepping.
+      _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_STEP_BKPT);
+    } else {
+      // We entered this method because of a BKPT instruction (as opposed to after a single-step..)
+      //
+      // Somewhat uniquely, on entry to this IRQ, BKPT instructions will stack the $pc of
+      // the BKPT instruction itself rather than the next $PC. Meaning when we exit this handler,
+      // we'll resume execution... right on top of the breakpoint (infinite loop back to here).
+      // We need to advance the $PC ourselves.
+      ((CortexM_IRQ_Frame*)(SP_entry))->PC += 2;
 
-    // Somewhat uniquely, on entry to this IRQ, BKPT instructions will stack the $pc of
-    // the BKPT instruction itself rather than the next $PC. Meaning when we exit this handler,
-    // we'll resume execution... right on top of the breakpoint (infinite loop back to here).
-    // We need to advance the $PC ourselves.
-    ((CortexM_IRQ_Frame*)(SP_entry))->PC += 2;
+      // Record that we are in hardware-break status.
+      _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);
+    }
 
     // Invoke __dbg_service() with the return addr from the triggering breakpoint.
     __dbg_service(0, NULL, return_pc);
 
     // Withdraw from hardware-break status.
-    _set_dbg_status(debug_status & ~(DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT));
+    _set_dbg_status(debug_status & ~(DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT | DBG_STATUS_STEP_BKPT));
 
     // Hard-coded ISR epilogue.
     asm volatile (

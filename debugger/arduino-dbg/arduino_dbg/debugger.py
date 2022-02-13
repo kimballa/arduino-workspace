@@ -1481,6 +1481,7 @@ class Debugger(object):
 
 
     def send_continue(self):
+        """ Continue execution unhindered. """
         self.clear_frame_cache()  # Backtrace is invalidated by continued execution.
         continue_ok = self.send_cmd(protocol.DBG_OP_CONTINUE, Debugger.RESULT_ONELINE)
         if continue_ok == "Continuing":
@@ -1490,6 +1491,14 @@ class Debugger(object):
             self._process_state = ProcessState.UNKNOWN
             self.msg_q(MsgLevel.WARN, "Could not continue sketch.")
             self.msg_q(MsgLevel.WARN, "Received unexpected response [%s]" % continue_ok)
+
+    def send_step(self):
+        """ Continue execution for a single step. """
+        self.clear_frame_cache()  # Backtrace is invalidated
+        self.msg_q(MsgLevel.INFO, "Stepping...")
+        self.send_cmd(protocol.DBG_OP_STEP, Debugger.RESULT_SILENT)
+        # TODO(aaron): Should this return an acknowledgement?
+        self._process_state = ProcessState.UNKNOWN
 
 
     def reset_sketch(self):

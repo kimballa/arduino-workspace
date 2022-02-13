@@ -32,6 +32,11 @@ Client:
 
   * ARM: r12 actually seems to be a clobber register?
 
+  * Bug: why does `info debug_status` insist that debug_status is at addr 0x2000011c
+    when both inspection of disassembly as well as peeking at the RAM validate that the true
+    addr is at 0x2000011d ? Both .debug_info and the symtab confirm the ..11d addr. We are 
+    misinterpreting it when we load it -- why?
+
   * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
     * As well as update correct MSP/PSP in ARMThumbArchInterface.finish_register_unwind().

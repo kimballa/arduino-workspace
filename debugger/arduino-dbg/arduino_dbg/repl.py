@@ -416,6 +416,13 @@ class Repl(object):
         """
         self._debugger.send_continue()
 
+    @Command(keywords=['step', '\\s'])
+    def _step(self, argv=None):
+        """
+        Execute one instruction and break again.
+        """
+        self._debugger.send_step()
+
     @Command(keywords=['file'], completions=[Completions.PATH])
     def _read_elf(self, argv):
         """

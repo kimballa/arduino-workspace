@@ -5,19 +5,20 @@
 
 DBG_END          = '\n'  # end of debugger sentence.
 
-DBG_OP_RAMADDR   = '@'  # Return data at RAM address
+DBG_OP_RAMADDR   = '@'  # Return data at RAM address.
 DBG_OP_STACKREL  = '$'  # Return data at addr relative to SP.
 DBG_OP_BREAK     = 'B'  # Break execution of the program. Redundant when within interrupted dbg
                         # server but enables confirmation of break state.
-DBG_OP_CONTINUE  = 'C'  # continue execution
+DBG_OP_CONTINUE  = 'C'  # Continue execution.
 DBG_OP_FLASHADDR = 'f'  # Return data at Flash address.
 DBG_OP_SET_FLAG  = 'L'  # Set bitfield flag for breakpoint en/dis-able..
 DBG_OP_POKE      = 'K'  # Insert data to RAM address.
-DBG_OP_MEMSTATS  = 'm'  # Describe memory usage
-DBG_OP_PORT_IN   = 'p'  # read gpio pin
-DBG_OP_PORT_OUT  = 'P'  # write gpio pin
+DBG_OP_MEMSTATS  = 'm'  # Describe memory usage.
+DBG_OP_PORT_IN   = 'p'  # Read gpio pin.
+DBG_OP_PORT_OUT  = 'P'  # Write gpio pin.
 DBG_OP_RESET     = 'R'  # Reset CPU.
-DBG_OP_REGISTERS = 'r'  # Dump registers
+DBG_OP_REGISTERS = 'r'  # Dump registers.
+DBG_OP_STEP      = 'S'  # Single-step execution.
 DBG_OP_TIME      = 't'  # Return cpu timekeeping info.
 DBG_OP_TIME_MILLIS = 'tm'  # Return millisecs since boot.
 DBG_OP_TIME_MICROS = 'tu'  # Return microseconds since boot.
