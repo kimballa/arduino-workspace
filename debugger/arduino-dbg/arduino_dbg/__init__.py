@@ -60,13 +60,16 @@ def main():
         if main_owns_printer:
             console_printer.shutdown()
 
-        # Close any global c++filt DemangleThread instances opened up.
-        binutils.close_demangle_threads()
-
     try:
         ret = repl.loop()
     finally:
         repl.close()
+
+    try:
+        # Close any global c++filt DemangleThread instances opened up.
+        binutils.close_demangle_threads()
+    except Exception:
+        pass
 
     sys.exit(ret)
 
