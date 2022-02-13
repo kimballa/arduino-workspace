@@ -811,12 +811,23 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
         ".cfi_register 13, 1\n\t" // The "real" $SP is held in r1.
         "mov   sp, r1       \n\t"
         ".cfi_restore 13    \n\t" // $SP holds its own value again.
-        "push  {r0, lr}     \n\t"
+        // Push everything that might be clobbered in this method, or a callee.
+        // $r0 is used to recover entry $SP value, but we don't need to be able to unwind that
+        // within this method since it's an ISR-prestacked value.
+        // True $LR is also pre-stacked but we need to save the EXN_RETURN status value it currently
+        // holds.
+        // We also save all other ABI callee-save registers here.
+        "push  {r0, r4, r5, r6, r7, r8, r9, r10, fp, lr} \n\t"
         ".cfi_offset 14, -4 \n\t"   // $LR is reg #14; pushed at $entrySP - 4.
-                                            // $r0 pushed @ $entrySP - 8 but we don't need
-                                            // to be able to unwind that within this method
-                                            // since it's an ISR-prestacked value.
-        ".cfi_adjust_cfa_offset 8\n\t"
+        ".cfi_offset 11, -8 \n\t"   // $FP
+        ".cfi_offset 10, -12\n\t"   // r10
+        ".cfi_offset 9,  -16\n\t"   // r9
+        ".cfi_offset 8,  -20\n\t"   // ...
+        ".cfi_offset 7,  -24\n\t"
+        ".cfi_offset 6,  -28\n\t"
+        ".cfi_offset 5,  -32\n\t"
+        ".cfi_offset 4,  -36\n\t"
+        ".cfi_adjust_cfa_offset 40\n\t" // We pushed 10x4 = 40 bytes to the stack.
     :
     :
     : "memory"                      // Modifies $SP and RAM. Tell gcc not to optimize this.
@@ -851,14 +862,22 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
 
     // Hard-coded ISR epilogue.
     asm volatile (
-        "ldmia.w sp!, {r0, lr}    \n\t"
-        ".cfi_register 13, 0      \n\t" // After the POP, the 'real' $SP is in r0.
-        ".cfi_restore 14          \n\t" // $LR is restored.
-        ".cfi_adjust_cfa_offset -8\n\t" // $SP -= 8, is now sitting on its CFA again.
-        "mov     sp, r0           \n\t"
-        ".cfi_restore 13          \n\t" // $SP is now stored in itself.
-        "bx      lr               \n\t" // Adios!
-        "nop                      \n\t"
+        "ldmia.w sp!, {r0, r4, r5, r6, r7, r8, r9, r10, fp, lr} \n\t"
+        ".cfi_register 13, 0        \n\t" // After the POP, the 'real' $SP is in r0.
+        ".cfi_restore 14            \n\t" // $LR is restored.
+        ".cfi_restore 11            \n\t" // $FP is restored.
+        ".cfi_restore 10            \n\t" // r10 is restored, along with other gen-regs...
+        ".cfi_restore 9             \n\t"
+        ".cfi_restore 8             \n\t"
+        ".cfi_restore 7             \n\t"
+        ".cfi_restore 6             \n\t"
+        ".cfi_restore 5             \n\t"
+        ".cfi_restore 4             \n\t"
+        ".cfi_adjust_cfa_offset -40 \n\t" // $SP -= 40, is now sitting on its CFA again.
+        "mov     sp, r0             \n\t" // $SP fully restored.
+        ".cfi_restore 13            \n\t" // $SP is now stored in itself.
+        "bx      lr                 \n\t" // Adios! (r0..r3, r12, sp, lr, pc restored in ISR de-stack.)
+        "nop                        \n\t"
     :
     :
     : "memory"                      // Full epilogue including return instruction. Force non-opt.
