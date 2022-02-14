@@ -806,7 +806,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
         ".cfi_def_cfa sp, 0 \n\t"
         "mov   r0, sp       \n\t"
         ".cfi_undefined 0   \n\t" // r0 is clobbered.
-        "mov   r12, sp      \n\t"
+        "mov   r12, sp      \n\t" // Save pre-prologue $SP value in r12 for later use.
         ".cfi_undefined 12  \n\t" // r12 is clobbered.
         "bic.w r1, r0, #7   \n\t"
         ".cfi_register 13, 1\n\t" // The "real" $SP is held in r1.

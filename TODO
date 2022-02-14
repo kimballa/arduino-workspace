@@ -9,20 +9,9 @@ Debugger:
 ------------
 
 On-device service capabilities:
-  * SAMD: Implement 'monitor mode debugging'. see e.g.:
-  https://github.com/NordicPlayground/j-link-monitoring-mode-debugging
-  https://interrupt.memfault.com/blog/cortex-m-debug-monitor
 
 
 Client:
-
-  * BUG: It seems possible to get binutils.DemangleThread into a borked state if something
-    goes wrong in c++filt (Errno 32, broken pipe). [Maybe because our ^C's are getting passed
-    along to the subprocesses? Or other issues like if the serial conn experiences a reset?]
-    ... maybe attempt to create a new Popen object *within* the comm thread?
-    [I added a lock held during the lifetime of DemangleThread.demangle(). Maybe fixed now?
-    I am suspicious that the BreakpointCreateThread()'s use of demangle() is somehow interacting
-    poorly with the main thread's use of demangle() in 'get_backtrace()' ?]
 
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
@@ -36,25 +25,6 @@ Client:
     helpful; we need the 'real' $PC from entering the breakpoint method in order to register
     break sites.
 
-  * Bug: If `regs` command is given in hide-stack-frames mode, it should show registers from
-    the top-most visible stack frame, not the literal current machine state.
-
-      ... in general it should take a frame-id and use 0 as the default.
-
-  * Bug: 'info debug_status' shows a uint8_t @ 2000011e and prints its value.
-    ... but 'info cnt' does *not* print the value, just type and location. Why?
-    note also formatting difference:
-
-				(adbg) info debug_status
-				debug_status: uint8_t
-				debug_status: 2000011e (1)
-				13
-				(adbg) info cnt
-				uint8_t cnt                      # 'type name' vs 'name: type' above.
-				cnt: 2000011c (1)
-				(adbg) print cnt                 # You can still read the value.
-				10                               # but you gotta do it explicitly.
-
   --------
 
   * Add formatted print keywords:
@@ -63,8 +33,6 @@ Client:
 
       ... should these modifiers also apply to 'locals' and 'frame' ?
       At minimum they need to also apply to 'info'.
-
-  * 'frame' command should also format and print the CFI table (like we verboseprint during unwind.)
 
   * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
     switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.

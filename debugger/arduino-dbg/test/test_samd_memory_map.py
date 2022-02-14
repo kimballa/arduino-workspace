@@ -58,22 +58,18 @@ class TestArmThumbMemoryMap(unittest.TestCase):
         self.assertEqual(self.debugger.arch_iface.__class__.__name__, "ArmThumbArchInterface")
 
     def test_mem_map_structure(self):
-        """ We expect 2 segments (.text & .data) in sorted-by-logical-addr order. """
+        """ We expect 3 segments (.text, .data, peripherals) in sorted-by-logical-addr order. """
         mmap = self.debugger.arch_iface.memory_map()
 
         self.assertIsNotNone(mmap)
         self.assertTrue(mmap.validate())
-        self.assertEqual(len(mmap.segments), 2)
+        self.assertEqual(len(mmap.segments), 3)
 
         self.assertEqual(mmap.segments[0].name, '.text')
         self.assertEqual(mmap.access_mechanism_for_addr(0x100), memory_map.ACCESS_TYPE_RAM)
 
         self.assertEqual(mmap.segments[1].name, '.data')
         self.assertEqual(mmap.access_mechanism_for_addr(0x20000200), memory_map.ACCESS_TYPE_RAM)
-
-        with self.assertRaises(RuntimeError):
-            # Check out-of-bounds addr - this is way off the north end of the map.
-            mmap.access_mechanism_for_addr(0x40000000)
 
         with self.assertRaises(RuntimeError):
             # Check out-of-bounds addr - this is in Flash-ish memory area in the no-mans-land

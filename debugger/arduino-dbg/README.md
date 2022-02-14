@@ -7,7 +7,7 @@ computer and debug your running sketch with this application.
 
 You must include a small debugging library (`dbg.cpp` and `dbg.h`) available at
 https://github.com/kimballa/arduino-workspace in your application. You should
-`#include <dbg.h>` to enable debugging your sketch.
+`#include <dbg.h>` and link with `dbglib.a` to enable debugging your sketch.
 
 You will find instructions in `dbg.h` on the API for creating unconditional
 and assertion-based breakpoints, and emitting debug and trace messages.
@@ -37,8 +37,10 @@ arduino-dbg -f /path/to/sketch.elf -p /dev/ttyACM0
 If you run the `break` command or press `^C` within the debugger, it will pause the
 running sketch so you can interrogate or set the values of variables (`print someglobal`),
 see a `backtrace`, etc. Programmatic breakpoints can be selectively toggled on and off
-with `breakpoint enable` and `breakpoint disable`. On AVR-based Arduinos, you cannot set
-new breakpoints from the debugger at runtime.
+with `breakpoint enable` and `breakpoint disable`. New breakpoints can be created from
+the debugger at runtime only on platforms like the ARM Cortex-M4 which support
+monitor-mode debugging. On AVR CPUs, you are restricted to breakpoints added statically
+in the source code.
 
 Within the debugger, you can save a dump of the system registers and memory with `dump
 <filename>`. With this dump file and the compiled ELF file of your sketch, you can then
@@ -65,14 +67,36 @@ set arduino.platform = uno
 
 The available platforms are:
 
-* `uno`
+* `feather_m4`
 * `leonardo`
+* `uno`
+
+You can see an up-to-date list of supported Arduino platforms with the `list platforms`
+command. The `list architectures` command will display supported CPU architectures.
 
 Please open an issue if you are interested in support for additional platforms. At the
-time of this writing, the debugger only supports AVR-based architectures, although ARM
-support is planned as future work.
+time of this writing, the debugger has the ability to support AVR- and ARM-based
+platforms; each new cpu or platform in these families just requires a new configuration file
+to be added and tested.
 
 Type `set` to see more configuration variables you can modify. Once set, configuration is
 saved to `~/.arduino_dbg.conf` and reused in future sessions. You can delete this file and
 restart the debugger to reinitialize the default configuration.
+
+CPU-assisted debugger support
+-----------------------------
+
+This debugger can perform useful functions on any Arduino with a USB-serial connection.
+The debugger service can be activated by breakpoints introduced with the `BREAK()` macro
+or by issuing the `break` (`^C`) command within the debugger prompt.
+
+Beyond that, for CPUs that support "monitor-mode debugging" (where debug events trigger an
+IRQ which can be handled with onboard software, rather than requiring control by an
+external JTAG debugger), such as the ARM SAMD51-based Cortex-M4, used in the Adafruit
+Feather-M4 platform, this debugger can also take advantage of CPU-assisted debugging
+features such as single-stepping with the `step` (`\s`) command, or using the ability to
+create new breakpoints or watchpoints dynamically at run-time.
+
+On such platforms, the ARM `BKPT` opcode will also properly enter the debugger service.
+
 
