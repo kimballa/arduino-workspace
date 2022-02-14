@@ -786,9 +786,19 @@ class Repl(object):
     @Command(keywords=['regs'])
     def _regs(self, argv):
         """
-        Print current values of registers
+        Print current values of registers for frame
+
+            Syntax: regs [frameId]
+
+        If no frameId specified, shows the registers for frame 0 (top-of-stack).
         """
-        self.__format_registers(self._debugger.get_registers())
+        if len(argv):
+            frameId = int(argv[0])
+        else:
+            frameId = 0
+
+        regs = self._debugger.get_frame_regs(frameId)
+        self.__format_registers(regs)
 
 
     @Command(keywords=['reset'])
