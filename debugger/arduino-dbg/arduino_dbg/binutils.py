@@ -28,26 +28,32 @@ class DemangleThread(threading.Thread):
         self.hide_params = hide_params
         self._print_q = print_q
 
-        args = ['c++filt']
-        if hide_params:
-            args.append('-p')  # Suppress method arguments in output.
-
         self._in_q = queue.Queue(maxsize=1)  # Queues to communicate w/ main thread
         self._out_q = queue.Queue(maxsize=1)
 
         # Requests to demangle can only be made if you hold the lock.
         self._user_lock = threading.Lock()
 
-        self._running = True
-        self.proc = subprocess.Popen(args,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
-                                     encoding=locale.getpreferredencoding(),
-                                     close_fds=True)
+        self._start_process()
 
+        self._running = True
         self.start()
 
     def __repr__(self):
         return f"DemangleThread(hide_params={self.hide_params})"
+
+    def _start_process(self):
+        """
+        Start the c++filt instance.
+        """
+        args = ['c++filt']
+        if self.hide_params:
+            args.append('-p')  # Suppress method arguments in output.
+
+        self.proc = subprocess.Popen(args,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
+                                     encoding=locale.getpreferredencoding(),
+                                     close_fds=True)
 
     def close(self):
         """
@@ -72,6 +78,7 @@ class DemangleThread(threading.Thread):
         Interact with an instance of `c++filt` running as a subprocess.
         """
         name = None
+        demangled = None
         try:
             while self._running:
                 name = self._in_q.get()
@@ -79,11 +86,26 @@ class DemangleThread(threading.Thread):
                     if name is None:
                         continue
 
+                    if self.proc.poll() is not None:
+                        # The c++filt instance closed itself. Restart it.
+                        self._start_process()
+
                     # Send a (mangled) name to c++filt on stdin. Get the response line,
                     # which is the demangled form; return that to the out_q.
-                    self.proc.stdin.write(f'{str(name).strip()}\n')
-                    self.proc.stdin.flush()
-                    demangled = self.proc.stdout.readline()
+                    try:
+                        self.proc.stdin.write(f'{str(name).strip()}\n')
+                        self.proc.stdin.flush()
+                    except Exception as e:
+                        self._print_q.put((f'Exception on STDIN in {repr(self)}: {e}', term.ERR))
+                        self._print_q.put((f'Last input to demangler: "{name}"', term.ERR))
+                        raise
+
+                    try:
+                        demangled = self.proc.stdout.readline()
+                    except Exception as e:
+                        self._print_q.put((f'Exception on STDOUT in {repr(self)}: {e}', term.ERR))
+                        self._print_q.put((f'Last input to demangler: "{name}"', term.ERR))
+                        raise
                 finally:
                     self._in_q.task_done()  # Acknowledge task-complete condition.
 
@@ -95,6 +117,7 @@ class DemangleThread(threading.Thread):
         except Exception as e:
             self._print_q.put((f'Exception in {repr(self)}: {e}', term.ERR))
             self._print_q.put((f'Last input to demangler: "{name}"', term.ERR))
+            self._print_q.put((f'Last demangler output: "{demangled}"', term.ERR))
         finally:
             # No matter how we got here (normal shutdown or exception) mark the thread as done.
             self._running = False
@@ -132,9 +155,6 @@ class DemangleThread(threading.Thread):
             demangled = self._out_q.get()
             self._out_q.task_done()  # Acknowledge receipt.
 
-            if self.proc.returncode is not None:
-                self._print_q.put(('Warning: c++filt process terminated', term.WARN))
-                self._print_q.put((f'Last I/O: "{name}" -> "{demangled}"', term.WARN))
         finally:
             self._user_lock.release()
 
