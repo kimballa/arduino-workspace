@@ -180,6 +180,8 @@ class HostedDebugService(object):
             raise Exception(f"Cannot load dump schema with version={dump_data[DUMP_SCHEMA_KEY]}")
 
         self._memory = bytearray(dump_data['ram_image'])
+        # Do memory addrs start from 0h? Or is the .data/.bss/SRAM segment loaded at an offset?
+        self._memory_segment_offset = dump_data['ram_image_start'] or 0
         self._regs = dump_data['registers']
 
         self._memstats = None
@@ -211,6 +213,23 @@ class HostedDebugService(object):
             self.thread.join()
 
 
+    def _get_ram(self, mem_slice):
+        """
+        Return the bytes in RAM as specified by the slice 'mem_slice'.
+        mem_slice should be specified as an on-CPU address.
+        """
+        start = None
+        end = None
+        if mem_slice.start is not None:
+            start = mem_slice.start - self._memory_segment_offset
+
+        if mem_slice.stop is not None:
+            end = mem_slice.stop - self._memory_segment_offset
+
+        adjusted_slice = slice(start, end)
+        return self._memory[adjusted_slice]
+
+
     def service(self):
         """
         Emulate the debug service.
@@ -237,13 +256,14 @@ class HostedDebugService(object):
             if cmd == protocol.DBG_OP_RAMADDR:
                 size = args[0]
                 addr = args[1]
-                data = int.from_bytes(self._memory[addr:addr+size], byteorder=endian)
+                data = int.from_bytes(self._get_ram(slice(addr, addr+size)), byteorder=endian)
                 self._send(f'{data:x}')
             elif cmd == protocol.DBG_OP_STACKREL:
                 SP = self._regs["SP"]
                 size = args[0]
                 offset = args[1]
-                data = int.from_bytes(self._memory[SP+offset:SP+offset+size], byteorder=endian)
+                data = int.from_bytes(self._get_ram(slice(SP + offset, SP + offset + size)),
+                                      byteorder=endian)
                 self._send(f'{data:x}')
             elif cmd == protocol.DBG_OP_BREAK:
                 # We're always paused.
@@ -269,6 +289,7 @@ class HostedDebugService(object):
                 addr = args[1]
                 val = args[2]
                 new_bytes = val.to_bytes(size, byteorder=endian)
+                addr -= self._memory_segment_offset
                 for i in range(0, size):
                     self._memory[addr + i] = new_bytes[i]
             elif cmd == protocol.DBG_OP_MEMSTATS:
