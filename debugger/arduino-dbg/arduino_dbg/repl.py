@@ -1120,6 +1120,17 @@ class Repl(object):
             MsgLevel.INFO,
             f'Frame {frame_num} size={frame_size}; return address: {ret_addr:#04x} in {ret_fn}')
 
+        self._debugger.msg_q(MsgLevel.INFO, '')
+        if frame.sym and frame.sym.frame_info:
+            # Print the CFI table, if one's available.
+            decoded_info = frame.sym.frame_info.get_decoded()
+            cfi_table = decoded_info.table
+            self._debugger.msg_q(MsgLevel.INFO, 'CFI table: ')
+            for row in cfi_table:
+                row_pc = row['pc']
+                self._debugger.msg_q(MsgLevel.INFO, f'    PC >= 0x{row_pc:x}:    {row}')
+            self._debugger.msg_q(MsgLevel.INFO, '')
+
         push_word_len = self._debugger.get_arch_conf('push_word_len')
         stack_model = self._debugger.get_arch_conf('stack_model')
         stack_descending = stack_model == 'full_desc' or stack_model == 'empty_desc'
