@@ -239,6 +239,19 @@ class HostedDebugService(object):
         endian = self._debugger.get_arch_conf("endian")
         mem_list_fmt = self._debugger.get_arch_conf("mem_list_fmt")
 
+        # register_list_fmt is an array specifying the order register keys are returned by
+        # the 'registers' command. The key "general_regs" is expanded to all the r0...rN
+        # general registers.
+        register_list_fmt = self._debugger.get_arch_conf("register_list_fmt")
+        register_order = []
+        for reg_name in register_list_fmt:
+            if reg_name == "general_regs":
+                # Add all general registers to the list here.
+                for i in range(0, num_gen_registers):
+                    register_order.append(f'r{i}')
+            else:
+                register_order.append(reg_name)  # Append register name as-is.
+
         while self.stay_alive:
             while not self._conn.available():
                 time.sleep(0.05)  # Sleep for 50ms if no data available.
@@ -325,13 +338,9 @@ class HostedDebugService(object):
                 self._send_comment("Cannot reset in image debugger")
                 # Command does not expect any real response so no more to do here.
             elif cmd == protocol.DBG_OP_REGISTERS:
-                for i in range(0, num_gen_registers):
-                    reg_nm = f'r{i}'
+                for reg_nm in register_order:
                     reg_val = self._regs[reg_nm]
                     self._send(f'{reg_val:x}')
-                self._send(f'{self._regs["SP"]:x}')
-                self._send(f'{self._regs["SREG"]:x}')
-                self._send(f'{self._regs["PC"]:x}')
                 self._send('$')
             elif cmd == protocol.DBG_OP_TIME:
                 # The 'time' is always 0.
