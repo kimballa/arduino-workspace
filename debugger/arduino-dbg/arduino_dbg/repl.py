@@ -1414,7 +1414,7 @@ class Repl(object):
             self._debugger.msg_q(MsgLevel.WARN, f"(Try 'sym {argv[0]}')")
             return
 
-        self._debugger.msg_q(MsgLevel.INFO, f'{sym.demangled}: {sym.addr:08x} ({sym.size})')
+        self._debugger.msg_q(MsgLevel.INFO, f'{sym.demangled}: addr=0x{sym.addr:08x} (len={sym.size})')
         self._last_sym_used = argv[0]  # Looked-up symbol is last symbol used.
 
 
@@ -1427,7 +1427,7 @@ class Repl(object):
         """
         if len(argv) == 0:
             self._debugger.msg_q(MsgLevel.INFO, "Syntax: type <name>")
-            return
+            return None
 
         registers = self._debugger.get_registers()
         pc = registers["PC"]
@@ -1438,16 +1438,25 @@ class Repl(object):
             global_sym = self._debugger.lookup_sym(sym)
             if global_sym is not None and global_sym.type_info is not None:
                 self._debugger.msg_q(MsgLevel.INFO, f'{global_sym.type_info}')
+
+                # Improve type clarity for return value.
+                if isinstance(global_sym.type_info, types.VariableInfo):
+                    kind = types.KIND_VARIABLE
+                elif isinstance(global_sym.type_info, types.MethodInfo):
+                    kind = types.KIND_METHOD
+                else:
+                    kind = types.KIND_TYPE
             else:
                 # Out of options.
                 self._debugger.msg_q(MsgLevel.INFO, f'{sym}: <unknown type>')
+
         elif kind == types.KIND_TYPE or kind == types.KIND_METHOD:
             # Print the type description directly, or print the method signature (which includes
             # the method name) directly
             self._debugger.msg_q(MsgLevel.INFO, f'{typ}')
         else:
             # kind == types.VARIABLE
-            self._debugger.msg_q(MsgLevel.INFO, f'{typ.var_name}: {typ.var_type.name}')
+            self._debugger.msg_q(MsgLevel.INFO, f'{typ.var_type.name} {typ.var_name}')
 
         return kind
 
@@ -1643,6 +1652,7 @@ class Repl(object):
         if kind != types.KIND_TYPE:
             # For methods and variables, show the address
             self._addr_for_sym(argv)
+
         if kind == types.KIND_VARIABLE:
             # For variables, show the memory value at that address
             self._print(argv)
