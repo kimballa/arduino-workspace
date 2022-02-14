@@ -10,14 +10,14 @@ Debugger:
 
 On-device service capabilities:
 
-  * Add high-throughput 'dump' capability with low and high addrs to access.
+  SAM D51 support: (See Cortex-M4 Technical Reference Manual)
+  * Breakpoint unit support
+    * Create HW breakpoint
+    * Delete HW breakpoint
+    * Disable/enable HW breakpoint
+  * Watchpoint unit support
 
 Client:
-
-  * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
-    If this names a member function with the same name as its containing class, we may have
-    a conflict. We need to either retain only fully-canonicalized names ('typ.name') OR only
-    retain nesting-level-0 names at the CUNS name level. See comment at types.py, line 222.
 
   * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
 
@@ -49,12 +49,5 @@ Client:
     to `frame` / `\f`, locals, etc?
 
   * Optionally embed ELF file in core dump file, for all-in-one dump file w/o separate .elf.
-
-SAM D51 support: (See Cortex-M4 Technical Reference Manual)
-* Breakpoint unit support
-  * Create HW breakpoint
-  * Delete HW breakpoint
-  * Disable/enable HW breakpoint
-* Watchpoint unit support
 
 

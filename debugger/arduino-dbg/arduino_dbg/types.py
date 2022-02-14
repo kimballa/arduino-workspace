@@ -221,11 +221,6 @@ class CompilationUnitNamespace(object):
         return out
 
     def add_entry(self, typ, name, addr):
-        # TODO(aaron): Are we retaining the correct named thing?
-        # We should only retain top-level items with a name at the CUNS level.
-        # There may be cases where we are retaining a constructor instead of the class, etc.
-        # Instead of using DW_AT_name, use the typ.name which canonicalizes the item?
-
         if name and not self._named_entries.get(name):
             self._named_entries[name] = typ
 

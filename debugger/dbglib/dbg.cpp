@@ -837,7 +837,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     : "memory"                      // Modifies $SP and RAM. Tell gcc not to optimize this.
     );
 
-    volatile register uint32_t framePtr asm("r12");  // $r12 contains $SP on entry (i.e. it acts 
+    volatile register uint32_t framePtr asm("r12");  // $r12 contains $SP on entry (i.e. it acts
                                                      // as a frame pointer).
                                                      // The old r12 was already stacked on IRQ entry.
                                                      // This points to a CortexM_IRQ_Frame of data.
