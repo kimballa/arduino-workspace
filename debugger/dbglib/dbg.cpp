@@ -299,9 +299,10 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
     // Clear Debug Fault Status Register (DFSR) bits in System Control Block (SCB).
     static constexpr uint32_t DFSR_TRAP_BITS =
         SCB_DFSR_HALTED_Msk | SCB_DFSR_BKPT_Msk | SCB_DFSR_DWTTRAP_Msk;
-    SCB->DFSR &= ~DFSR_TRAP_BITS;  // Clear DWTTRAP, BKPT, HALTED bits.
-    // If we ran a single-step instruction, clear the MON_STEP bit of DEMCR register.
+    SCB->DFSR |= DFSR_TRAP_BITS;  // Clear DWTTRAP, BKPT, HALTED bits by writing a '1' to each of them.
+    // If we ran a single-step instruction, clear the MON_STEP and MON_PEND bits of DEMCR.
     CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_STEP_Pos);
+    CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_PEND_Pos);
   #endif /* SAMD */
 
   while (true) {
@@ -837,7 +838,6 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
                                                      // (Old r12 was already stacked on IRQ entry)
                                                      // This points to a CortexM_IRQ_Frame of data.
     uint32_t return_pc = ((CortexM_IRQ_Frame*)(SP_entry))->PC;
-
     if (SCB->DFSR & (1 << SCB_DFSR_HALTED_Pos)) {
       // This was triggered by single-stepping.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_STEP_BKPT);

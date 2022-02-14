@@ -24,12 +24,6 @@ Client:
     I am suspicious that the BreakpointCreateThread()'s use of demangle() is somehow interacting
     poorly with the main thread's use of demangle() in 'get_backtrace()' ?]
 
-  * The first time we hit a given BKPT, we handle it gracefully and move past it. Subsequent
-    'step' and 'continue' commands work. But if we trigger that same BKPT a second time, our
-    $PC gets locked on the BKPT instruction (e.g. at 0x4928 in __dbg_break()) and we cannot
-    continue/step over it.
-
-
   * dwarf info: CUNS.add_entry() takes a 'name' field which we use for name->typ mapping.
     If this names a member function with the same name as its containing class, we may have
     a conflict. We need to either retain only fully-canonicalized names ('typ.name') OR only
