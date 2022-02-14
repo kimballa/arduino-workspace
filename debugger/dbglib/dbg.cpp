@@ -454,6 +454,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
         DBG_SERIAL.println(__get_xPSR(), HEX); // Return $xPSR status registers (IPSR/EPSR/APSR) view.
         DBG_SERIAL.println(__get_MSP(), HEX);  // Return Main Stack Pointer ($MSP)
         DBG_SERIAL.println(__get_PSP(), HEX);  // Return Process Stack Pointer ($PSP)
+        DBG_SERIAL.println(__get_CONTROL(), HEX);  // Return $CONTROL register.
 
       #endif /* architecture select */
       DBG_SERIAL.println('$');
@@ -799,14 +800,16 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   extern "C" void DebugMon_Handler(void) {
     // Handler fired when a debug event occurs (BKPT instruction, or hardware breakpoint/watchpoint)
 
-    // This is a naked ISR. Start with our own prologue that matches what we believe
-    // gcc would emit, to eliminate surprises. We want to guarantee our ability to
-    // read specific stack data above the current call frame.
+    // This is a naked ISR. We have implemented our own prologue to eliminate surprises. This
+    // method needs to read specific stack data above the current call frame, from the pre-IRQ
+    // stacked register data, meaning we need to know the start of our own stack frame in this
+    // method; since gcc does not generate a frame pointer, we set up our own. We are
+    // conservative about what we push in here to avoid destroying normal-thread state.
     asm volatile (
         ".cfi_def_cfa sp, 0 \n\t"
         "mov   r0, sp       \n\t"
         ".cfi_undefined 0   \n\t" // r0 is clobbered.
-        "mov   r12, sp      \n\t" // Save pre-prologue $SP value in r12 for later use.
+        "mov   r12, sp      \n\t" // Save pre-prologue $SP value in r12 for use as a frame pointer.
         ".cfi_undefined 12  \n\t" // r12 is clobbered.
         "bic.w r1, r0, #7   \n\t"
         ".cfi_register 13, 1\n\t" // The "real" $SP is held in r1.
@@ -834,10 +837,11 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     : "memory"                      // Modifies $SP and RAM. Tell gcc not to optimize this.
     );
 
-    volatile register uint32_t SP_entry asm("r12");  // $r12 contains $SP on entry.
-                                                     // (Old r12 was already stacked on IRQ entry)
+    volatile register uint32_t framePtr asm("r12");  // $r12 contains $SP on entry (i.e. it acts 
+                                                     // as a frame pointer).
+                                                     // The old r12 was already stacked on IRQ entry.
                                                      // This points to a CortexM_IRQ_Frame of data.
-    uint32_t return_pc = ((CortexM_IRQ_Frame*)(SP_entry))->PC;
+    uint32_t return_pc = ((CortexM_IRQ_Frame*)(framePtr))->PC;
     if (SCB->DFSR & (1 << SCB_DFSR_HALTED_Pos)) {
       // This was triggered by single-stepping.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_STEP_BKPT);
@@ -848,7 +852,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
       // the BKPT instruction itself rather than the next $PC. Meaning when we exit this handler,
       // we'll resume execution... right on top of the breakpoint (infinite loop back to here).
       // We need to advance the $PC ourselves.
-      ((CortexM_IRQ_Frame*)(SP_entry))->PC += 2;
+      ((CortexM_IRQ_Frame*)(framePtr))->PC += 2;
 
       // Record that we are in hardware-break status.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);

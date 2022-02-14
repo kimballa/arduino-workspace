@@ -10,6 +10,7 @@ Debugger:
 
 On-device service capabilities:
 
+  * Add high-throughput 'dump' capability with low and high addrs to access.
 
 Client:
 
@@ -34,10 +35,6 @@ Client:
       ... should these modifiers also apply to 'locals' and 'frame' ?
       At minimum they need to also apply to 'info'.
 
-  * ARM: When returning from interrupt, $LR has a bunch of special flag values that do things like
-    switch between $MSP and $PSP. We should parse these and operate on the appropriate stack.
-    * As well as update correct MSP/PSP in ARMThumbArchInterface.finish_register_unwind().
-
   * Can we implement a 'setlocal' ?
     * Would need to use call frame info to determine where on the stack it lives...
       or where on the stack frame above the local the register got saved.
@@ -46,7 +43,7 @@ Client:
       pushed on the stack but not in frame 'n-1' then it could cause undefined behavior in that
       intermediate frame.
 
-  * types.py should handle union type? bit fields?
+  * types.py should handle bit fields?
 
   * add notion of "current frame" that can be adjusted rather than just as immediate arg
     to `frame` / `\f`, locals, etc?
@@ -59,6 +56,5 @@ SAM D51 support: (See Cortex-M4 Technical Reference Manual)
   * Delete HW breakpoint
   * Disable/enable HW breakpoint
 * Watchpoint unit support
-* Single-step support
 
 

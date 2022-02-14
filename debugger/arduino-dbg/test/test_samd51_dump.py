@@ -3,8 +3,6 @@
 
 import unittest
 
-import arduino_dbg.stack as stack
-import arduino_dbg.symbol as symbol
 from dbg_testcase import DbgTestCase
 
 

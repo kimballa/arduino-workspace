@@ -204,11 +204,19 @@ class ArchInterface(object):
 
     def finish_register_unwind(self, regs):
         """
-        Perform any final post-processing needed at the end of CFI / unwind_registers() processing.
+        Perform any final post-processing needed at the end of CFI / unwind_registers() processing
+        for a frame.
+
         Modifies 'regs' in-place, if at all.
         Returns 'regs'.
         """
         return regs
+
+    def begin_backtrace(self, regs):
+        """
+        Reset any arch-specific state when beginning a backtrace at the top of the stack.
+        """
+        pass
 
     @staticmethod
     def make_arch_interface(debugger):

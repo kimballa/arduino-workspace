@@ -1828,6 +1828,8 @@ class Debugger(object):
             # We are starting the backtrace at the top.
             # Start by establishing where we are right now.
             regs = self.get_registers()
+            self.arch_iface.begin_backtrace(regs)  # Do architecture-specific backtrace setup.
+
             pc = regs["PC"]
             sp = regs["SP"]
 

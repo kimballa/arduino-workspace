@@ -8,6 +8,12 @@ import arduino_dbg.arch as arch
 import arduino_dbg.debugger as dbg
 import arduino_dbg.memory_map as mmap
 
+# Enum for different stack pointer registers implemented on Cortex M-4.
+STACK_MSP = 1  # Main stack ptr. Used for all IRQs and handler-mode; can also be used in thread mode.
+STACK_PSP = 2  # Process stack ptr. Separate stack pointer that can be used in thread mode.
+
+SPSEL = 0x2  # Bit within CONTROL specifying stack ptr select
+
 
 @arch.iface
 class ArmThumbArchInterface(arch.ArchInterface):
@@ -18,6 +24,7 @@ class ArmThumbArchInterface(arch.ArchInterface):
     def __init__(self, debugger):
         super().__init__(debugger)
         self._mem_map = None
+        self.cur_stack_ptr = STACK_MSP
 
         # Thumb is 32-bit machine word size.
         assert debugger.get_arch_conf('int_size') == 4
@@ -76,24 +83,43 @@ class ArmThumbArchInterface(arch.ArchInterface):
         return (lr & EXC_RETURN_MASK) == EXC_RETURN_MASK
 
     def unwind_exception_registers(self, regs):
-        assert self.is_exception_return(regs['PC'])
+        lr_in = regs['PC']
+        assert self.is_exception_return(lr_in)
         regs_out = regs.copy()
 
         # The behavior of this method is described in section 2.3.7 "Exception entry and return"
         # of the Cortex-M4 Devices Generic User Guide (page 2-26).
+        #
+        # The CPU pushes several registers to stack before entering an exception handler.
+        # We've already unwound the "main" stack frame for the IRQ, and now we need to pop
+        # the CPU-pushed registers. We also parse $LR to understand some properties of how
+        # the unwind operation should proceed.
 
-        # TODO(aaron): Parsing the $LR value (EXC_RETURN) informs whether we restore the $SP
-        # as $MSP or $PSP. We do not differentiate between these here but just regard $SP
-        # as a distinct register. If debugging an embedded RTOS, we should be sensitive to
-        # which stack pointer we are restoring. (nb some of these use the lsb of $LR, which
-        # we may have already set to zero via true_pc().)
+        # Parsing the $LR value (EXC_RETURN) informs whether we restore the $SP as $MSP or
+        # $PSP. We regard $SP as a distinct register but 'true up' $MSP or $PSP at the end
+        # of each stack frame unwind operation.
+        USE_PSP_FLAG = 0x4      # Switch to $PSP before de-stacking state.
+        # THREAD_MODE_FLAG = 0x8  # Return to thread mode rather than handler mode.
+                                  # The debugger does not track handler vs thread mode state.
+        FPU_PUSHED_FLAG_L = 0x10  # FPU registers were stacked on IRQ entry if this bit is low.
 
-        # TODO(aaron): Do we care about FPU registers and restoring them?
-        # If the FPU registers have been stacked, we need to at least adjust $SP past them.
+        fpu_registers_pushed = (lr_in & FPU_PUSHED_FLAG_L) == 0
+        transfer_to_psp = (lr_in & USE_PSP_FLAG) != 0
 
+        if transfer_to_psp:
+            # Intra-IRQ data was on $MSP but the pre-IRQ data was stacked on $PSP and
+            # we return there now.
+            assert self.cur_stack_ptr == STACK_MSP  # All handler mode is on $MSP, and IRQ return
+                                                    # implies operating in handler mode.
+            sp = regs['PSP']  # Ignore prior $MSP-based value for $SP.
+            regs_out['CTRL'] = regs['CTRL'] | SPSEL  # Set SPSEL bit.
+            self.cur_stack_ptr = STACK_PSP
+            self.debugger.verboseprint(f'Switching to $PSP: 0x{sp:08x}')
+        else:
+            # continue operating on same $SP as before. (Which we know was $MSP as we're in an IRQ.)
+            sp = regs['SP']
 
         push_word_len = self.debugger.get_arch_conf('push_word_len')
-        sp = regs['SP']
 
         # Pop these registers in order.
         for pop_reg in ['r0', 'r1', 'r2', 'r3', 'r12', 'LR', 'PC', 'CPSR']:
@@ -104,6 +130,16 @@ class ArmThumbArchInterface(arch.ArchInterface):
             self.debugger.verboseprint(
                 "Exception destack: ", pop_reg, " <-- ", dbg.VHEX8, regs_out[pop_reg])
             sp += push_word_len
+
+        if fpu_registers_pushed:
+            # We do not monitor the FPU registers in this debugger. But if the FPU
+            # registers have been stacked, we need to at least adjust $SP past them.
+            # Fig 2-3 in Cortex-M4 Devices Generic User Guide shows 16 32-bit FPU registers
+            # stacked, plus FPSCR, plus a mandatory spacer entry (in addition to any aligner
+            # controlled by STKALIGN). Thus, we add 18 x 4 bytes to the address to 'pop'
+            # all of these at once.
+            self.debugger.verboseprint("Exception destack: popping (discarding) 18 stacked FPU registers")
+            sp += (18 * push_word_len)
 
         STKALIGN = 0x200  # bit 9 of stacked xPSR (CCR / Configuration & Control Register).
         control_stkalign_bit = regs['CPSR'] & STKALIGN  # Get 'true' STKALIGN value.
@@ -132,8 +168,23 @@ class ArmThumbArchInterface(arch.ArchInterface):
         return regs_out
 
     def finish_register_unwind(self, regs):
-        # TODO(aaron): read the `SPSEL` bit in the `CONTROL` register to determine whether MSP or
-        # PSP is the active stack pointer.
-        regs['MSP'] = regs['SP']  # Keep $MSP in sync with $SP
+        if self.cur_stack_ptr == STACK_MSP:
+            regs['MSP'] = regs['SP']  # Keep $MSP in sync with $SP
+        else:
+            regs['PSP'] = regs['SP']  # Keep $PSP in sync with $SP
+
         return regs
 
+    def begin_backtrace(self, regs):
+        # The SPSEL bit in the CONTROL register tells us which stack pointer we are operating
+        # with. This can be switched as we unwind the stack based on $LR in exception return,
+        # but at top-of-stack we can trust CONTROL to tell us what to do.
+        ctrl_reg = regs['CTRL']
+        if ctrl_reg & SPSEL:
+            # We are operating on the process stack ptr.
+            self.cur_stack_ptr = STACK_PSP
+            self.debugger.verboseprint('Stack operating on $PSP')
+        else:
+            # We are operating on the main stack ptr.
+            self.cur_stack_ptr = STACK_MSP
+            self.debugger.verboseprint('Stack operating on $MSP')
