@@ -2,6 +2,7 @@
 
 import unittest
 
+import arduino_dbg.arch.thumb_interface as thumb_interface
 import arduino_dbg.debugger as dbg
 import arduino_dbg.memory_map as memory_map
 import arduino_dbg.term as term
@@ -55,7 +56,7 @@ class TestArmThumbMemoryMap(unittest.TestCase):
         self.assertEqual(self.debugger.get_conf("arduino.platform"), "feather_m4")
         self.assertEqual(self.debugger.get_conf("arduino.arch"), "samd51x19a")
         self.assertIsNotNone(self.debugger.arch_iface)
-        self.assertEqual(self.debugger.arch_iface.__class__.__name__, "ArmThumbArchInterface")
+        self.assertIsInstance(self.debugger.arch_iface, thumb_interface.ArmThumbArchInterface)
 
     def test_mem_map_structure(self):
         """ We expect 3 segments (.text, .data, peripherals) in sorted-by-logical-addr order. """

@@ -7,6 +7,7 @@ ARM Thumb-specific architecture interface.
 import arduino_dbg.arch as arch
 import arduino_dbg.debugger as dbg
 import arduino_dbg.memory_map as mmap
+from arduino_dbg.term import MsgLevel
 
 # Enum for different stack pointer registers implemented on Cortex M-4.
 STACK_MSP = 1  # Main stack ptr. Used for all IRQs and handler-mode; can also be used in thread mode.
@@ -25,6 +26,7 @@ DWT_COMP0_addr = 0xE0001020  # 1st DWT comparator. Max is FP_COMP3.
 DWT_MASK_offset = 0x4
 DWT_FUNC_offset = 0x8
 DWT_struct_size = 0x10  # 4 words per DWT comparator register set.
+
 
 class CortexBreakpointScheduler(object):
     """
@@ -53,7 +55,7 @@ class CortexBreakpointScheduler(object):
         if self.loaded_params:
             return
 
-        self.arch_iface.get_num_hardware_breakpoints() # Trigger parameter data load from remote
+        self.arch_iface.get_num_hardware_breakpoints()  # Trigger parameter data load from remote
         num_fpb = self.arch_iface.arch_specs['fpb_code_addrs']
         num_dwt = self.arch_iface.arch_specs['dwt_num_comparators']
 
@@ -117,7 +119,7 @@ class CortexBreakpointScheduler(object):
             self._program_dwt_breakpoint(True, dwt_slot, addr)
         except ValueError:
             # DWT does not have a free slot.
-            raise Exception("No hardware breakpoint slot available")
+            raise arch.HWBreakpointsFullError("No hardware breakpoint slot available")
 
 
     def deschedule_bp(self, breakpoint):
@@ -147,6 +149,8 @@ class CortexBreakpointScheduler(object):
             raise Exception(f'Breakpoint not installed in hardware slot: {breakpoint}')
 
     def sync(self):
+        self._load_params()
+
         # Ensure FPB registers match local defs for FPB-tracked breakpoints
         for i in range(0, len(self.fpb_comparators)):
             fpb_addr = self.fpb_comparators[i]
@@ -164,6 +168,8 @@ class CortexBreakpointScheduler(object):
                 self._program_dwt_breakpoint(True, i, dwt_addr)
 
     def get_num_hardware_breakpoints_used(self):
+        self._load_params()
+
         # Return all non-None comparator slots.
         lst = []
         lst.extend(self.fpb_comparators)
@@ -211,8 +217,8 @@ class CortexBreakpointScheduler(object):
 
                 self.debugger.set_sram(reg_addr, comparator_val, 4)  # Set 4-byte comparator reg.
             elif fpb_version == 2:
-                remap_supported = self.arch_iface.arch_specs['fpb_remap_supported']
                 # FPB v2 register format depends on whether this FPB supports address remapping.
+                # (tracked as boolean: arch_iface.arch_specs['fpb_remap_supported'])
                 # Although in all cases where a breakpoint is enabled, 31:1 are PC_ADDR and
                 # lsb is '1' for BP_Enabled.
                 #
@@ -245,7 +251,7 @@ class CortexBreakpointScheduler(object):
 
         if not is_enable:
             self.debugger.verboseprint(
-                f'Disabling DWT breakpoint {reg_id} @COMP=0x{reg_addr:x}')
+                f'Disabling DWT breakpoint {reg_id} @COMP=0x{comp_reg_addr:x}')
             self.debugger.set_sram(comp_reg_addr, 0, 4)
             self.debugger.set_sram(func_reg_addr, 0, 4)  # func = b'0000' => disabled.
         else:
@@ -523,7 +529,7 @@ class ArmThumbArchInterface(arch.ArchInterface):
         if self.arch_specs is None:
             self._get_arch_specs()
 
-        self._breakpoint_scheduler.get_num_hardware_breakpoints_used()
+        return self._breakpoint_scheduler.get_num_hardware_breakpoints_used()
 
     def create_hw_breakpoint(self, breakpoint):
         if self.arch_specs is None:
@@ -543,4 +549,4 @@ class ArmThumbArchInterface(arch.ArchInterface):
 
         self._breakpoint_scheduler.sync()
 
-        
+

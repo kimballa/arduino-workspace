@@ -20,6 +20,7 @@ Future work:
 
 import threading
 
+import arduino_dbg.arch as arch
 import arduino_dbg.binutils as binutils
 import arduino_dbg.debugger as dbg
 from arduino_dbg.repl_command import CompoundCommand, CompoundHost
@@ -37,9 +38,7 @@ class BreakpointDatabase(object):
 
     def __init__(self, debugger):
         self._debugger = debugger
-        self._breakpoints = []
-        self._pc_to_bp = {}
-        self._sig_to_bp = {}
+        self.reset()
 
     def __repr__(self):
         bp_strs = list(map(repr, self._breakpoints))  # Format breakpoint strs
@@ -55,6 +54,15 @@ class BreakpointDatabase(object):
         lines.insert(0, "id  en  typ  breakpoint")
         lines.insert(1, "-----------------------")
         return '\n'.join(lines)
+
+    def reset(self):
+        """
+        Hard-clear and reset all breakpoint db state. (Intended for testing.)
+        Does not de-register breakpoints with arch_iface, etc. or send I/O to device.
+        """
+        self._breakpoints = []
+        self._pc_to_bp = {}
+        self._sig_to_bp = {}
 
 
     def register_bp(self, pc, signature, is_dynamic):
@@ -207,8 +215,12 @@ class Breakpoint(object):
         Enable this breakpoint.
         """
         if self.is_dynamic:
-            self._debugger.arch_iface.create_hw_breakpoint(self)
-            self.enabled = True
+            try:
+                self._debugger.arch_iface.create_hw_breakpoint(self)
+                self.enabled = True
+            except arch.HWBreakpointsFullError:
+                self._debugger.msg_q(MsgLevel.ERR, 'Error: No hardware breakpoint available')
+                self._debugger.msg_q(MsgLevel.ERR, 'You must first disable a different hw breakpoint.')
         else:
             bit_num, flag_bits_addr = self._read_sig()
             if flag_bits_addr == 0:

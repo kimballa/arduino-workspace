@@ -10,6 +10,12 @@ Debugger:
 
 On-device service capabilities:
 
+  * Unit tests for hardware breakpoints
+    * MockThumbInterface advertises any number of FPB & DWT registers you want for testing.
+    * Test spilling from FPB to DWT; all-comparators-full conditions; sram $pc goes in DWT;
+      double-enable, double-disable; sync; redundant bp at same PC; create bp by name, raw pc value, or
+      '.'; disable non existant bp; intermingle disable/enable/delete cmds.
+
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
   * Watchpoint unit support
 

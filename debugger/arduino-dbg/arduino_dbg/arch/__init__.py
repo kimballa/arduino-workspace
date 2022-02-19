@@ -44,9 +44,28 @@ def load_arch_interfaces():
     __arch_interfaces_loaded = True  # Only need to run this method once.
 
 
+def inject_arch_interface(name, cls):
+    """
+    Reprogram a name-to-class binding. (i.e., for unit testing)
+    """
+    global ARCH_INTERFACES
+
+    load_arch_interfaces()  # Set up main bindings first.
+    ARCH_INTERFACES[name] = cls
+
+
 class ArchNotSupportedError(Exception):
     """ Architecture / ArchInterface does not support a particular method. """
     pass
+
+
+class HWBreakpointsFullError(Exception):
+    """
+    Hardware breakpoint configuration does not have spare registers.
+
+    A request to add a hardware breakpoint cannot be fulfilled until a register
+    is freed by removing a different configured hardware breakpoint.
+    """
 
 
 class ArchInterface(object):
