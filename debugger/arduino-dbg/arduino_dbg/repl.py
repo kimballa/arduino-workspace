@@ -1714,6 +1714,16 @@ class Repl(object):
         self._debugger = debugger   # Starts locked. The release() in loop_input_body() will
                                     # release this lock.
 
+    @Command(keywords=['cpuinfo'])
+    def print_cpu_info(self, argv):
+        """
+        Print CPU information
+
+            Syntax: cpuinfo
+        """
+        self._debugger.arch_iface.print_cpu_stats()
+
+
     @Command(keywords=['version'])
     def print_version(self, argv):
         """

@@ -13,6 +13,18 @@
   // Symbols needed for memory usage printing.
   extern "C" char *sbrk(int i);
   extern "C" unsigned int __bss_end__; // symbols defined in linker script.
+
+  // m'mapped FP_CTRL register describing Flash-patch/breakpoint (FPB) unit capabilities.
+  // (Not exposed in CMSIS like other mem-mapped registers / CoreSight capabilities?)
+  static constexpr uint32_t FP_CTRL_addr = 0xE0002000;
+  static volatile uint32_t *FP_CTRL_REG = (uint32_t*)(FP_CTRL_addr);
+
+  static constexpr uint32_t FP_CTRL_FLAG_EN  = 0x1; // LSB enables FPB unit.
+  static constexpr uint32_t FP_CTRL_FLAG_KEY = 0x2; // bit must be set for any writes to FP_CTRL.
+
+  // Register describing address remapping capabilities and base address for remap table.
+  static constexpr uint32_t FP_REMAP_addr = 0xE0002004;
+  static volatile uint32_t *FP_REMAP_REG = (uint32_t*)(FP_REMAP_addr);
 #endif /* SAMD */
 
 
@@ -30,8 +42,17 @@ extern "C" {
 #endif /* AVR */
 
 /** Debugger status bits **/
-volatile uint8_t debug_status = 0;
-static inline void _set_dbg_status(uint8_t new_status) {
+#if defined (__AVR_ARCH__)
+  typedef uint8_t dbg_status_t;
+#elif defined (ARDUINO_ARCH_SAMD)
+  typedef uint32_t dbg_status_t;
+#else
+  // Fallback case / unknown architecture only uses low-order bits.
+  typedef uint8_t dbg_status_t;
+#endif /* Architecture select */
+volatile dbg_status_t debug_status = 0;
+
+static inline void _set_dbg_status(dbg_status_t new_status) {
   debug_status = new_status;
   #if defined (ARDUINO_ARCH_SAMD)
     // Ensure synchronization of the debug status to prevent debugger service from
@@ -40,10 +61,10 @@ static inline void _set_dbg_status(uint8_t new_status) {
   #endif /* ARCH_SAMD */
 }
 
-#define DBG_STATUS_IN_BREAK     (0x1)  // True if we are inside the debugger service.
-#define DBG_STATUS_HARD_BKPT    (0x2)  // True if a hardware BKPT triggered the debugger service.
-#define DBG_STATUS_DEBUG_MON_EN (0x4)  // True if we've enabled the onboard debug monitor (SAMD51).
-#define DBG_STATUS_STEP_BKPT    (0x8)  // True if a single-step triggered debugging.
+static constexpr dbg_status_t DBG_STATUS_IN_BREAK     = 0x1; // True if we are inside the debugger service.
+static constexpr dbg_status_t DBG_STATUS_HARD_BKPT    = 0x2; // Hardware BKPT triggered dbg service.
+static constexpr dbg_status_t DBG_STATUS_DEBUG_MON_EN = 0x4; // Onboard debug monitor enabled (SAMD51).
+static constexpr dbg_status_t DBG_STATUS_STEP_BKPT    = 0x8; // True if a single-step triggered debugging.
 
 #if defined (ARDUINO_ARCH_SAMD)
   // This device supports monitor-mode debugging of hardware breakpoints.
@@ -65,8 +86,11 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 
 #define DBG_OP_RAMADDR   '@' // Return data at RAM address
 #define DBG_OP_STACKREL  '$' // Return data at addr relative to SP.
+#define DBG_OP_ARCH_SPEC 'a' // Report architecture-dependent specification of capabilities
+                             // or parameters to the debugger.
 #define DBG_OP_BREAK     'B' // Break execution of the program. (Redundant if within server)
 #define DBG_OP_CONTINUE  'C' // Continue execution.
+#define DBG_OP_DEBUGCTL  'D' // Architecture-specific debugger extension sentences.
 #define DBG_OP_FLASHADDR 'f' // Return data at Flash address.
 #define DBG_OP_SET_FLAG  'L' // Set bit flag in int high or low.
 #define DBG_OP_POKE      'K' // Insert data to RAM address.
@@ -86,6 +110,8 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 // e.g. Use the command "tm\n" to get the current millis().
 #define DBG_TIME_MILLIS 'm' // get time in ms
 #define DBG_TIME_MICROS 'u' // get time in us
+
+#define DBG_END_LIST '$'    // list-based commands end responds with a '$' on a line by itself.
 
 /** System reset capability **/
 
@@ -201,7 +227,7 @@ void __dbg_setup() {
     TC4->COUNT16.CC[0].reg = TOP;  // Set trigger count.
     TC4_wait_for_sync();
 
-    // All systems go.
+    // All systems go for timer.
     TC4->COUNT16.CTRLA.bit.ENABLE = 1;
     TC4_wait_for_sync();
 
@@ -231,6 +257,11 @@ void __dbg_setup() {
       // on hardware breakpoints safely).
       _set_dbg_status(debug_status | DBG_STATUS_DEBUG_MON_EN);
     }
+
+    // Enable the flashpatch & breakpoint (FPB) unit for hardware breakpoint support.
+    uint32_t fp_ctrl_val = *FP_CTRL_REG;
+    fp_ctrl_val |= FP_CTRL_FLAG_EN | FP_CTRL_FLAG_KEY;  // Set EN and KEY bits high together.
+    *FP_CTRL_REG = fp_ctrl_val; // Write back to FP_CTRL register.
 
   #endif /* (architecture select) */
   interrupts();
@@ -327,6 +358,26 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
     case DBG_OP_RESET:
       __dbg_reset();
       break;
+    case DBG_OP_ARCH_SPEC:
+      // Architecture-specific: return flags, register values, etc. that describe the
+      // capabilities of the running CPU or its current state. Various other debugger
+      // capabilities (e.g., number of hardware breakpoints) may require this run-time
+      // parameterization rather than being completely specified by the CPU part id.
+      #if defined(__AVR_ARCH__)
+        // Nothing to report for AVR.
+      #elif defined(ARDUINO_ARCH_SAMD)
+        DBG_SERIAL.println(*FP_CTRL_REG, HEX); // FP_CTRL: Describe flashpatch/breakpoint unit.
+        DBG_SERIAL.println(*FP_REMAP_REG, HEX); // FP_REMAP: Describe flashpatch remapping capabilities.
+        DBG_SERIAL.println(DWT->CTRL, HEX); // DWT_CTRL: Describe data watchpoint & trace unit.
+      #endif /* Architecture select */
+      // In all cases, this list-driven operation ends with the list-end identifier.
+      DBG_SERIAL.println(DBG_END_LIST);
+      break;
+    case DBG_OP_DEBUGCTL:
+      // Control architecture-specific hardware debug/break/watchpoint capabilities.
+      // Sentence-structure is architecture-specific.
+      // (Placeholder; none currently implemented.)
+      break;
     case DBG_OP_RAMADDR:
       b = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
       addr = DBG_SERIAL.parseInt(LookaheadMode::SKIP_WHITESPACE);
@@ -393,7 +444,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
 
       #endif /* architecture select */
 #endif /* !DBG_NO_MEM_REPORT */
-      DBG_SERIAL.println('$');
+      DBG_SERIAL.println(DBG_END_LIST);
       break;
     case DBG_OP_REGISTERS:
       #if defined(__AVR_ARCH__)
@@ -457,7 +508,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
         DBG_SERIAL.println(__get_CONTROL(), HEX);  // Return $CONTROL register.
 
       #endif /* architecture select */
-      DBG_SERIAL.println('$');
+      DBG_SERIAL.println(DBG_END_LIST);
       break;
 #ifdef DBG_NO_GPIO
     case DBG_OP_PORT_IN:
@@ -724,7 +775,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
     // to shift into the debug monitor irq (and from there to the dbg service).
     // This enables us to enter single-step mode cleanly if desired by the user.
-    asm volatile("BKPT \n\t":::"memory");
+    __BKPT();
   } else {
     // Invoke __dbg_service() directly on the thread-mode call stack.
     __dbg_service(flag_num, flags, 0);

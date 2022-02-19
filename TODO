@@ -16,6 +16,63 @@ On-device service capabilities:
     * Delete HW breakpoint
     * Disable/enable HW breakpoint
   * Watchpoint unit support
+    ... In Iaddr mode, can also be used to implement hardware breakpoints on specific $PC
+    values.
+
+  ARMv7 arch ref manual: pg C1-752 - a BKPT in an IRQ w/ higher priority than debugmon will
+  trigger a HardFault.
+
+    Implement a HardFault handler that logs the IRQ BKPT $PC and set the MON_PEND bit to
+    go to DebugMon after the IRQ is finished. Document this "delayed breakpoint" behavior.
+
+    A consequence is that we cannot single-step (or inspect state while halted) within IRQs.
+
+    watchpoints are ignored in hgher-prio IRQs. Document this.
+    FPB breakpoints may be ignored or HardFaulted; impl.defined. Test. Document.
+
+
+  Breakpoints Plan of attack:
+  * (OK) Hardware breakpoint create command
+    * (OK) repl: Define new breakpoint ($PC or methodname) cmd
+    * (OK) resolve to firm $PC and add to breakpoint database
+    * (ok) dbglib: implement FPB breakpoint create
+    * (ok) dbglib: implement DWT breakpoint create
+    * (OK) breakpoint database: define signature for hw breakpoint
+    * (ok) ArchIface: translate logical bp to bp register
+      * (ok) Add CortexBreakpointScheduler class to map bp/watches to fpb & dwt registers.
+    * (OK) ArchIface: issue command
+  * delete breakpoint
+    * repl: commands for delete and disable
+    * (ok) dbglib: FPB breakpoint delete
+    * (ok) dbglib: DWT breakpoint delete
+    * (ok) ArchIface: issue delete command
+    * Update breakpoint database.
+  * soft bp needs to include signature in BKPT-to-DebugMon handshake
+    * Pass (flag_num, flags_addr, SOME_MAGIC_KEY in r0...r2) --
+      set up in __dbg_break(), and read regs in DebugMon_Handler prologue.
+      (Also read at $PC and verify we see 'FE00' BKPT instruction.)
+    * Capture it in debug mon irq, pass back to debugger
+    * verify it's correctly associated in breakpoint database.
+    * ... should we actually permit `bp forget` on soft bps? if it's disabled and you forget it,
+      you can never get it back again.
+      Replace this with just a `bp delete` for HW breakpoints.
+
+
+  * Add a `next` command that will 'step' until filename:lineno changes.
+    (Can we use addr2line to figure this out in advance and implement 'step (n)' or do
+    we just need to keep STEPping?)
+
+  * Add a 'step return' command that uses CFI to figure out the $LR value (return point) for
+    the method under debug, and set a hw bp for that addr.
+
+  * A 'step n' command can be implemented using DWT comparator 0 in CYCCOUNT matching mode.
+    Set DWT_COMP0 to 'n+k' and reset CYCCNT <- 0. CYCCNT increments only if DWT_CTRL.CYCCNTENA is set;
+    we should enable this bit at the last possible moment before returning from the interrupts.
+    (And we should disable it on interrupt entry.) We need to adjust DWT_COMP0 by 'k' which is the
+    number of further cycles it takes to destack the IRQ frame and transition back to user code.
+
+  * Add a 'skinny breakpoints' #define macro in dbg.h that just converts `BREAK()` to `__BKPT()`.
+
 
 Client:
 
@@ -25,6 +82,8 @@ Client:
     __acknowledge_pause(). nb that the literal BKPT instruction inside __dbg_break() is not
     helpful; we need the 'real' $PC from entering the breakpoint method in order to register
     break sites.
+
+  * Add watchpoint command.
 
   --------
 

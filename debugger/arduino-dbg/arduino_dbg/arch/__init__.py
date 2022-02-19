@@ -4,6 +4,7 @@ CPU Architecture-specific concerns.
 """
 
 from arduino_dbg.term import MsgLevel
+import arduino_dbg.protocol as protocol
 
 
 # Map from class names to classes that fulfill the ArchInterface contract.
@@ -36,7 +37,7 @@ def load_arch_interfaces():
         return  # No further work to do.
 
     # We don't literally use these modules in this method but their loading
-    # populates ARCH_INTERFACES via calls to register_arch_interface.
+    # populates ARCH_INTERFACES via @iface decorators.
     import arduino_dbg.arch.avr_interface       # noqa: F401
     import arduino_dbg.arch.thumb_interface     # noqa: F401
 
@@ -44,7 +45,7 @@ def load_arch_interfaces():
 
 
 class ArchNotSupportedError(Exception):
-    """ Architecture / ArchInteface does not support a particular method. """
+    """ Architecture / ArchInterface does not support a particular method. """
     pass
 
 
@@ -217,6 +218,62 @@ class ArchInterface(object):
         Reset any arch-specific state when beginning a backtrace at the top of the stack.
         """
         pass
+
+    def parse_arch_specs(self, arch_specs_strs):
+        """
+        In response to the DBG_ARCH_SPEC command, the server will return a list of strings
+        describing any run-time-discernable state needed by the debugger. Parse the arch
+        spec data here. The ArchInterface is responsible for storing and parsed config state
+        and providing appropriate getters to the Debugger, or incorporating said state in how it
+        implements other arch-specific methods.
+        """
+        pass  # Default: Nothing to do.
+
+    def _get_arch_specs(self):
+        """
+        Protected method to retrieve arch specs from device if not already loaded.
+        """
+        specs_lst = self.debugger.send_cmd(protocol.DBG_OP_ARCH_SPEC, self.debugger.RESULT_LIST)
+        self.parse_arch_specs(specs_lst)
+
+    def get_num_hardware_breakpoints(self):
+        """
+        Return number of hardware breakpoint slots/comparators available.
+        """
+        return 0
+
+    def get_num_hardware_breakpoints_used(self):
+        """
+        Return number of hardware breakpoint comparators in use.
+        """
+        return 0
+
+    def create_hw_breakpoint(self, breakpoint):
+        """
+        Create a hardware breakpoint on the specified address.
+        """
+        raise Exception("Hardware breakpoints not supported")
+
+    def remove_hw_breakpoint(self, breakpoint):
+        """
+        Remove the hardware breakpoint for the specified address.
+        """
+        raise Exception("Hardware breakpoints not supported")
+
+    def print_cpu_stats(self):
+        """
+        Print CPU information.
+        """
+        archconf = self.debugger.get_arch_conf
+        self.debugger.msg_q(MsgLevel.INFO, f'Architecture: {self.debugger.get_conf("arduino.arch")}')
+        self.debugger.msg_q(MsgLevel.INFO, f'ISA: {archconf("instruction_set")}')
+        self.debugger.msg_q(MsgLevel.INFO, f'Clock speed: {archconf("clock_freq")/1000000} MHz')
+        self.debugger.msg_q(MsgLevel.INFO, f'Endian: {archconf("endian")}')
+        self.debugger.msg_q(MsgLevel.INFO, f'RAM: 0x{archconf("RAMSIZE"):x}')
+        self.debugger.msg_q(MsgLevel.INFO, f'Word size: {archconf("push_word_len")}')
+        self.debugger.msg_q(MsgLevel.INFO, f'General-purpose registers: {archconf("general_regs")}')
+        self.debugger.msg_q(MsgLevel.INFO, f'Supports single-step: {archconf("single_step_supported")}')
+        self.debugger.msg_q(MsgLevel.INFO, f'Hardware breakpoints: {self.get_num_hardware_breakpoints()}')
 
     @staticmethod
     def make_arch_interface(debugger):

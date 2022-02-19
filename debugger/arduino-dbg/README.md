@@ -99,4 +99,3 @@ create new breakpoints or watchpoints dynamically at run-time.
 
 On such platforms, the ARM `BKPT` opcode will also properly enter the debugger service.
 
-

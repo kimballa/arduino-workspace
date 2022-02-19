@@ -37,7 +37,6 @@ class BreakpointDatabase(object):
     to the client when encountered.
     """
 
-
     def __init__(self, debugger):
         self._debugger = debugger
         self._breakpoints = []
@@ -55,21 +54,25 @@ class BreakpointDatabase(object):
         nums = list(map(lambda i: f'#{i}. ', range(0, len(bp_strs))))   # Format "#0. ", "#1. ", ...
         lines = list(map(''.join, zip(nums, bp_enable_strs, bp_strs)))  # connect those into 1 str/line.
 
-        lines.insert(0, "id  en  breakpoint")
-        lines.insert(1, "------------------")
+        lines.insert(0, "id   en typ  breakpoint")
+        lines.insert(1, "-----------------------")
         return '\n'.join(lines)
 
 
     def register_bp(self, pc, signature, is_dynamic):
         """
-        Register a new breakpoint; either created by client or as we
-        encounter it live in the set program.
+        Register a new breakpoint; either created by client (is_dynamic=True) or as we
+        encounter it live in the set program (is_dynamic=False).
         """
 
         if pc in self._pc_to_bp:
             return self._pc_to_bp[pc]  # Already registered.
 
+        if pc is None:
+            raise Exception("Cannot declare breakpoint at undefined address")
+
         bp = Breakpoint(self._debugger, pc, signature, is_dynamic)
+
         self._breakpoints.append(bp)
         self._pc_to_bp[pc] = bp
         self._sig_to_bp[signature] = bp
@@ -90,7 +93,6 @@ class BreakpointDatabase(object):
         """
         Return the breakpoint with the specified signature or None if no such known breakpoint.
         """
-
         if sig in self._sig_to_bp:
             return self._sig_to_bp[sig]
         else:
@@ -121,32 +123,46 @@ class BreakpointDatabase(object):
         """
         Return True if this architecture supports creating breakpoints dynamically.
         """
-        return self._debugger.get_arch_conf("dynamic_breakpoints")
+        return (self._debugger.get_arch_conf("dynamic_breakpoints") and
+                self._debugger.arch_iface.get_num_hardware_breakpoints() > 0)
 
 
 class Breakpoint(object):
     """
-    An individual breakpoint location
+    Either a hardware breakpoint created by the user, or an individual software breakpoint
+    location that has made itself known to the debugger.
+
+    Software breakpoints cannot be created directly, but they can be listed, and
+    selectively enabled/disabled with flags. Hardware breakpoints can be installed or
+    deleted.
     """
 
     @staticmethod
-    def make_signature(bit_num, flag_bits_addr):
+    def make_sw_signature(bit_num, flag_bits_addr):
         """
         Make a unique breakpoint signature from its server-provided elements:
         a bit number in a flags word, and the address of that flags word in RAM.
         """
         # Format is just a tuple.
-        return (bit_num, flag_bits_addr)
+        return ('SW', bit_num, flag_bits_addr)
+
+    @staticmethod
+    def make_hw_signature(pc_addr):
+        """
+        Make a unique breakpoint signature for a hardware bp at a specified $PC.
+        """
+        return ('HW', pc_addr)
 
 
-    def __init__(self, debugger, pc, signature, is_dynamic=False):
-        self.pc = pc                    # Program counter @ breakpoint.
-        self.is_dynamic = is_dynamic    # True if we created from client; False if static in prgm.
-
-        self.signature = signature      # A unique server-side id for the breakpoint.
-                                        # We see this as a (bitnumber, bitflags_addr) pair.
-
+    def __init__(self, debugger, pc, signature, is_dynamic):
         self._debugger = debugger
+
+        self.is_dynamic = is_dynamic
+        self.pc = pc                    # Program counter @ breakpoint.
+        self.signature = signature      # A unique handle id for the breakpoint.
+                                        # For SW breakpoints, we see this as a (bitnumber,
+                                        # bitflags_addr) pair, shared w/ server-side.
+                                        # HW breakpoints are represented just by a PC addr.
 
         self.sym = debugger.function_sym_by_pc(pc)
         if self.sym is None:
@@ -163,11 +179,16 @@ class Breakpoint(object):
 
         self.source_line = binutils.pc_to_source_line(debugger.elf_name, pc) or None
 
-        self.enabled = True
+        self.enabled = not is_dynamic  # SW breakpoints start enabled.
 
 
     def __repr__(self):
-        s = f'$PC=0x{self.pc:04x}:  '
+        if self.is_dynamic:
+            bp_typ = 'hw'
+        else:
+            bp_typ = 'sw'
+
+        s = f'[{bp_typ}] $PC=0x{self.pc:04x}:  '
 
         if len(self.demangled_inline_chain) > 1:
             s += ' inlined in '.join(self.demangled_inline_chain)
@@ -183,35 +204,62 @@ class Breakpoint(object):
         """
         Enable this breakpoint.
         """
-        bit_num, flag_bits_addr = self.signature
-        if flag_bits_addr == 0:
-            self._debugger.msg_q(MsgLevel.ERR,
-                                 'Error: Breakpoint has null bitfield addr, cannot enable')
+        if self.is_dynamic:
+            self._debugger.arch_iface.create_hw_breakpoint(self)
+            self.enabled = True
+        else:
+            bit_num, flag_bits_addr = self._read_sig()
+            if flag_bits_addr == 0:
+                self._debugger.msg_q(MsgLevel.ERR,
+                                     'Error: Breakpoint has null bitfield addr, cannot enable')
+            else:
+                self._debugger.set_bit_flag(flag_bits_addr, bit_num, 1)
+                self.enabled = True
 
-        self.enabled = True
-        self._debugger.set_bit_flag(flag_bits_addr, bit_num, 1)
 
     def disable(self):
         """
         Disable this breakpoint.
         """
-        bit_num, flag_bits_addr = self.signature
-        if flag_bits_addr == 0:
-            self._debugger.msg_q(MsgLevel.ERR,
-                                 'Error: Breakpoint has null bitfield addr, cannot disable')
+        if self.is_dynamic:
+            self._debugger.arch_iface.remove_hw_breakpoint(self)
+            self.enabled = False
+        else:
+            bit_num, flag_bits_addr = self._read_sig()
+            if flag_bits_addr == 0:
+                self._debugger.msg_q(MsgLevel.ERR,
+                                     'Error: Breakpoint has null bitfield addr, cannot disable')
+            else:
+                self._debugger.set_bit_flag(flag_bits_addr, bit_num, 0)
+                self.enabled = False
 
-        self.enabled = False
-        self._debugger.set_bit_flag(flag_bits_addr, bit_num, 0)
 
     def sync(self):
         """
         Sync the local enable status of this breakpoint up to the debugger.
         """
-        bit_num, flag_bits_addr = self.signature
-        if flag_bits_addr == 0:
-            return  # Cannot sync this breakpoint
+        if self.is_dynamic:
+            raise Exception("unimplemented: sync hw bp")
+        else:
+            bit_num, flag_bits_addr = self._read_sig()
+            if flag_bits_addr == 0:
+                return  # Cannot sync this breakpoint
 
-        self._debugger.set_bit_flag(flag_bits_addr, bit_num, int(self.enabled))
+            self._debugger.set_bit_flag(flag_bits_addr, bit_num, int(self.enabled))
+
+    def _read_sig(self):
+        """
+        Interpret our 'signature' field into identifying info about the breakpoint 'handle'
+        we can use to enable/disable it.
+        """
+        if self.is_dynamic:
+            pc_addr, _ = self.signature
+            return pc_addr
+        else:
+            bit_num, flag_bits_addr, _ = self.signature
+            return bit_num, flag_bits_addr
+
+
 
 
 class BreakpointCreateThread(threading.Thread):
@@ -325,6 +373,9 @@ class BreakpointCommands(object):
         Drops a breakpoint from the local breakpoints list. This does not change whether or
         not the breakpoint is enabled or disabled on the device.
         """
+
+        # TODO(aaron): This command is dangerous if applied to software breakpoints. It should
+        # only apply to hardware breakpoints.
         if len(args) == 0:
             self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint disable <id>")
             return
@@ -356,24 +407,63 @@ class BreakpointCommands(object):
         else:
             self._repl.debugger().msg_q(MsgLevel.INFO, f'Setting enable flags for {n} breakpoints...')
 
+        # TODO(aaron): Messaging should change to describe hardware breakpoint installation.
         for bp in breakpoint_list:
             bp.sync()
 
 
-    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['new'], cls='BreakpointCommands')
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['create', 'new'], cls='BreakpointCommands')
     def create(self, args):
         """
         Create a new breakpoint
 
-            Syntax: breakpoint new
+            Syntax: breakpoint create <methodName | pcAddr | '.'>
 
-        If supported by the device architecture, create a new breakpoint.
+        Creates a new hardware breakpoint (if supported by the device architecture).
+        Breakpoints can be created by any of the following location identifiers:
+        * A method name, causing breakpoint on method entry,
+        * A specific $PC value ('4a2c' or '0x4a2c'), or
+        * The current $PC value, indicated by the '.' dot symbol.
+
         """
-        if not self._debugger.get_arch_conf("dynamic_breakpoints"):
-            self._repl.debugger().msg_q(MsgLevel.ERR, "Device does not support breakpoint creation")
+        debugger = self._repl.debugger()
+        if not debugger.breakpoints().allow_create_breakpoint():
+            debugger.msg_q(MsgLevel.ERR, "Device does not support breakpoint creation")
             return
 
-        # TODO(aaron): Work out additional syntax requirements and implement.
-        raise Exception("Unimplemented: `breakpoint new`")
+        if len(args) == 0:
+            debugger.msg_q(MsgLevel.INFO,
+                           "Syntax: breakpoint create <methodName | pcAddr | '.'>")
+            return
+
+        def _maybe_parse_hex(s):
+            if s.startswith('0x') or s.startswith('0X'):
+                s = s[2:]
+            try:
+                return int(s, base=16)
+            except ValueError:
+                return None
+
+        addr_arg = args[0]
+        maybe_sym = debugger.lookup_sym(addr_arg)  # Is the arg a method name? Maybe.
+        pcAddr = None
+        if addr_arg == '.':
+            frame = debugger.get_top_user_frame()
+            assert frame is not None
+            pcAddr = frame.break_regs['PC']
+        elif maybe_sym is not None:
+            pcAddr = maybe_sym.addr
+        elif _maybe_parse_hex(addr_arg):
+            pcAddr = _maybe_parse_hex(addr_arg)
+
+        if pcAddr is None:
+            debugger.msg_q(MsgLevel.ERR, f"Cannot locate breakpoint address: {addr_arg}")
+            return
+
+        sig = Breakpoint.make_hw_signature(pcAddr)
+        bp = debugger.breakpoints().register_bp(pcAddr, sig, True)
+        bp.enable()
+
+        debugger.msg_q(MsgLevel.INFO, f"Created breakpoint: {bp}")
 
 

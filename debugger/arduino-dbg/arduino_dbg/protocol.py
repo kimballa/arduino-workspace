@@ -7,11 +7,14 @@ DBG_END          = '\n'  # end of debugger sentence.
 
 DBG_OP_RAMADDR   = '@'  # Return data at RAM address.
 DBG_OP_STACKREL  = '$'  # Return data at addr relative to SP.
+DBG_OP_ARCH_SPEC = 'a'  # Report architecture-dependent specification of capabilities or
+                        # parameters to the debugger.
 DBG_OP_BREAK     = 'B'  # Break execution of the program. Redundant when within interrupted dbg
                         # server but enables confirmation of break state.
 DBG_OP_CONTINUE  = 'C'  # Continue execution.
+DBG_OP_DEBUGCTL  = 'D'  # Architecture-specific debugger extension sentences.
 DBG_OP_FLASHADDR = 'f'  # Return data at Flash address.
-DBG_OP_SET_FLAG  = 'L'  # Set bitfield flag for breakpoint en/dis-able..
+DBG_OP_SET_FLAG  = 'L'  # Set bitfield flag (e.g., for breakpoint soft en/dis-able..)
 DBG_OP_POKE      = 'K'  # Insert data to RAM address.
 DBG_OP_MEMSTATS  = 'm'  # Describe memory usage.
 DBG_OP_PORT_IN   = 'p'  # Read gpio pin.
@@ -33,3 +36,5 @@ DBG_TIME_MILLIS = 'm'  # get time in ms
 DBG_TIME_MICROS = 'u'  # get time in us
 
 DBG_PAUSE_MSG = "Paused"  # Message sent by server when breakpoint is triggered / interrupt received
+
+DBG_END_LIST = '$'  # A list-based response ends with a '$' on a line by itself.

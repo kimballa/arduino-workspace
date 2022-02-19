@@ -1081,7 +1081,7 @@ class Debugger(object):
                             continue
                 else:
                     # Data response line to forward to consumer
-                    if line == '$':
+                    if line == protocol.DBG_END_LIST:
                         # end of list and end of requested conn I/O.
                         # We reassert responsibility for reconnect after finishing requested conn I/O,
                         # but before allowing the client to continue by handing them back the response line.
@@ -1095,7 +1095,7 @@ class Debugger(object):
                         except queue.Full:
                             continue
 
-                    if line == '$':
+                    if line == protocol.DBG_END_LIST:
                         # That line signaled end of the list.
                         break
 
@@ -1147,7 +1147,7 @@ class Debugger(object):
             msg = f'$PC=0x{hwAddr:04x}'
         elif flagsAddr != 0:
             # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
-            sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
+            sig = breakpoint.Breakpoint.make_sw_signature(flagBitNum, flagsAddr)
             bp = self._breakpoints.get_bp_for_sig(sig)
             if bp is None:
                 # We haven't seen it before. We need to register it, which requires a bit
@@ -1465,7 +1465,7 @@ class Debugger(object):
                 thisline = self.__wait_response()
                 if len(thisline) == 0:
                     continue
-                elif thisline == "$":
+                elif thisline == protocol.DBG_END_LIST:
                     break
                 else:
                     lines.append(thisline.strip())
@@ -1496,7 +1496,7 @@ class Debugger(object):
                 self.msg_q(MsgLevel.INFO, f'$PC=0x{hwAddr:04x}')
             elif flagsAddr != 0:
                 # We have hit a breakpoint. (If flagsAddr == 0, then we interrupted the device.)
-                sig = breakpoint.Breakpoint.make_signature(flagBitNum, flagsAddr)
+                sig = breakpoint.Breakpoint.make_sw_signature(flagBitNum, flagsAddr)
                 bp = self._breakpoints.get_bp_for_sig(sig)
                 if bp is None:
                     # We haven't seen it before. We need to register it, which requires a bit
@@ -1908,6 +1908,25 @@ class Debugger(object):
         """ Clear cached backtrace information. """
         self._cached_frames = None
         self._frame_cache_complete = False
+
+    def get_top_user_frame(self):
+        """
+        Return the top-most frame on the stack that belongs to the main sketch (as opposed
+        to being part of the debugger library).
+        """
+        i = 0
+        last_len = -1
+        while True:
+            frames = self.get_backtrace(limit=i+1)
+            if len(frames) == last_len:
+                # There are no further frames to explore (*only* debugger methods on stack?!)
+                return None
+
+            if self.__is_internal_stack_frame(frames[-1]):
+                i += 1  # Need to explore deeper.
+                continue
+
+            return frames[-1]  # We found the first non-internal stack frame.
 
     def get_frame_regs(self, frame_num, force_unhide=False):
         """
