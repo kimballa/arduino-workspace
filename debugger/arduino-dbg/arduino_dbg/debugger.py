@@ -1732,20 +1732,12 @@ class Debugger(object):
 
     ######### Highest-level debugging functions built on top of low-level capabilities
 
-    def __is_internal_method_name(self, method_name):
-        """
-        Return True if method_name is an 'internal' method name according to
-        dbg.internal.stack.frames and thus gets hidden from users by default.
-        """
-        return method_name in stack.DEBUGGER_METHODS
-
     def __is_internal_stack_frame(self, stack_frame):
         """
         Return True if stack_frame is an 'internal' frame according to
         dbg.internal.stack.frames and thus gets hidden from users by default.
         """
-        return (self.__is_internal_method_name(stack_frame.name) or
-                self.__is_internal_method_name(stack_frame.demangled))
+        return stack.is_internal_method_name(stack_frame.name, stack_frame.demangled)
 
     def __get_internal_method_cnt(self, frame_list):
         """
@@ -1981,13 +1973,12 @@ class Debugger(object):
         listening mode.
         """
         # Get partial backtrace to establish breakpoint location. Top of stack is
-        # the dbg_service; breakpoint is in whatever's below that.
-        frames = self.get_backtrace(limit=2, force_unhide=True)
-        if len(frames) < 2:
+        # the debugger service; breakpoint is in whatever's below that.
+        frame = self.get_top_user_frame()
+        if frame is None:
             # Not really at a useful breakpoint? Nothing to register w/o a $PC.
             msg = 'Paused at unknown breakpoint.'
         else:
-            frame = frames[1]
             bp = self._breakpoints.register_bp(frame.addr, sig, False)
             msg = f'Paused at breakpoint, {bp}'
 

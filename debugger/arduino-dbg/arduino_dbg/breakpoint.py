@@ -54,7 +54,7 @@ class BreakpointDatabase(object):
         nums = list(map(lambda i: f'#{i}. ', range(0, len(bp_strs))))   # Format "#0. ", "#1. ", ...
         lines = list(map(''.join, zip(nums, bp_enable_strs, bp_strs)))  # connect those into 1 str/line.
 
-        lines.insert(0, "id   en typ  breakpoint")
+        lines.insert(0, "id  en  typ  breakpoint")
         lines.insert(1, "-----------------------")
         return '\n'.join(lines)
 
@@ -193,7 +193,7 @@ class Breakpoint(object):
         if len(self.demangled_inline_chain) > 1:
             s += ' inlined in '.join(self.demangled_inline_chain)
         else:
-            s += '{self.demangled}'
+            s += f'{self.demangled}'
 
         if self.source_line:
             s += f'  ({self.source_line})'
@@ -450,7 +450,7 @@ class BreakpointCommands(object):
         if addr_arg == '.':
             frame = debugger.get_top_user_frame()
             assert frame is not None
-            pcAddr = frame.break_regs['PC']
+            pcAddr = frame.break_registers['PC']
         elif maybe_sym is not None:
             pcAddr = maybe_sym.addr
         elif _maybe_parse_hex(addr_arg):

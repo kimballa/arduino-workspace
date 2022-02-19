@@ -42,20 +42,20 @@ On-device service capabilities:
       * (ok) Add CortexBreakpointScheduler class to map bp/watches to fpb & dwt registers.
     * (OK) ArchIface: issue command
   * delete breakpoint
-    * repl: commands for delete and disable
+    * repl: add command for delete
     * (ok) dbglib: FPB breakpoint delete
     * (ok) dbglib: DWT breakpoint delete
     * (ok) ArchIface: issue delete command
     * Update breakpoint database.
-  * soft bp needs to include signature in BKPT-to-DebugMon handshake
-    * Pass (flag_num, flags_addr, SOME_MAGIC_KEY in r0...r2) --
+  * (ok) soft bp needs to include signature in BKPT-to-DebugMon handshake
+    * (ok) Pass (flag_num, flags_addr, SOME_MAGIC_KEY in r0...r2) --
       set up in __dbg_break(), and read regs in DebugMon_Handler prologue.
       (Also read at $PC and verify we see 'FE00' BKPT instruction.)
-    * Capture it in debug mon irq, pass back to debugger
-    * verify it's correctly associated in breakpoint database.
-    * ... should we actually permit `bp forget` on soft bps? if it's disabled and you forget it,
-      you can never get it back again.
-      Replace this with just a `bp delete` for HW breakpoints.
+    * (ok) Capture it in debug mon irq, pass back to debugger
+    * (ok) verify it's correctly associated in breakpoint database.
+  * ... should we actually permit `bp forget` on soft bps? if it's disabled and you forget it,
+    you can never get it back again.
+    Replace this with just a `bp delete` for HW breakpoints.
 
 
   * Add a `next` command that will 'step' until filename:lineno changes.

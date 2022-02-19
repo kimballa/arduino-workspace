@@ -25,6 +25,10 @@
   // Register describing address remapping capabilities and base address for remap table.
   static constexpr uint32_t FP_REMAP_addr = 0xE0002004;
   static volatile uint32_t *FP_REMAP_REG = (uint32_t*)(FP_REMAP_addr);
+
+  // "magic key" stored in r2 that hints to our DebugMon_Handler that r0 and r1
+  // are valid flag num and flag data addr.
+  static constexpr uint32_t BKPT_FLAGS_KEY = 0xADB0EEEE;
 #endif /* SAMD */
 
 
@@ -775,7 +779,19 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
     // to shift into the debug monitor irq (and from there to the dbg service).
     // This enables us to enter single-step mode cleanly if desired by the user.
-    __BKPT();
+    asm volatile (
+      "mov r0, %[flag_num]  \n\t" // flag_num and flags_addr identify soft bp; pass to DebugMon_Handler
+      "mov r1, %[flags_addr]\n\t" // to forward to dbg_service() via registers r0 & r1.
+      "mov r2, %[magic_key] \n\t" // "magic key" tells DebugMon_Handler() that r0 and r1 are valid.
+      "bkpt                 \n\t"
+      "and r2, r2, #0       \n\t" // Wipe magic key so we don't misinterpret register values if we
+                                  // reenter DebugMon_Handler() again soon.
+    :
+    : [flag_num] "h" (flag_num),
+      [flags_addr] "h" (flags),
+      [magic_key] "h" (BKPT_FLAGS_KEY)
+    : "r0", "r1", "r2"
+    );
   } else {
     // Invoke __dbg_service() directly on the thread-mode call stack.
     __dbg_service(flag_num, flags, 0);
@@ -856,32 +872,30 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // stacked register data, meaning we need to know the start of our own stack frame in this
     // method; since gcc does not generate a frame pointer, we set up our own. We are
     // conservative about what we push in here to avoid destroying normal-thread state.
+    //
+    // We may also have soft breakpoint handle details passed in registers:
+    // r0 -- flag_num
+    // r1 -- flags_addr
+    // r2 -- magic key (BKPT_FLAGS_KEY) indicating that r0 and r1 are valid
     asm volatile (
         ".cfi_def_cfa sp, 0 \n\t"
-        "mov   r0, sp       \n\t"
-        ".cfi_undefined 0   \n\t" // r0 is clobbered.
         "mov   r12, sp      \n\t" // Save pre-prologue $SP value in r12 for use as a frame pointer.
         ".cfi_undefined 12  \n\t" // r12 is clobbered.
-        "bic.w r1, r0, #7   \n\t"
-        ".cfi_register 13, 1\n\t" // The "real" $SP is held in r1.
-        "mov   sp, r1       \n\t"
-        ".cfi_restore 13    \n\t" // $SP holds its own value again.
         // Push everything that might be clobbered in this method, or a callee.
-        // $r0 is used to recover entry $SP value, but we don't need to be able to unwind that
-        // within this method since it's an ISR-prestacked value.
         // True $LR is also pre-stacked but we need to save the EXN_RETURN status value it currently
         // holds.
         // We also save all other ABI callee-save registers here.
-        "push  {r0, r4, r5, r6, r7, r8, r9, r10, fp, lr} \n\t"
+        "push  {r4, r5, r6, r7, r8, r9, r10, fp, r12, lr} \n\t"
         ".cfi_offset 14, -4 \n\t"   // $LR is reg #14; pushed at $entrySP - 4.
-        ".cfi_offset 11, -8 \n\t"   // $FP
-        ".cfi_offset 10, -12\n\t"   // r10
-        ".cfi_offset 9,  -16\n\t"   // r9
-        ".cfi_offset 8,  -20\n\t"   // ...
-        ".cfi_offset 7,  -24\n\t"
-        ".cfi_offset 6,  -28\n\t"
-        ".cfi_offset 5,  -32\n\t"
-        ".cfi_offset 4,  -36\n\t"
+        ".cfi_offset 12, -8 \n\t"   // r12
+        ".cfi_offset 11, -12\n\t"   // $FP
+        ".cfi_offset 10, -16\n\t"   // r10
+        ".cfi_offset 9,  -20\n\t"   // r9
+        ".cfi_offset 8,  -24\n\t"   // ...
+        ".cfi_offset 7,  -28\n\t"
+        ".cfi_offset 6,  -32\n\t"
+        ".cfi_offset 5,  -36\n\t"
+        ".cfi_offset 4,  -40\n\t"
         ".cfi_adjust_cfa_offset 40\n\t" // We pushed 10x4 = 40 bytes to the stack.
     :
     :
@@ -893,6 +907,9 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
                                                      // The old r12 was already stacked on IRQ entry.
                                                      // This points to a CortexM_IRQ_Frame of data.
     uint32_t return_pc = ((CortexM_IRQ_Frame*)(framePtr))->PC;
+    uint8_t flag_num = 0;
+    uint16_t *flags = NULL;
+    uint32_t magic_key = ((CortexM_IRQ_Frame*)(framePtr))->r2;
     if (SCB->DFSR & (1 << SCB_DFSR_HALTED_Pos)) {
       // This was triggered by single-stepping.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_STEP_BKPT);
@@ -905,21 +922,32 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
       // We need to advance the $PC ourselves.
       ((CortexM_IRQ_Frame*)(framePtr))->PC += 2;
 
+      if (magic_key == BKPT_FLAGS_KEY) {
+        // We hit a software BKPT and it was initialized with flags ptr and flag_num from __dbg_break().
+        // These were put in registers that were stacked on IRQ entry; read back here:
+        flag_num = (uint8_t)(((CortexM_IRQ_Frame*)(framePtr))->r0);
+        flags = (uint16_t *)(((CortexM_IRQ_Frame*)(framePtr))->r1);
+        return_pc = 0; // Don't pass literal $PC back to debugger, since it's the addr of the BKPT
+                       // within __dbg_break() that isn't unique to this logical breakpoint
+                       // location. Let the debugger walk up stack to the caller of __dbg_break().
+      }
+
       // Record that we are in hardware-break status.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);
     }
 
     // Invoke __dbg_service() with the return addr from the triggering breakpoint.
-    __dbg_service(0, NULL, return_pc);
+    __dbg_service(flag_num, flags, return_pc);
 
     // Withdraw from hardware-break status.
     _set_dbg_status(debug_status & ~(DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT | DBG_STATUS_STEP_BKPT));
 
     // Hard-coded ISR epilogue.
     asm volatile (
-        "ldmia.w sp!, {r0, r4, r5, r6, r7, r8, r9, r10, fp, lr} \n\t"
+        "ldmia.w sp!, {r4, r5, r6, r7, r8, r9, r10, fp, r12, lr} \n\t"
         ".cfi_register 13, 0        \n\t" // After the POP, the 'real' $SP is in r0.
         ".cfi_restore 14            \n\t" // $LR is restored.
+        ".cfi_restore 12            \n\t" // $r12 is restored.
         ".cfi_restore 11            \n\t" // $FP is restored.
         ".cfi_restore 10            \n\t" // r10 is restored, along with other gen-regs...
         ".cfi_restore 9             \n\t"
@@ -929,7 +957,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
         ".cfi_restore 5             \n\t"
         ".cfi_restore 4             \n\t"
         ".cfi_adjust_cfa_offset -40 \n\t" // $SP -= 40, is now sitting on its CFA again.
-        "mov     sp, r0             \n\t" // $SP fully restored.
+        "mov     sp, r12            \n\t" // $SP fully restored.
         ".cfi_restore 13            \n\t" // $SP is now stored in itself.
         "bx      lr                 \n\t" // Adios! (r0..r3, r12, sp, lr, pc restored in ISR de-stack.)
         "nop                        \n\t"

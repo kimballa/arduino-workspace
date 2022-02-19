@@ -13,6 +13,7 @@ DEBUGGER_METHODS = [
   "TC4_Handler",         # SAMD51 timer interrupt
   "DebugMon_Handler",    # SAMD51 breakpoint / debug monitor interrupt
   "__dbg_service",       # The debugger interactive service loop
+  "__dbg_break",         # BREAK() macro expands into call to this method
 ]
 
 
@@ -351,6 +352,25 @@ class CallFrame(object):
 
 
 
+def is_internal_method_name(name, demangled=None):
+    """
+    Return True if the method named by 'name' or its demangled form 'demangled' is
+    a debugger-internal method.
+    """
+    is_dbg_method = (name in DEBUGGER_METHODS) or (demangled in DEBUGGER_METHODS)
+    if is_dbg_method:
+        return True
+
+    if demangled is not None and demangled != '???':
+        # Mangled name wasn't a literal match. But could the demangled name be a hit?
+        # demangled names can include arg types, so we need to be insensitive to those.
+        for dbg_method in DEBUGGER_METHODS:
+            if demangled.startswith(dbg_method + '('):
+                return True  # Found it.
+
+    return False
+
+
 def get_stack_autoskip_count(debugger):
     """
     Return the number of bytes in the stack to skip when dumping the stack
@@ -362,7 +382,7 @@ def get_stack_autoskip_count(debugger):
 
     frames = debugger.get_backtrace(limit=len(DEBUGGER_METHODS) + 1, force_unhide=True)
     for frame in frames:
-        if frame.name not in DEBUGGER_METHODS:
+        if not is_internal_method_name(frame.name, frame.demangled):
             # This frame is not part of the debugger service, it's a real frame.
             # Skip count == diff between this frame's SP and real SP
             return frame.break_registers['SP'] - sp
