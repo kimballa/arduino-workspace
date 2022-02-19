@@ -1161,7 +1161,12 @@ class Debugger(object):
                 bp.enabled = True  # Definitionally, it's enabled, whether or not we thought so.
         elif hwAddr != 0:
             msg = f'Paused at breakpoint; $PC=0x{hwAddr:04x}'
-            # TODO(aaron): breakpoint.Breakpoint needs to register hwAddr.
+            # TODO(aaron): If we restarted the debugger w/o any knowledge of installed BP's
+            # and stumbled on one here, we should register hwAddr. (but how do we know which FPB/DWT
+            # register it's in? Need to read them back...) But under most circumstances if we
+            # get here the device was actually maybe in a 'ONE_STEP' state but locally we
+            # lost that train of thought and were in UNKNOWN state. i.e., this isn't a real
+            # permanent breakpoint...
         else:
             msg = "Paused by debugger."
 
@@ -1507,7 +1512,8 @@ class Debugger(object):
                     bp.enabled = True  # Definitionally, it's enabled, whether or not we thought so.
             elif hwAddr != 0:
                 self.msg_q(MsgLevel.INFO, f'Paused at breakpoint; $PC=0x{hwAddr:04x}')
-                # TODO(aaron): breakpoint.Breakpoint needs to register hwAddr.
+                # TODO(aaron): May need to register hw bp at hwAddr? See comment in
+                # __acknowledge_pause().
             else:
                 self.msg_q(MsgLevel.INFO, "Paused by debugger.")
 

@@ -286,6 +286,12 @@ class HostedDebugService(object):
                 # Debugger expects a RESULT_ONELINE, so send a formal response that is not
                 # 'Continuing' in addition to the user-helpful comment above.
                 self._send("error")
+            elif cmd == protocol.DBG_OP_ARCH_SPEC:
+                # Debugger expects RESULT_LIST operation. We have nothing to report.
+                self._send(protocol.DBG_END_LIST)
+            elif cmd == protocol.DBG_OP_DEBUGCTL:
+                # (note: debug response protocol for this command is undefined)
+                self._send_comment("Image debugger does not recognize DEBUGCTL sentences.")
             elif cmd == protocol.DBG_OP_STEP:
                 # This is a RESULT_SILENT operation so no formal response required, just a log msg.
                 self._send_comment("Cannot step in image debugger")
@@ -317,7 +323,7 @@ class HostedDebugService(object):
                             self._send(f'{self._regs["SP"]:x}')
                         else:
                             self._send('0')  # e.g. unknown __malloc_heap_end
-                self._send('$')
+                self._send(protocol.DBG_END_LIST)
             elif cmd == protocol.DBG_OP_PORT_IN:
                 # Return a GPIO value to the user.
                 addr = args[0]
@@ -341,7 +347,7 @@ class HostedDebugService(object):
                 for reg_nm in register_order:
                     reg_val = self._regs[reg_nm]
                     self._send(f'{reg_val:x}')
-                self._send('$')
+                self._send(protocol.DBG_END_LIST)
             elif cmd == protocol.DBG_OP_TIME:
                 # The 'time' is always 0.
                 self._send("0")

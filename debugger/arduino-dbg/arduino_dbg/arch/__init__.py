@@ -260,6 +260,12 @@ class ArchInterface(object):
         """
         raise Exception("Hardware breakpoints not supported")
 
+    def sync_hw_breakpoints(self):
+        """
+        Ensure hardware breakpoint reigsters match locally-tracked definitions for state.
+        """
+        pass  # By default there is nothing to do to sync as this base impl doesn't track hw breakpoints.
+
     def print_cpu_stats(self):
         """
         Print CPU information.

@@ -146,6 +146,22 @@ class CortexBreakpointScheduler(object):
             # Not there either. What?
             raise Exception(f'Breakpoint not installed in hardware slot: {breakpoint}')
 
+    def sync(self):
+        # Ensure FPB registers match local defs for FPB-tracked breakpoints
+        for i in range(0, len(self.fpb_comparators)):
+            fpb_addr = self.fpb_comparators[i]
+            if fpb_addr is None:
+                self._program_fpb_breakpoint(False, i, None)
+            else:
+                self._program_fpb_breakpoint(True, i, fpb_addr)
+
+        # Ensure DWT registers match local defs for DWT-tracked breakpoints
+        for i in range(0, len(self.dwt_comparators)):
+            dwt_addr = self.dwt_comparators[i]
+            if dwt_addr is None:
+                self._program_dwt_breakpoint(False, i, None)
+            else:
+                self._program_dwt_breakpoint(True, i, dwt_addr)
 
     def get_num_hardware_breakpoints_used(self):
         # Return all non-None comparator slots.
@@ -521,3 +537,10 @@ class ArmThumbArchInterface(arch.ArchInterface):
 
         self._breakpoint_scheduler.deschedule_bp(breakpoint)
 
+    def sync_hw_breakpoints(self):
+        if self.arch_specs is None:
+            self._get_arch_specs()
+
+        self._breakpoint_scheduler.sync()
+
+        

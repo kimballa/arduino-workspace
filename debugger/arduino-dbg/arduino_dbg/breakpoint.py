@@ -3,20 +3,18 @@
 Breakpoint tracking, set/disable, and single-step management.
 
 Supports repl commands:
+    breakpoint create <addr>  -- creates a new hardware (dynamic) breakpoint.
     breakpoint list         - list known breakpoints
     breakpoint enable #n    - enable breakpoint by id. If at a breakpoint, #n is optional, use
                               current.
     breakpoint disable #n   - disable breakpoint by id. If at a breakpoint, #n is optional, use
                               current.
-    breakpoint forget #n    - forget the n'th breakpoint in the database.
+    breakpoint delete #n    - disable and forget breakpoint by id. (hardware breakpoints only)
     breakpoint sync         - Syncs enable/disable info from debugger up to device.
 
     `bp` is a synonym for `breakpoint` in repl.
 
 Future work:
-    breakpoint create $PC   - create a new breakpoint at $PC.
-                              (Can we do it by `source.cpp:line` too?)
-    step                    - Run one opcode (line?)
     step return             - Run all opcodes thru end of this method/call frame.
 """
 
@@ -107,10 +105,14 @@ class BreakpointDatabase(object):
 
         return self._breakpoints[idx]
 
-    def forget(self, idx):
+    def delete(self, idx):
         """
         Drop the breakpoint entry with the specified index.
         """
+        if not self._breakpoints[idx].is_dynamic:
+            raise Exception("Cannot delete software breakpoints")
+
+        self._breakpoints[idx].disable()
         del self._breakpoints[idx]
 
     def breakpoints(self):
@@ -239,11 +241,11 @@ class Breakpoint(object):
         Sync the local enable status of this breakpoint up to the debugger.
         """
         if self.is_dynamic:
-            raise Exception("unimplemented: sync hw bp")
+            raise Exception("Dynamic breakpoints synchronized only through scheduler")
         else:
             bit_num, flag_bits_addr = self._read_sig()
             if flag_bits_addr == 0:
-                return  # Cannot sync this breakpoint
+                return  # Cannot sync this breakpoint; nothing to do.
 
             self._debugger.set_bit_flag(flag_bits_addr, bit_num, int(self.enabled))
 
@@ -253,10 +255,10 @@ class Breakpoint(object):
         we can use to enable/disable it.
         """
         if self.is_dynamic:
-            pc_addr, _ = self.signature
+            _, pc_addr = self.signature
             return pc_addr
         else:
-            bit_num, flag_bits_addr, _ = self.signature
+            _, bit_num, flag_bits_addr = self.signature
             return bit_num, flag_bits_addr
 
 
@@ -363,26 +365,33 @@ class BreakpointCommands(object):
         """
         self._repl.debugger().msg_q(MsgLevel.INFO, self._repl.debugger().breakpoints())
 
-    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['forget'], cls='BreakpointCommands')
-    def forget(self, args):
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['delete', 'rm'], cls='BreakpointCommands')
+    def delete(self, args):
         """
-        Forget a breakpoint
+        Delete a breakpoint
 
-            Syntax: breakpoint forget <id>
+            Syntax: breakpoint delete <id>
 
-        Drops a breakpoint from the local breakpoints list. This does not change whether or
-        not the breakpoint is enabled or disabled on the device.
+        Disables a hardware breakpoint and removes it from our local breakpoints list.
         """
 
-        # TODO(aaron): This command is dangerous if applied to software breakpoints. It should
-        # only apply to hardware breakpoints.
         if len(args) == 0:
-            self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint disable <id>")
+            self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint delete <id>")
             return
 
         id = int(args[0])
         try:
-            self._repl.debugger().breakpoints().forget(id)
+            breakpoint_db = self._repl.debugger().breakpoints()
+            bp = breakpoint_db.get_bp(id)
+            if bp is None:
+                self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
+            elif bp.is_dynamic:
+                if bp.enabled:
+                    bp.disable()  # Remove at device level
+                breakpoint_db.delete(id)  # Remove from local db.
+            else:
+                self._repl.debugger().msg_q(MsgLevel.ERR,
+                                            f'Error: Cannot delete software breakpoint #{id}')
         except IndexError:
             self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
 
@@ -394,22 +403,29 @@ class BreakpointCommands(object):
 
             Syntax: breakpoint sync
 
-        Breakpoint disable flags are cleared after resetting the device; this will
+        Ensures hardware breakpoint registers match user-specified breakpoint definitions.
+
+        Software breakpoint disable flags are cleared after resetting the device; this will
         restore their state to that known by the debugger.
         """
-        breakpoint_list = self._repl.debugger().breakpoints().breakpoints()
+        debugger = self._repl.debugger()
+        breakpoint_list = debugger.breakpoints().breakpoints()
         n = len(breakpoint_list)
         if n == 0:
-            self._repl.debugger().msg_q(MsgLevel.INFO, '(No breakpoints to sync)')
+            debugger.msg_q(MsgLevel.INFO, '(No breakpoints to sync)')
             return
         elif n == 1:
-            self._repl.debugger().msg_q(MsgLevel.INFO, 'Setting enable flag for 1 breakpoint...')
+            debugger.msg_q(MsgLevel.INFO, 'Synchronizing 1 breakpoint definition...')
         else:
-            self._repl.debugger().msg_q(MsgLevel.INFO, f'Setting enable flags for {n} breakpoints...')
+            debugger.msg_q(MsgLevel.INFO, f'Synchronizing state for {n} breakpoints...')
 
-        # TODO(aaron): Messaging should change to describe hardware breakpoint installation.
         for bp in breakpoint_list:
-            bp.sync()
+            if not bp.is_dynamic:
+                bp.sync()  # Software breakpoint bits sync'd from breakpoint itself.
+
+        # Hardware breakpoints are synchronized by the global hardware breakpoint mgr,
+        # as the Breakpoint objects don't actually correspond 1:1 to hardware bp registers.
+        debugger.arch_iface.sync_hw_breakpoints()
 
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['create', 'new'], cls='BreakpointCommands')

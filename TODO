@@ -11,13 +11,7 @@ Debugger:
 On-device service capabilities:
 
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
-  * Breakpoint unit support
-    * Create HW breakpoint
-    * Delete HW breakpoint
-    * Disable/enable HW breakpoint
   * Watchpoint unit support
-    ... In Iaddr mode, can also be used to implement hardware breakpoints on specific $PC
-    values.
 
   ARMv7 arch ref manual: pg C1-752 - a BKPT in an IRQ w/ higher priority than debugmon will
   trigger a HardFault.
@@ -29,34 +23,6 @@ On-device service capabilities:
 
     watchpoints are ignored in hgher-prio IRQs. Document this.
     FPB breakpoints may be ignored or HardFaulted; impl.defined. Test. Document.
-
-
-  Breakpoints Plan of attack:
-  * (OK) Hardware breakpoint create command
-    * (OK) repl: Define new breakpoint ($PC or methodname) cmd
-    * (OK) resolve to firm $PC and add to breakpoint database
-    * (ok) dbglib: implement FPB breakpoint create
-    * (ok) dbglib: implement DWT breakpoint create
-    * (OK) breakpoint database: define signature for hw breakpoint
-    * (ok) ArchIface: translate logical bp to bp register
-      * (ok) Add CortexBreakpointScheduler class to map bp/watches to fpb & dwt registers.
-    * (OK) ArchIface: issue command
-  * delete breakpoint
-    * repl: add command for delete
-    * (ok) dbglib: FPB breakpoint delete
-    * (ok) dbglib: DWT breakpoint delete
-    * (ok) ArchIface: issue delete command
-    * Update breakpoint database.
-  * (ok) soft bp needs to include signature in BKPT-to-DebugMon handshake
-    * (ok) Pass (flag_num, flags_addr, SOME_MAGIC_KEY in r0...r2) --
-      set up in __dbg_break(), and read regs in DebugMon_Handler prologue.
-      (Also read at $PC and verify we see 'FE00' BKPT instruction.)
-    * (ok) Capture it in debug mon irq, pass back to debugger
-    * (ok) verify it's correctly associated in breakpoint database.
-  * ... should we actually permit `bp forget` on soft bps? if it's disabled and you forget it,
-    you can never get it back again.
-    Replace this with just a `bp delete` for HW breakpoints.
-
 
   * Add a `next` command that will 'step' until filename:lineno changes.
     (Can we use addr2line to figure this out in advance and implement 'step (n)' or do
