@@ -61,7 +61,7 @@ CPUID_mappings = {
 }
 
 
-class ProcessState:
+class ProcessState(object):
     """
     When we connect to the device, which state are we in?
 
@@ -76,7 +76,7 @@ class ProcessState:
     ONE_STEP = 3    # We instructed the CPU to perform one step of execution only.
 
 
-class ConnRestart:
+class ConnRestart(object):
     """
     If the connection suddenly disconnects/errors within the _conn_listener thread,
     whose responsibility is it to attempt to restart the connection?
@@ -96,6 +96,50 @@ class ConnRestart:
     """
     INTERNAL = 0
     CLIENT = 1
+
+
+class AsyncCmdExecThread(threading.Thread):
+    """
+    A thread that will execute a debugger function that may trigger I/O with the debugged device.
+
+    The connection listener thread cannot invoke functions of the debugger that may themselves call
+    `send_cmd()`; send_cmd() uses queues to exchange commands and their results with the connection
+    I/O thread. Because of this model, if the listener thread enqueues a command, it cannot in the
+    same thread dequeue that command to send it.
+
+    If the state machine within the connection listener thread arrives at a situation where it
+    should send a command, it must do so asynchronously, through an instance of this thread.
+
+    This thread assumes that it is started when the caller (thread calling this thread's start()
+    method) holds the cmd_lock, and that ownership of the cmd_lock passes to this thread. Once the
+    command has been executed, this thread will release() the cmd_lock.
+    """
+
+    def __init__(self, debugger, cmd_fn, name="Debugger async cmd executor"):
+        """
+        Initialize a new command executor thread. The 'cmd_fn' argument must be the method to
+        invoke, which presumably itself invokes debugger.send_cmd(). This function will be called
+        with no arguments (`cmd_fn()`).
+        """
+        super().__init__(name=name)
+        self._debugger = debugger
+        self._cmd_fn = cmd_fn
+
+    def run(self):
+        """
+        Invoke the async command. It is assumed that the debugger's cmd_lock was already acquired,
+        and that ownership of the lock passes to this method/thread. We will release the lock when
+        the command has been invoked.
+        """
+        try:
+            fn = self._cmd_fn
+            fn()
+        except DebuggerIOError as dioe:
+            self._debugger.msg_q(MsgLevel.ERR, f'Error while invoking async command: {dioe}')
+        finally:
+            # No matter what happens, we must relinquish this lock when done.
+            self._debugger.release_cmd_lock()
+
 
 
 def _silent(*args):
@@ -538,6 +582,9 @@ class Debugger(object):
         el.DWARFExprMachine.hard_reset_state()
         el.DWARFExprMachine([], {}, self)
 
+        # Clear backtrace cache, reprocess with new ArchInterface.
+        self.clear_frame_cache()  # Backtrace is invalidated by continued execution.
+
         if old_int_size is not None:
             # If the width of 'int' or pointer addr changes by virtue of changing the architecture
             # profile, the ELF file must be reloaded.
@@ -713,7 +760,8 @@ class Debugger(object):
                        f'architecture. Reloading config...')
             self.verboseprint(f'Got arch conf name: {arch_conf_name}')
             self.set_conf('arduino.arch', arch_conf_name)  # Reconfigure.
-            self.msg_q(MsgLevel.INFO, 'You may want to reprocess the ELF file with \'reload\'\n')
+            self.msg_q(MsgLevel.INFO, 'Reloading ELF file with updated architecture definition...')
+            self._try_read_elf()
             return True
         except KeyError:
             self.msg_q(MsgLevel.WARN,
@@ -1170,6 +1218,31 @@ class Debugger(object):
             self._conn.readline()
 
 
+    def _discover_bp_and_get_arch_specs_fn(self, sig):
+        """
+        Returns a combo-method to pass to an AsyncCmdExecThread that invokes both
+        discover_current_breakpoint() and get_arch_specs() under the same cmd_lock without requiring
+        any arguments. Dispatched in certain circumstances by the conn_listener thread within
+        __acknowledge_pause().
+        """
+        def callable_fn():
+            self.get_arch_specs()
+            self.discover_current_breakpoint(sig)
+
+        return callable_fn
+
+    def _discover_bp_fn(self, sig):
+        """
+        Returns a method to pass to an AsyncCmdExecThread that invokes discover_current_breakpoint()
+        without requiring any arguments. Dispatched in certain circumstances by the conn_listener
+        thread within __acknowledge_pause().
+        """
+        def callable_fn():
+            self.discover_current_breakpoint(sig)
+
+        return callable_fn
+
+
     def __acknowledge_pause(self, pause_notification):
         """
         In the conn_listener thread, we received a "Paused" acknowledgement of break request
@@ -1201,7 +1274,17 @@ class Debugger(object):
             if bp is None:
                 # We haven't seen it before. We need to register it, which requires a bit
                 # of discussion with the server. Spawn a thread to have that conversation.
-                register_thread = breakpoint.BreakpointCreateThread(self, sig)
+                if self.get_conf('arduino.arch') == 'auto':
+                    # We *also* need to have the async thread get the arch_specs so we
+                    # can identify the CPU. Queue up a callable that does both.
+                    register_thread = AsyncCmdExecThread(self,
+                                                         self._discover_bp_and_get_arch_specs_fn(sig),
+                                                         name="Arch detection & register breakpoint")
+                else:
+                    # Start a thread that identifies the software breakpoint we hit.
+                    register_thread = AsyncCmdExecThread(self, self._discover_bp_fn(sig),
+                                                         name="Register breakpoint")
+
                 register_thread.start()
                 own_lock = False  # Ownership of the cmd lock passes to register_thread.
                 msg = None  # Let the register_thread give the report.
@@ -1228,6 +1311,16 @@ class Debugger(object):
                     submitted = True
                 except queue.Full:
                     continue
+
+        if own_lock and self.get_conf('arduino.arch') == 'auto':
+            # We don't know what CPU we're working with and the user has asked us to autodetect it.
+            # Since we triggered a breakpoint or otherwise established by passively listening that
+            # the CPU is in the 'BREAK' state, this is the earliest opportunity to do that
+            # detection; do so before the user wants to run a command.
+            cpu_detection_thread = AsyncCmdExecThread(self, self.get_arch_specs,
+                                                      name="CPU arch detection")
+            cpu_detection_thread.start()
+            own_lock = False  # lock ownership passes to executor thread.
 
         return own_lock
 
@@ -2084,7 +2177,13 @@ class Debugger(object):
         self.msg_q(MsgLevel.INFO, msg)
 
     def _parse_break_response(self, pause_notification):
-        # The pause notification is of the form: 'Paused {ver:x} {flagBitNum:x} {flagsAddr:x} {hwAddr:x}'
+        """
+        Parse a "Paused" sentence returned by the device, which indicates why and where the sketch
+        has paused for debug mode.
+
+        The pause notification has the following format:
+            'Paused {ver:x} {flagBitNum:x} {flagsAddr:x} {hwAddr:x}'
+        """
         tokens = pause_notification.split()
         if len(tokens) < 5:
             protoVer = 0

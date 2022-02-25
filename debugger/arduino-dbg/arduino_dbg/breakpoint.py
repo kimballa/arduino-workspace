@@ -18,11 +18,8 @@ Future work:
     step return             - Run all opcodes thru end of this method/call frame.
 """
 
-import threading
-
 import arduino_dbg.arch as arch
 import arduino_dbg.binutils as binutils
-import arduino_dbg.debugger as dbg
 from arduino_dbg.repl_command import CompoundCommand, CompoundHost
 from arduino_dbg.term import MsgLevel
 
@@ -282,37 +279,6 @@ class Breakpoint(object):
         else:
             _, bit_num, flag_bits_addr = self.signature
             return bit_num, flag_bits_addr
-
-
-
-
-class BreakpointCreateThread(threading.Thread):
-    """
-    A thread that will establish what $PC a new breakpoint sits at, and register the
-    breakpoint with the debugger's breakpoint database.
-
-    This is spawned by the debugger's listener thread, since it cannot run debug commands
-    within the thread due to queue usage. It is assumed that the listener thread owned
-    the cmd lock already, and when this thread is started, ownership of the lock passes to
-    this thread. We are responsible for releasing the lock when we're done.
-    """
-
-    def __init__(self, debugger, sig):
-        super().__init__(name="Register breakpoint")
-        self._debugger = debugger
-        self._sig = sig
-
-    def run(self):
-        """
-        Interact with the debugger to establish the $PC for this breakpoint
-        """
-        try:
-            self._debugger.discover_current_breakpoint(self._sig)
-        except dbg.DebuggerIOError as dioe:
-            self._debugger.msg_q(MsgLevel.ERR, f'Error while analyzing breakpoint: {dioe}')
-        finally:
-            # No matter what happens, we must relinquish this lock when done.
-            self._debugger.release_cmd_lock()
 
 
 @CompoundHost
