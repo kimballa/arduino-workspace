@@ -727,7 +727,7 @@ class Debugger(object):
         """
         if self.get_conf('arduino.arch') == 'auto':
             # Sending ARCH_SPEC command will identify CPU.
-            self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
+            self.get_arch_specs()
 
     ###### ELF-file and symbol functions
 
@@ -1498,7 +1498,7 @@ class Debugger(object):
             # so here. Response is parsed inline in case the 1st command being sent to the device
             # *is* an ARCH_SPEC command, rather than parsing the return value here.
             self.verboseprint('Fetching ARCH_SPEC list to identify \'auto\' architecture.')
-            self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
+            self.get_arch_specs()
 
         if type(dbg_cmd) == list:
             dbg_cmd = [str(x) for x in dbg_cmd]
@@ -1592,7 +1592,7 @@ class Debugger(object):
             if self.get_conf("arduino.arch") == 'auto':
                 # Now that we've paused the device, autodetect the architecture.
                 # send_cmd() will process the result internally and change the arch if needed.
-                self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
+                self.get_arch_specs()
 
             return True
         else:
@@ -1815,6 +1815,16 @@ class Debugger(object):
             return
 
         self.send_cmd([protocol.DBG_OP_PORT_OUT, pin, val], Debugger.RESULT_SILENT)
+
+    def get_arch_specs(self):
+        """
+        Get CPU settings and capability data (architecture-specific response).
+        Typically parsed by the ArchInterface.
+
+        If arduino.arch is 'auto', this will also identify the CPUID and reset arduino.arch within
+        the send_cmd() body.
+        """
+        return self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
 
     ######### Highest-level debugging functions built on top of low-level capabilities
 

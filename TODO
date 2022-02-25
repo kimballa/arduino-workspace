@@ -10,10 +10,6 @@ Debugger:
 
 On-device service capabilities:
 
-  * The arch specs list should be captured by the dump process and saved to the image file. The
-    local image service should reproduce this exactly.
-
-
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
   * Watchpoint unit support
 

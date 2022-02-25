@@ -4,7 +4,6 @@ CPU Architecture-specific concerns.
 """
 
 from arduino_dbg.term import MsgLevel
-import arduino_dbg.protocol as protocol
 import arduino_dbg.memory_map as mmap
 
 
@@ -255,7 +254,7 @@ class ArchInterface(object):
 
     def parse_arch_specs(self, arch_specs_strs):
         """
-        In response to the DBG_ARCH_SPEC command, the server will return a list of strings
+        In response to the DBG_OP_ARCH_SPEC command, the server will return a list of strings
         describing any run-time-discernable state needed by the debugger. Parse the arch
         spec data here. The ArchInterface is responsible for storing and parsed config state
         and providing appropriate getters to the Debugger, or incorporating said state in how it
@@ -268,7 +267,7 @@ class ArchInterface(object):
         Protected method to retrieve arch specs from device if not already loaded.
         """
         arch_1 = self.debugger.get_conf("arduino.arch")
-        specs_lst = self.debugger.send_cmd(protocol.DBG_OP_ARCH_SPEC, self.debugger.RESULT_LIST)
+        specs_lst = self.debugger.get_arch_specs()
         arch_2 = self.debugger.get_conf("arduino.arch")
         if arch_1 != arch_2:
             # The debugger has pre-processed the ARCH_SPEC response and has updated its arduino.arch

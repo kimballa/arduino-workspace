@@ -27,6 +27,9 @@ def capture_dump(debugger, dump_filename):
 
     elf_file_name = debugger.elf_name
 
+    # Get this upfront; force architecture resolution before reading arch conf.
+    arch_specs = debugger.get_arch_specs()
+
     ram_start = debugger.get_arch_conf("RAMSTART")
     ram_end = debugger.get_arch_conf("RAMEND")
     instruction_set = debugger.get_arch_conf("instruction_set")
@@ -108,6 +111,7 @@ def capture_dump(debugger, dump_filename):
     out['registers'] = regs
     out['memstats'] = memstats
     out['gpio'] = gpio
+    out['arch_specs'] = arch_specs
     out[DUMP_SCHEMA_KEY] = DUMP_SCHEMA_VER
 
     serialize.persist_config_file(dump_filename, SERIALIZED_STATE_KEY, out)
@@ -185,13 +189,22 @@ class HostedDebugService(object):
         self._regs = dump_data['registers']
 
         self._memstats = None
-        if dump_data.get('memstats'):
+        if 'memstats' in dump_data:
             self._memstats = dump_data['memstats']
+        else:
+            self._memstats = {}
 
         self._num_gpio = self._debugger.get_platform_conf("gpio_pins")
         self._gpio = self._num_gpio * [0]
-        if dump_data.get('gpio'):
+        if 'gpio' in dump_data:
             self._gpio = dump_data['gpio']
+        else:
+            self._gpio = []
+
+        if 'arch_specs' in dump_data:
+            self._arch_specs = dump_data['arch_specs']
+        else:
+            self._arch_specs = []
 
         self.platform = dump_data['platform']
         self.arch = dump_data['arch']
@@ -287,7 +300,10 @@ class HostedDebugService(object):
                 # 'Continuing' in addition to the user-helpful comment above.
                 self._send("error")
             elif cmd == protocol.DBG_OP_ARCH_SPEC:
-                # Debugger expects RESULT_LIST operation. We have nothing to report.
+                # Debugger expects RESULT_LIST operation. Report the arch specs snapshot gathered at
+                # dump time.
+                for line in self._arch_specs:
+                    self._send(line.strip())
                 self._send(protocol.DBG_END_LIST)
             elif cmd == protocol.DBG_OP_DEBUGCTL:
                 # (note: debug response protocol for this command is undefined)
