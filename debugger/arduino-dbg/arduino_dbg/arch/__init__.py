@@ -5,6 +5,7 @@ CPU Architecture-specific concerns.
 
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.protocol as protocol
+import arduino_dbg.memory_map as mmap
 
 
 # Map from class names to classes that fulfill the ArchInterface contract.
@@ -97,7 +98,8 @@ class ArchInterface(object):
         """
         Return the memory map for this device.
         """
-        raise ArchNotSupportedError('No memory model defined for this architecture')
+        self.debugger.msg_q(MsgLevel.WARN, 'Warning: No memory model defined for this architecture')
+        return mmap.MemoryMap()  # Return empty memory model.
 
     def reg_word_mask(self):
         """
@@ -265,7 +267,16 @@ class ArchInterface(object):
         """
         Protected method to retrieve arch specs from device if not already loaded.
         """
+        arch_1 = self.debugger.get_conf("arduino.arch")
         specs_lst = self.debugger.send_cmd(protocol.DBG_OP_ARCH_SPEC, self.debugger.RESULT_LIST)
+        arch_2 = self.debugger.get_conf("arduino.arch")
+        if arch_1 != arch_2:
+            # The debugger has pre-processed the ARCH_SPEC response and has updated its arduino.arch
+            # field in response. Architecture has changed (from 'auto' to a defined architecture).
+            # We may be in an ArchInterface that has been replaced by the debugger. Do not continue
+            # processing.
+            raise Exception("Architecture definition has changed. Please retry command.")
+
         self.parse_arch_specs(specs_lst)
 
     def get_num_hardware_breakpoints(self):

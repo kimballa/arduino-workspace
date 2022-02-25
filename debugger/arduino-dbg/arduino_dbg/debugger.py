@@ -47,6 +47,19 @@ _dbg_conf_keys = [
     "dbg.verbose",
 ]
 
+# Mapping from CPUID signature bytes to ('friendly name', 'config name')
+CPUID_mappings = {
+    # 0x410CC200: ('Cortex-M0 r0p0', '????'),
+    # 0x410CC201: ('Cortex-M0 r0p1', '????'),
+    # 0x410CC601: ('Cortex-M0+ r0p1', '????'),      # Cortex-M0+ r0p1 (SAMD21, Feather 0)
+    # 0x410FC240: ('Cortex-M4 r0p0', '????'),       # Cortex-M4 r0p0 (unknown)
+    0x410fc241: ('Cortex-M4 r0p1', 'samd51x19a'),   # Cortex-M4 r0p1 (SAMD51; Feather M4)
+    0x0014951e: ('ATmega328', 'atmega328p'),        # Regular 328 has same config as Uno 328p
+    0x000f951e: ('ATmega328P', 'atmega328p'),       # Uno (32kb flash, 2kb ram)
+    # 0x0016951e: ('ATmega328PB', 'atmega328pb???'),    # Other Mega328 variant. (64kb flash, 4kb ram)
+    0x0087951e: ('ATmega32U4', 'atmega32u4'),      # (Leonardo, Micro)
+}
+
 
 class ProcessState:
     """
@@ -401,6 +414,8 @@ class Debugger(object):
             conf_map[k] = None
 
         # If we open a file it can overwrite this but we start with this non-None default val.
+        conf_map["arduino.platform"] = 'auto'
+        conf_map["arduino.arch"] = 'auto'
         conf_map["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
         conf_map["dbg.verbose"] = False
         conf_map["dbg.colors"] = True
@@ -679,6 +694,40 @@ class Debugger(object):
 
     def get_full_platform_config(self):
         return self._platform.items()
+
+    def autodetect_cpu(self, cpuid):
+        """
+        Given a CPU fingerprint detected at runtime by the device and sent via ARCH_SPEC response,
+        set the arduino.arch field appropriately.
+
+        Returns True if it detects a known CPU architecture.
+        """
+        if cpuid == protocol.INVALID_CPU_ID:
+            self.msg_q(MsgLevel.ERR, 'Invalid CPU id; cannot autodetect architecture')
+            return False
+
+        try:
+            arch_friendly_name, arch_conf_name = CPUID_mappings[cpuid]
+            self.msg_q(MsgLevel.INFO,
+                       f'CPU with signature 0x{cpuid:08x}: detected {arch_friendly_name} '
+                       f'architecture. Reloading config...')
+            self.verboseprint(f'Got arch conf name: {arch_conf_name}')
+            self.set_conf('arduino.arch', arch_conf_name)  # Reconfigure.
+            self.msg_q(MsgLevel.INFO, 'You may want to reprocess the ELF file with \'reload\'\n')
+            return True
+        except KeyError:
+            self.msg_q(MsgLevel.WARN,
+                       f'Could not determine architecture settings for CPU with id 0x{cpuid:08x}')
+
+        return False
+
+    def check_arch(self):
+        """
+        If the Arduino architecture is set to 'auto' (autodetect), try to deanonymize it.
+        """
+        if self.get_conf('arduino.arch') == 'auto':
+            # Sending ARCH_SPEC command will identify CPU.
+            self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
 
     ###### ELF-file and symbol functions
 
@@ -1443,6 +1492,14 @@ class Debugger(object):
             raise UnsupportedDebuggerProtocolException(
                 f'Cannot send command to device running debugger protocol v{self._protocol_version}')
 
+        if self.get_conf("arduino.arch") == 'auto' and dbg_cmd != protocol.DBG_OP_ARCH_SPEC and \
+                dbg_cmd != protocol.DBG_OP_BREAK:
+            # We do not know the CPU type yet; the user has asked us to auto-detect it. Do
+            # so here. Response is parsed inline in case the 1st command being sent to the device
+            # *is* an ARCH_SPEC command, rather than parsing the return value here.
+            self.verboseprint('Fetching ARCH_SPEC list to identify \'auto\' architecture.')
+            self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
+
         if type(dbg_cmd) == list:
             dbg_cmd = [str(x) for x in dbg_cmd]
             dbg_cmd = " ".join(dbg_cmd) + "\n"
@@ -1474,6 +1531,21 @@ class Debugger(object):
                     break
                 else:
                     lines.append(thisline.strip())
+
+            if self.get_conf("arduino.arch") == 'auto' and \
+                    dbg_cmd.startswith(protocol.DBG_OP_ARCH_SPEC):
+                # We just got a set of arch specs back from the device. If we need to change
+                # our behavior for the architecture, now's the time, before .
+                self.verboseprint("Processing ARCH_SPEC response in debugger...")
+                if len(lines) == 0:
+                    # On-device debug service is not compliant with our protocol...
+                    self.msg_q(MsgLevel.WARN, 'No CPUID included in arch specs')
+                    cpu_id = protocol.INVALID_CPU_ID
+                else:
+                    cpu_id = int(lines[0], base=16)
+                    self.verboseprint(f'Got CPU id {cpu_id:08x}')
+                self.autodetect_cpu(cpu_id)
+
             return lines
         else:
             raise RuntimeError("Invalid 'result_type' arg (%d) sent to send_cmd" % result_type)
@@ -1517,6 +1589,11 @@ class Debugger(object):
             else:
                 self.msg_q(MsgLevel.INFO, "Paused by debugger.")
 
+            if self.get_conf("arduino.arch") == 'auto':
+                # Now that we've paused the device, autodetect the architecture.
+                # send_cmd() will process the result internally and change the arch if needed.
+                self.send_cmd(protocol.DBG_OP_ARCH_SPEC, Debugger.RESULT_LIST)
+
             return True
         else:
             self._process_state = ProcessState.UNKNOWN
@@ -1538,6 +1615,7 @@ class Debugger(object):
 
     def send_step(self):
         """ Continue execution for a single step. """
+        self.check_arch()
         if not self.get_arch_conf('single_step_supported'):
             raise RuntimeError("Single-step mode not supported on this architecture.")
 
@@ -1552,11 +1630,12 @@ class Debugger(object):
         self.send_cmd(protocol.DBG_OP_RESET, Debugger.RESULT_SILENT)
         self._process_state = ProcessState.UNKNOWN
 
-
     def get_registers(self):
         """
         Get snapshot of system registers.
         """
+        self.check_arch()
+
         if len(self._arch) == 0:
             self.msg_q(MsgLevel.WARN,
                        "Warning: No architecture specified; cannot assign specific registers")
@@ -1656,6 +1735,7 @@ class Debugger(object):
         The top-of-stack addr '$TOP' is given by $SP + k (full descending) or $SP + k + 1 (empty
         desc) stack.
         """
+        self.check_arch()
 
         if skip < 0:
             # calculate autoskip amount
@@ -1789,6 +1869,8 @@ class Debugger(object):
 
         Return a list of dicts that describe each frame of the stack.
         """
+        self.check_arch()
+
         all_frames = force_unhide or self.get_conf('dbg.internal.stack.frames')
 
         if self._cached_frames:
@@ -1958,6 +2040,7 @@ class Debugger(object):
         Given a stack_addr pointing to the lowest memory address of a
         return address pushed onto the stack, return the associated return address.
         """
+        self.check_arch()
         # Note: This is possible for AVR, but ARM puts the ret addr in $LR so
         # we'd be reading garbage.
         if self.get_arch_conf("abi_uses_link_register"):

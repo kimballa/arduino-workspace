@@ -38,3 +38,5 @@ DBG_TIME_MICROS = 'u'  # get time in us
 DBG_PAUSE_MSG = "Paused"  # Message sent by server when breakpoint is triggered / interrupt received
 
 DBG_END_LIST = '$'  # A list-based response ends with a '$' on a line by itself.
+
+INVALID_CPU_ID = 0xFFFFFFFF  # Response in ARCH_SPECS if CPUID could not be detected at runtime.

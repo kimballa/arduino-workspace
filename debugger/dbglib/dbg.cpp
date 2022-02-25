@@ -3,6 +3,10 @@
 #include "dbg.h"
 #include <Stream.h>
 
+#ifdef __AVR_ARCH__
+#include<avr/boot.h> // For reading signature bytes
+#endif /* AVR */
+
 /** Declarations and macros from other compilation units */
 
 #ifndef FPSTR
@@ -44,6 +48,17 @@ extern "C" {
   // AVR: Forward-declare ISR function used for Timer1 interrupts for USB activity check.
   ISR(TIMER1_COMPA_vect) __attribute__((no_instrument_function));
 #endif /* AVR */
+
+/** Data structure to hold CPU/arch identification bytes to relay to debugger. */
+union _dbg_cpu_id {
+  uint8_t cpu_bytes[4];
+  uint32_t cpu_dword;
+};
+typedef union _dbg_cpu_id dbg_cpu_id_t;
+
+dbg_cpu_id_t cpu_signature; // runtime-detected fingerprint to identify CPU architecture.
+static constexpr uint32_t INVALID_CPU_SIGNATURE = 0xFFFFFFFF;
+
 
 /** Debugger status bits **/
 #if defined (__AVR_ARCH__)
@@ -179,6 +194,13 @@ void __dbg_setup() {
   noInterrupts();
   #if defined(__AVR_ARCH__)
 
+    // Fill out CPUID signature using signature bytes.
+    // See https://microchipsupport.force.com/s/article/How-to-read-signature-byte
+    cpu_signature.cpu_bytes[0] = boot_signature_byte_get(0x0);
+    cpu_signature.cpu_bytes[1] = boot_signature_byte_get(0x2);
+    cpu_signature.cpu_bytes[2] = boot_signature_byte_get(0x4);
+    cpu_signature.cpu_bytes[3] = 0x0; // Only 3 sig bytes for AVR. Keep MSB at zero.
+
     // Set up IRQ on AVR Timer1
     // (see https://www.instructables.com/Arduino-Timer-Interrupts/)
     TCCR1A = 0; // set entire TCCR1A register to 0
@@ -194,6 +216,9 @@ void __dbg_setup() {
     TIMSK1 |= (1 << OCIE1A);
 
   #elif defined(ARDUINO_ARCH_SAMD)
+
+    // Fill out CPUID signature from $CPUID register in the system control block (SCB).
+    cpu_signature.cpu_dword = SCB->CPUID;
 
     // Set up 4Hz timer on ARM/SAMD.
     // Code based on github.com/Dennis-van-Gils/SAMD51_InterruptTimer
@@ -266,6 +291,10 @@ void __dbg_setup() {
     uint32_t fp_ctrl_val = *FP_CTRL_REG;
     fp_ctrl_val |= FP_CTRL_FLAG_EN | FP_CTRL_FLAG_KEY;  // Set EN and KEY bits high together.
     *FP_CTRL_REG = fp_ctrl_val; // Write back to FP_CTRL register.
+
+  #else
+    // Mystery architecture!
+    cpu_signature.cpu_dword = INVALID_CPU_SIGNATURE;
 
   #endif /* (architecture select) */
   interrupts();
@@ -367,6 +396,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
       // capabilities of the running CPU or its current state. Various other debugger
       // capabilities (e.g., number of hardware breakpoints) may require this run-time
       // parameterization rather than being completely specified by the CPU part id.
+
+      DBG_SERIAL.println(cpu_signature.cpu_dword, HEX); // CPU signature always first in ARCH_SPEC.
       #if defined(__AVR_ARCH__)
         // Nothing to report for AVR.
       #elif defined(ARDUINO_ARCH_SAMD)

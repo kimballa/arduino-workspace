@@ -10,15 +10,6 @@ Debugger:
 
 On-device service capabilities:
 
-  * Runtime confirmation of device-identification w/o relying on user config or static #define's:
-    Send an identifying dword as the first sentence in the arch_specs response list.
-    - On ARM, use the $CPUID register to get a uint32_t's worth of identifier
-    - On AVR, read the 3 signature bytes
-      (https://microchipsupport.force.com/s/article/How-to-read-signature-byte)
-
-    If arduino.arch is "auto" parse this int and then reload arduino.arch based on a lookup table.
-    arduino.platform=auto can use arduino.arch="auto", and the most conservative number of gpio pins.
-
   * The arch specs list should be captured by the dump process and saved to the image file. The
     local image service should reproduce this exactly.
 

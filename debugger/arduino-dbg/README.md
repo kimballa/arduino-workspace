@@ -59,7 +59,7 @@ Type `quit`, `exit`, or `\q` to quit the debugger.
 Arduino platforms
 -----------------
 
-You must specify what Arduino platform you are using with the `set` command. e.g.:
+You should specify what Arduino platform you are using with the `set` command. e.g.:
 
 ```
 set arduino.platform = uno
@@ -73,6 +73,13 @@ The available platforms are:
 
 You can see an up-to-date list of supported Arduino platforms with the `list platforms`
 command. The `list architectures` command will display supported CPU architectures.
+
+By default the platform is `auto`, and the debugger will attempt to auto-detect your CPU.
+You can force auto-detection with:
+
+```
+set arduino.platform = auto
+```
 
 Please open an issue if you are interested in support for additional platforms. At the
 time of this writing, the debugger has the ability to support AVR- and ARM-based

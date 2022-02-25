@@ -431,6 +431,7 @@ class Repl(object):
             Syntax: file <filename.elf>
 
         Purges information from any previously-loaded ELF file.
+        See also the 'reload' command to reload info from the current ELF file.
         """
         if len(argv) == 0:
             self._debugger.msg_q(MsgLevel.INFO, "Syntax: file <filename.elf>")
@@ -438,6 +439,20 @@ class Repl(object):
 
         filename = argv[0]
         self._debugger.replace_elf_file(filename)
+
+    @Command(keywords=['reload'])
+    def _reload_elf(self, argv):
+        """
+        Reload the current ELF file
+
+            Syntax: reload
+
+        This may be useful if you change the 'arduino.arch' setting (or after the debugger
+        autodetects your embedded CPU architecture).
+
+        Use the 'file' command to switch to a different ELF file.
+        """
+        self._debugger.replace_elf_file(self._debugger.elf_name)
 
 
     @Command(keywords=['open'])
@@ -869,7 +884,11 @@ class Repl(object):
 
                 # Should we put these on a comma-delimited single line? Or wrap item-by-item onto
                 # one line each? Depends on the max length of a single item.
-                max_len = functools.reduce(max, [len(it) for it in items])
+                if len(items) == 0:
+                    max_len = 1
+                else:
+                    max_len = functools.reduce(max, [len(it) for it in items])
+
                 if max_len < 50:
                     join_str = ", "
                 else:

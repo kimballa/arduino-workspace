@@ -459,12 +459,15 @@ class ArmThumbArchInterface(arch.ArchInterface):
 
     def parse_arch_specs(self, arch_specs_strs):
         # Format returned by SAMD51:
+        #   CPUID
         #   FP_CTRL register (flashpatch/breakpoint unit capabilities)
+        #   FP_REMAP register (More FPB capabilities detection)
         #   DWT_CTRL register (data watchpoint & trace unit capabilities)
 
-        FP_CTRL = int(arch_specs_strs[0], base=16)
-        FP_REMAP = int(arch_specs_strs[1], base=16)
-        DWT_CTRL = int(arch_specs_strs[2], base=16)
+        CPUID = int(arch_specs_strs[0], base=16)
+        FP_CTRL = int(arch_specs_strs[1], base=16)
+        FP_REMAP = int(arch_specs_strs[2], base=16)
+        DWT_CTRL = int(arch_specs_strs[3], base=16)
 
         # Determine implementation version of Flashpatch/break unit; FP_COMPn register
         # format is different on each.
@@ -509,6 +512,7 @@ class ArmThumbArchInterface(arch.ArchInterface):
         specs = {}
 
         # FPB specs
+        specs['CPUID'] = CPUID
         specs['FP_CTRL'] = FP_CTRL
         specs['FP_REMAP'] = FP_REMAP
         specs['fpb_version'] = fpb_version
