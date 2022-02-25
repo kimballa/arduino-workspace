@@ -32,18 +32,20 @@ _DEFAULT_HISTORY_FILENAME = os.path.expanduser("~/.arduino_dbg_history")
 _DEFAULT_MAX_CONN_RETRIES = 3
 _DEFAULT_MAX_POLL_RETRIES = 20
 _DEFAULT_POLL_TIMEOUT = 100  # milliseconds
+_DEFAULT_MAX_BACKTRACE_DEPTH = 100
 
 _dbg_conf_keys = [
     "arduino.platform",
     "arduino.arch",
+    "dbg.backtrace.limit",
     "dbg.colors",
     "dbg.conf.formatversion",
     "dbg.conn.retries",
     "dbg.historyfile",
+    "dbg.internal.stack.frames",  # True: show all backtrace frames. False: hide debugger internals.
     "dbg.poll.retry",    # Attempt to listen how many times in __wait_response() ?
     "dbg.poll.timeout",  # When listening to recv_q in __wait_response(), wait how long?
     "dbg.print_die.offset",
-    "dbg.internal.stack.frames",  # True: show all backtrace frames. False: hide debugger internals.
     "dbg.verbose",
 ]
 
@@ -460,14 +462,15 @@ class Debugger(object):
         # If we open a file it can overwrite this but we start with this non-None default val.
         conf_map["arduino.platform"] = 'auto'
         conf_map["arduino.arch"] = 'auto'
-        conf_map["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
-        conf_map["dbg.verbose"] = False
+        conf_map["dbg.backtrace.limit"] = _DEFAULT_MAX_BACKTRACE_DEPTH
         conf_map["dbg.colors"] = True
-        conf_map["dbg.historyfile"] = _DEFAULT_HISTORY_FILENAME
+        conf_map["dbg.conf.formatversion"] = serialize.DBG_CONF_FMT_VERSION
         conf_map["dbg.conn.retries"] = _DEFAULT_MAX_CONN_RETRIES
+        conf_map["dbg.historyfile"] = _DEFAULT_HISTORY_FILENAME
+        conf_map["dbg.internal.stack.frames"] = False
         conf_map["dbg.poll.retry"] = _DEFAULT_MAX_POLL_RETRIES
         conf_map["dbg.poll.timeout"] = _DEFAULT_POLL_TIMEOUT
-        conf_map["dbg.internal.stack.frames"] = False
+        conf_map["dbg.verbose"] = False
 
         return conf_map
 
@@ -609,12 +612,14 @@ class Debugger(object):
         # Process triggers for specific keys
         if key == "arduino.platform":
             self._load_platform()
-        if key == "arduino.arch":
+        elif key == "arduino.arch":
             self._load_arch()
-        if key == "dbg.verbose":
+        elif key == "dbg.verbose":
             self._config_verbose_print()
-        if key == "dbg.historyfile":
+        elif key == "dbg.historyfile":
             self._config_history_file()
+        elif key == 'dbg.backtrace.limit':
+            self.clear_frame_cache()  # Current backtrace result invalidated.
 
         self._persist_config()  # Write changes to conf file.
 
@@ -1975,6 +1980,11 @@ class Debugger(object):
         self.check_arch()
 
         all_frames = force_unhide or self.get_conf('dbg.internal.stack.frames')
+        max_backtrace_limit = self.get_conf('dbg.backtrace.limit')
+        if limit is not None and max_backtrace_limit is not None:
+            limit = min(limit, max_backtrace_limit)
+        elif max_backtrace_limit is not None:
+            limit = max_backtrace_limit
 
         if self._cached_frames:
             internal_cnt = self.__get_internal_method_cnt(self._cached_frames)
@@ -2083,6 +2093,16 @@ class Debugger(object):
         if sp >= ramend or pc == 0:
             # Stack trace has bottomed out.
             self._frame_cache_complete = True
+
+        if len(frames) == max_backtrace_limit:
+            # We hit the configured hard limit. (infinite loop of $LR pointing at current method?)
+            # Likely suggests we did not parse the CFI records in the ELF file correctly.
+            # (Wrong architecture definition?)
+            self.msg_q(MsgLevel.WARN,
+                       f'Backtrace terminated: Max backtrace limit ({max_backtrace_limit} '
+                       f'frames) reached.')
+            self.msg_q(MsgLevel.INFO,
+                       f'You can change this limit with `set dbg.backtrace.limit = <n>`.\n')
 
         # Return the requested subset of the stack trace.
         return self.__get_user_backtrace_list(all_frames, self._cached_frames, limit)
