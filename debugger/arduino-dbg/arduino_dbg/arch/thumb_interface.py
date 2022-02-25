@@ -100,6 +100,20 @@ class CortexBreakpointScheduler(object):
         self._load_params()
 
         addr = breakpoint.pc
+
+        # Don't double-enable an address; reject addresses we are already watching.
+
+        for maybe_bp in self.fpb_comparators + self.dwt_comparators:
+            if maybe_bp is None:
+                continue
+            elif maybe_bp is breakpoint:
+                # Literally the same breakpoint as one we've already got.
+                # Just do nothing.
+                return
+            elif maybe_bp.pc == addr:
+                # Second BP at same addr as an existing one... Fail.
+                raise arch.BreakpointAddrExistsError()
+
         if addr < CODE_MAX or self.arch_iface.arch_specs['fpb_version'] == 2:
             # Address can be tracked in FPB. Try using these hw bp's first.
             try:
@@ -130,23 +144,20 @@ class CortexBreakpointScheduler(object):
         self._load_params()
 
         # Check if it's in FPB:
-        try:
+        if breakpoint in self.fpb_comparators:
             fpb_slot = self.fpb_comparators.index(breakpoint)
             self.fpb_comparators[fpb_slot] = None
             self._program_fpb_breakpoint(False, fpb_slot, None)
             return
-        except ValueError:
-            # It's not in FPB. Try DWT next.
-            pass
 
-        # Try to locate the breakpoint in the DWT.
-        try:
-            dwt_slot = self.dwt_comparators.index(breakpoint)
-            self.dwt_comparators[dwt_slot] = None
-            self._program_dwt_breakpoint(False, dwt_slot, None)
-        except ValueError:
+        # Not in FPB. Try to locate the breakpoint in the DWT.
+        if breakpoint not in self.dwt_comparators:
             # Not there either. What?
-            raise Exception(f'Breakpoint not installed in hardware slot: {breakpoint}')
+            raise arch.BreakpointNotEnabledError()
+
+        dwt_slot = self.dwt_comparators.index(breakpoint)
+        self.dwt_comparators[dwt_slot] = None
+        self._program_dwt_breakpoint(False, dwt_slot, None)
 
     def sync(self):
         self._load_params()

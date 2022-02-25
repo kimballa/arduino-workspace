@@ -27,6 +27,11 @@ from arduino_dbg.repl_command import CompoundCommand, CompoundHost
 from arduino_dbg.term import MsgLevel
 
 
+class SoftwareBreakpointError(object):
+    """ Raised when an operation cannot be performed on a software breakpoint """
+    pass
+
+
 class BreakpointDatabase(object):
     """
     Database of known breakpoints in the sketch being debugged.
@@ -118,9 +123,13 @@ class BreakpointDatabase(object):
         Drop the breakpoint entry with the specified index.
         """
         if not self._breakpoints[idx].is_dynamic:
-            raise Exception("Cannot delete software breakpoints")
+            raise SoftwareBreakpointError()  # Cannot delete software bp. Hardware bps only.
 
-        self._breakpoints[idx].disable()
+        try:
+            self._breakpoints[idx].disable()
+        except arch.BreakpointNotEnabledError:
+            pass  # That's fine; it was already disabled.
+
         del self._breakpoints[idx]
 
     def breakpoints(self):
@@ -215,12 +224,8 @@ class Breakpoint(object):
         Enable this breakpoint.
         """
         if self.is_dynamic:
-            try:
-                self._debugger.arch_iface.create_hw_breakpoint(self)
-                self.enabled = True
-            except arch.HWBreakpointsFullError:
-                self._debugger.msg_q(MsgLevel.ERR, 'Error: No hardware breakpoint available')
-                self._debugger.msg_q(MsgLevel.ERR, 'You must first disable a different hw breakpoint.')
+            self._debugger.arch_iface.create_hw_breakpoint(self)
+            self.enabled = True
         else:
             bit_num, flag_bits_addr = self._read_sig()
             if flag_bits_addr == 0:
@@ -236,7 +241,12 @@ class Breakpoint(object):
         Disable this breakpoint.
         """
         if self.is_dynamic:
-            self._debugger.arch_iface.remove_hw_breakpoint(self)
+            try:
+                self._debugger.arch_iface.remove_hw_breakpoint(self)
+            except arch.BreakpointNotEnabledError:
+                self.enabled = False  # It's *definitely* disabled. Still raise.
+                raise
+
             self.enabled = False
         else:
             bit_num, flag_bits_addr = self._read_sig()
@@ -324,17 +334,26 @@ class BreakpointCommands(object):
         Enables a breakpoint, specified by its id from `breakpoint list`.
         See also `help breakpoint disable`.
         """
+        debugger = self._repl.debugger()
+
         if len(args) == 0:
-            self._repl.debugger().msg_q(MsgLevel.INFO, "Syntax: breakpoint enable <id>")
+            debugger.msg_q(MsgLevel.INFO, "Syntax: breakpoint enable <id>")
             return
 
         id = int(args[0])
-        bp = self._repl.debugger().breakpoints().get_bp(id)
+        bp = debugger.breakpoints().get_bp(id)
         if bp is None:
-            self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
+            debugger.msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
             return
 
-        bp.enable()
+        try:
+            bp.enable()
+        except arch.HWBreakpointsFullError:
+            debugger.msg_q(MsgLevel.ERR, 'Error: No hardware breakpoint available')
+            debugger.msg_q(MsgLevel.ERR, 'You must first disable a different hw breakpoint.')
+        except arch.BreakpointAddrExistsError:
+            debugger.msg_q(MsgLevel.ERR, 'A breakpoint is already enabled at this address.')
+            debugger.msg_q(MsgLevel.ERR, 'You must disable the other breakpoint to enable this one.')
 
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['disable', 'd'], cls='BreakpointCommands')
@@ -361,7 +380,10 @@ class BreakpointCommands(object):
             self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
             return
 
-        bp.disable()
+        try:
+            bp.disable()
+        except arch.BreakpointNotEnabledError:
+            pass  # The user got what they wanted. Don't raise an error msg.
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['list'], cls='BreakpointCommands')
     def list_bps(self, args):
@@ -397,13 +419,11 @@ class BreakpointCommands(object):
             bp = breakpoint_db.get_bp(id)
             if bp is None:
                 self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
-            elif bp.is_dynamic:
-                if bp.enabled:
-                    bp.disable()  # Remove at device level
-                breakpoint_db.delete(id)  # Remove from local db.
             else:
-                self._repl.debugger().msg_q(MsgLevel.ERR,
-                                            f'Error: Cannot delete software breakpoint #{id}')
+                breakpoint_db.delete(id)  # Disable and remove from local db.
+        except SoftwareBreakpointError:
+            self._repl.debugger().msg_q(MsgLevel.ERR,
+                                        f'Error: Cannot delete software breakpoint #{id}')
         except IndexError:
             self._repl.debugger().msg_q(MsgLevel.ERR, f'Error: No such breakpoint id: {id}')
 
@@ -490,8 +510,31 @@ class BreakpointCommands(object):
 
         sig = Breakpoint.make_hw_signature(pcAddr)
         bp = debugger.breakpoints().register_bp(pcAddr, sig, True)
-        bp.enable()
 
-        debugger.msg_q(MsgLevel.INFO, f"Created breakpoint: {bp}")
+        # If 'sig' was already in the breakpoint database, we should get an existing breakpoint
+        # back. Otherwise we create a new breakpoint.
+        if bp.enabled:
+            debugger.msg_q(MsgLevel.INFO, f"Breakpoint exists: {bp}")
+            return
+
+        try:
+            debugger.msg_q(MsgLevel.INFO, f"Created breakpoint: {bp}")
+            if not bp.enabled:
+                bp.enable()
+        except arch.BreakpointAddrExistsError:
+            debugger.msg_q(MsgLevel.WARN,
+                           'A breakpoint is already enabled at this address.')
+            debugger.msg_q(MsgLevel.WARN,
+                           'You must disable the other breakpoint to enable this one.')
+            debugger.msg_q(MsgLevel.WARN,
+                           '(Breakpoint was successfully defined, but it is disabled.)')
+        except arch.HWBreakpointsFullError:
+            debugger.msg_q(MsgLevel.WARN, 'Error: No hardware breakpoint available')
+            debugger.msg_q(MsgLevel.WARN,
+                           'A different hw breakpoint must be disabled to enable this one.')
+            debugger.msg_q(MsgLevel.WARN,
+                           '(Breakpoint was successfully defined, but it is disabled.)')
+
+
 
 

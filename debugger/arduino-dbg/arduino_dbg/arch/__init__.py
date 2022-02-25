@@ -66,6 +66,19 @@ class HWBreakpointsFullError(Exception):
     A request to add a hardware breakpoint cannot be fulfilled until a register
     is freed by removing a different configured hardware breakpoint.
     """
+    pass
+
+
+class BreakpointAddrExistsError(Exception):
+    """
+    A given address is already in the breakpoint watch list.
+    """
+    pass
+
+
+class BreakpointNotEnabledError(Exception):
+    """ A given breakpoint isn't enabled so we cannot disable it. """
+    pass
 
 
 class ArchInterface(object):
