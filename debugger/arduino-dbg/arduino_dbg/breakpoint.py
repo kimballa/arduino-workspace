@@ -412,7 +412,8 @@ class BreakpointCommands(object):
         Ensures hardware breakpoint registers match user-specified breakpoint definitions.
 
         Software breakpoint disable flags are cleared after resetting the device; this will
-        restore their state to that known by the debugger.
+        restore their state to that known by the debugger. You should run `breakpoint sync`
+        from a connected debugger after resetting your Arduino device.
         """
         debugger = self._repl.debugger()
         breakpoint_list = debugger.breakpoints().breakpoints()

@@ -84,9 +84,9 @@ class ConfFileCommands(object):
     def __init__(self, repl):
         self._repl = repl
 
-    def _print_list(self, pkg):
+    def _print_pkg_conf_list(self, pkg):
         """
-        Actually iterate through the package in question and print the list of .conf
+        Iterate through the package in question and print the list of .conf
         files the user can load.
         """
         configs = []
@@ -112,7 +112,7 @@ class ConfFileCommands(object):
         CPU architecture is usually loaded based on the Arduino platform you are working
         with. See `list platforms` for more details.
         """
-        self._print_list("arduino_dbg.arch")
+        self._print_pkg_conf_list("arduino_dbg.arch")
 
 
     @CompoundCommand(kw1=['list'], kw2=['platforms'], cls='ConfFileCommands')
@@ -129,4 +129,6 @@ class ConfFileCommands(object):
         You can, however, override that choice after loading the platform using
         `set arduino.arch = <arch>`. See `list architectures` for more details.
         """
-        self._print_list("arduino_dbg.platforms")
+        self._print_pkg_conf_list("arduino_dbg.platforms")
+
+

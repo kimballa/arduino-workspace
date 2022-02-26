@@ -11,6 +11,12 @@ import arduino_dbg.memory_map as mmap
 from arduino_dbg.term import MsgLevel
 
 
+AVR_CAPABILITIES = [
+    'avr-cfi-repair',     # AVR-specific repair to CFI records broken by gcc bug regarding push of SREG
+    'avr-prologue-walk',  # AVR-specific stack frame size inference thru prologue analysis
+]
+
+
 @arch.iface
 class AVRArchInterface(arch.ArchInterface):
     """
@@ -21,6 +27,10 @@ class AVRArchInterface(arch.ArchInterface):
         super().__init__(debugger)
         self.has_sph = debugger.get_arch_conf('has_sph')
         self._mem_map = None
+
+    def get_capabilities_list(self):
+        """ List any runtime-advertised capabilities. """
+        return AVR_CAPABILITIES
 
     def memory_map(self):
         if self._mem_map is not None:
@@ -263,7 +273,7 @@ class AVRArchInterface(arch.ArchInterface):
         # On AVR, ISRs will read the value of $SREG using `in` and then push that value
         # to the stack in the prologue. However, due to a gcc bug (all gcc versions through
         # at least gcc 12), the FDE will not account for this -- putting all other register
-        # locations for the method off by 1. Patch this up.
+        # locations for the method off by 1. Patch up the CFI records for this method.
         if sym.isr_frame_ok:
             return  # Already handled / not an issue for this method.
 

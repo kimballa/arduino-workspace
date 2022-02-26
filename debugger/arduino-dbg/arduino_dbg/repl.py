@@ -7,7 +7,6 @@ import readline
 import signal
 import traceback
 
-import arduino_dbg
 import arduino_dbg.debugger as dbg
 import arduino_dbg.dump as dump
 import arduino_dbg.eval_location as el
@@ -19,7 +18,6 @@ from arduino_dbg.repl_command import Completions, Command, CompoundCommand, Repl
 import arduino_dbg.term as term
 from arduino_dbg.term import MsgLevel
 import arduino_dbg.types as types
-import arduino_dbg.version
 
 PROMPT = term.PROMPT
 
@@ -62,6 +60,12 @@ class Repl(object):
         # to user-configured filename.
         self._history_filename = None
         debugger.set_history_change_hook(self._history_change_callback)
+
+        # Import modules that register commands with Repl
+        import arduino_dbg.breakpoint  # noqa: F401
+        import arduino_dbg.conf_files  # noqa: F401
+        import arduino_dbg.show_info   # noqa: F401
+
 
     def debugger(self):
         return self._debugger
@@ -1741,26 +1745,6 @@ class Repl(object):
             Syntax: cpuinfo
         """
         self._debugger.arch_iface.print_cpu_stats()
-
-
-    @Command(keywords=['version'])
-    def print_version(self, argv):
-        """
-        Print debugger version
-
-            Syntax: version
-        """
-        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.FULL_DBG_VERSION_STR)
-
-    @Command(keywords=['license'])
-    def print_license(self, argv):
-        """
-        Print debugger license terms
-
-            Syntax: license
-        """
-        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.FULL_DBG_VERSION_STR)
-        self._debugger.msg_q(MsgLevel.INFO, arduino_dbg.version.LICENSE)
 
 
     @Command(keywords=['help'], completions=[Completions.KW])

@@ -9,6 +9,13 @@ import arduino_dbg.debugger as dbg
 import arduino_dbg.memory_map as mmap
 from arduino_dbg.term import MsgLevel
 
+
+ARM_CAPABILITIES = [
+    'arm-cortex-hardware-breakpoint-dwt',  # Cortex M3/M4 hardware breakpoints in FPB & DWT.
+    'arm-cortex-hardware-breakpoint-fpb',
+    'arm-irq-backtrace',  # ARM-specific IRQ stack frame unwinding
+]
+
 # Enum for different stack pointer registers implemented on Cortex M-4.
 STACK_MSP = 1  # Main stack ptr. Used for all IRQs and handler-mode; can also be used in thread mode.
 STACK_PSP = 2  # Process stack ptr. Separate stack pointer that can be used in thread mode.
@@ -380,6 +387,10 @@ class ArmThumbArchInterface(arch.ArchInterface):
 
     def __repr__(self):
         return f'{self.__class__.__name__} {self.arch_specs}'
+
+    def get_capabilities_list(self):
+        """ List any runtime-advertised capabilities. """
+        return ARM_CAPABILITIES
 
     def memory_map(self):
         if self._mem_map is not None:

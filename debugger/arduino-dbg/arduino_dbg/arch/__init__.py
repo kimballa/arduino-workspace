@@ -127,6 +127,10 @@ class ArchInterface(object):
     def __repr__(self):
         return self.__class__.__name__
 
+    def get_capabilities_list(self):
+        """ List any runtime-advertised capabilities. """
+        return []
+
     def memory_map(self):
         """
         Return the memory map for this device.

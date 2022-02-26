@@ -87,6 +87,8 @@ def fmt_registers(registers, int_width=4, sp_width=4):
     int_width *= 2
     sp_width *= 2
 
+    # TODO(aaron): Allow auto-detection of actual terminal width / term_width and expand.
+    # TODO(aaron): Allow user configuration of term width for registers to override.
     MAX_WIDTH = 65
     if sp_width > int_width:
         sp_pad = ''  # Eliminate extra padding in column formatting.
