@@ -28,7 +28,7 @@ DWT_FUNC_offset = 0x8
 DWT_struct_size = 0x10  # 4 words per DWT comparator register set.
 
 
-class CortexBreakpointScheduler(object):
+class CortexBreakpointScheduler(arch.BreakpointScheduler):
     """
     Cortex M-series CPU breakpoint scheduler: maps addresses where the user wants
     to set a breakpoint into available breakpoint comparators.
@@ -45,6 +45,37 @@ class CortexBreakpointScheduler(object):
 
         self.fpb_comparators = []
         self.dwt_comparators = []
+
+    def __repr__(self):
+        strs = []
+        strs.append("Cortex breakpoint scheduler")
+        if not self.loaded_params:
+            strs.append("(uninitialized)")
+        else:
+            fpb_cnt = len(self.fpb_comparators)
+            dwt_cnt = len(self.dwt_comparators)
+            fpb_used = len(list(filter(lambda x: x is not None, self.fpb_comparators)))
+            dwt_used = len(list(filter(lambda x: x is not None, self.dwt_comparators)))
+            strs.append(f'Registers: FPB={fpb_used}/{fpb_cnt}; DWT={dwt_used}/{dwt_cnt}')
+            strs.append('')
+
+            for i in range(0, len(self.fpb_comparators)):
+                bp = self.fpb_comparators[i]
+                if bp is None:
+                    strs.append(f'FPB #{i}: ---')
+                else:
+                    strs.append(f'FPB #{i}: 0x{bp.pc:08x}')
+            strs.append('')
+
+            for i in range(0, len(self.dwt_comparators)):
+                bp = self.dwt_comparators[i]
+                if bp is None:
+                    strs.append(f'DWT #{i}: ---')
+                else:
+                    strs.append(f'DWT #{i}: 0x{bp.pc:08x}')
+
+        return '\n'.join(strs)
+
 
     def _load_params(self):
         """
@@ -563,5 +594,8 @@ class ArmThumbArchInterface(arch.ArchInterface):
             self._get_arch_specs()
 
         self._breakpoint_scheduler.sync()
+
+    def breakpoint_scheduler(self):
+        return self._breakpoint_scheduler
 
 

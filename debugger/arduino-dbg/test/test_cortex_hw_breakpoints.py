@@ -4,6 +4,7 @@
 import unittest
 
 import arduino_dbg.arch as arch
+import arduino_dbg.arch.thumb_interface as thumb_interface
 import arduino_dbg.breakpoint as breakpoint
 from dbg_testcase import DbgTestCase
 # Import of mock auto-injects it into factory dictionary.
@@ -48,6 +49,13 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.breakpoint_db = self.debugger.breakpoints()
         self.breakpoint_db.reset()
 
+    def test_iface_types(self):
+        """ Test that the arch interface objects have the expected types. """
+        self.assertIsInstance(self.debugger.arch_iface, thumb_interface.ArmThumbArchInterface)
+        self.assertIsInstance(self.debugger.arch_iface.breakpoint_scheduler(),
+                              thumb_interface.CortexBreakpointScheduler)
+
+
     def test_bp_counts(self):
         """ Test the expected number of available hw breakpoints. """
         # 2 fpb + 2 dwt = 4
@@ -72,7 +80,7 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
 
         # First breakpoint should go in the FPB.
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
 
     def test_multi_bp(self):
@@ -95,8 +103,8 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 2)
 
         # Both breakpoints should be in the FPB.
-        self.assertTrue(bp1 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
-        self.assertTrue(bp2 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp1 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertTrue(bp2 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
     def test_dwt_spill(self):
         """ Once we run out of FPB breakpoints, spill them to the DWT. """
@@ -123,8 +131,8 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 2)
 
         # Both breakpoints should be in the FPB.
-        self.assertTrue(bp1 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
-        self.assertTrue(bp2 in self.debugger.arch_iface._breakpoint_scheduler.dwt_comparators)
+        self.assertTrue(bp1 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertTrue(bp2 in self.debugger.arch_iface.breakpoint_scheduler().dwt_comparators)
 
     def test_bp_exhaustion(self):
         """ Test graceful decline if all HW breakpoints are in use. """
@@ -152,12 +160,12 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
 
         # First breakpoint should be in the FPB.
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp1 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp1 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         # 2nd bp shouldn't be active.
         self.assertFalse(bp2.enabled)
-        self.assertFalse(bp2 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
-        self.assertFalse(bp2 in self.debugger.arch_iface._breakpoint_scheduler.dwt_comparators)
+        self.assertFalse(bp2 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertFalse(bp2 in self.debugger.arch_iface.breakpoint_scheduler().dwt_comparators)
 
 
     def test_fpb_v1_sram_pc_to_dwt(self):
@@ -185,8 +193,8 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
 
         # First breakpoint should go in the DWT, not FPB this time..
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.dwt_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().dwt_comparators)
 
 
     def test_fpb_v2_sram_pc_to_dwt(self):
@@ -210,8 +218,8 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
 
         # First breakpoint should remain FPB-scheduled.
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.dwt_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().dwt_comparators)
 
 
     def test_double_enable(self):
@@ -230,15 +238,15 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         bp.enable()
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         # Try it twice.
         bp.enable()  # Should return silently w/o doing anything.
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
         # Don't fill a 2nd slot with the same bp.
-        self.assertIsNone(self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators[1])
+        self.assertIsNone(self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators[1])
 
     def test_redundant_enable(self):
         """ Enabling 2 BP's at one addr causes one to fail. """
@@ -270,8 +278,8 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)  # Still 1
 
         # Only first breakpoint should be in the FPB.
-        self.assertTrue(bp1 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
-        self.assertFalse(bp3 in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp1 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertFalse(bp3 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
     def test_multi_register_same_bp(self):
         """ Multiple bp registrations of the same addr return the same Breakpoint """
@@ -304,12 +312,12 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         bp.enable()
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         bp.disable()
         self.assertFalse(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 0)
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
     def test_redundant_disable(self):
         """ Disabling a breakpoint can only happen if its enabled. """
@@ -326,12 +334,12 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         bp.enable()
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         bp.disable()
         self.assertFalse(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 0)
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         # Run it a second time.
         with self.assertRaises(arch.BreakpointNotEnabledError):
@@ -339,7 +347,7 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
 
         self.assertFalse(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 0)
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
     def test_disable_phantom_bp(self):
         """ Disabling a breakpoint that isn't "real" raises BreakpointNotEnabledErr """
@@ -373,7 +381,7 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         bp.enable()
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         self.assertTrue(bp in self.breakpoint_db.breakpoints())
         self.assertEqual(bp, self.breakpoint_db.breakpoints()[0])
@@ -383,7 +391,7 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertFalse(bp.enabled)  # bp is now disabled.
         # ... removed from Cortex bp scheduler
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 0)
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
         # ... and removed from breakpoint db.
         self.assertFalse(bp in self.breakpoint_db.breakpoints())
 
@@ -404,18 +412,18 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         bp.enable()
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         bp.disable()
         self.assertFalse(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 0)
-        self.assertFalse(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertFalse(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
         # After we disable a breakpoint, we can enable it all over again.
         bp.enable()
         self.assertTrue(bp.enabled)
         self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
-        self.assertTrue(bp in self.debugger.arch_iface._breakpoint_scheduler.fpb_comparators)
+        self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
 
 if __name__ == "__main__":

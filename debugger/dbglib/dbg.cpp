@@ -312,7 +312,6 @@ void __dbg_setup() {
     }
 
     samd_enable_fpb();
-    // TODO(aaron): Enable DWT.
 
   #else
     // Mystery architecture! This will surely end well.
@@ -970,6 +969,10 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // method; since gcc does not generate a frame pointer, we set up our own. We are
     // conservative about what we push in here to avoid destroying normal-thread state.
     //
+    // `no-reorder-blocks` is enforced so that the epilogue (and the manually-constructed CFI
+    // records) remain at the absolute end of the method rather than be relocated by compiler
+    // optimizations.
+    //
     // We may also have soft breakpoint handle details passed in (stacked) registers:
     // r0 -- flag_num
     // r1 -- flags_addr
@@ -1023,7 +1026,9 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_STEP_BKPT);
     } else if (SCB->DFSR & (1 << SCB_DFSR_DWTTRAP_Pos)) {
       // This breakpoint was triggered by the DWT (watchpoint) on a memory addr or on the $PC.
-      // If on the $PC, this instruction has actually already executed.
+      // If on the $PC, the instruction at the watched $PC has already been executed. Likewise,
+      // the instruction performing memory I/O has already performed the read or write access.
+      // The DebugReturnAddress (our $LR) points to the next instruction to execute.
 
       // Record that we are in watchpoint-break status.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_WATCH);
@@ -1031,13 +1036,14 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
       // We entered this method because of a BKPT instruction (as opposed to after a single-step..)
       // or because of a hardware breakpoint register match in the FPB.
       //
-      // Somewhat uniquely, on entry to this IRQ, BKPT instructions will stack the $pc of
-      // the BKPT instruction itself rather than the next $PC. Meaning when we exit this handler,
-      // we'll resume execution... right on top of the breakpoint (infinite loop back to here).
-      // We need to advance the $PC ourselves.
+      // On entry to this IRQ, BKPT instructions (or hardware breakpoint comparator
+      // matches) will stack the $pc of the BKPT instruction itself rather than the next
+      // $PC. Meaning when we exit this handler, we'll resume execution... right on top of
+      // the breakpoint (infinite loop back to here).  We need to advance the $PC
+      // ourselves. If a hardware bkpt comparator, the instruction has not been executed.
 
       // `BKPT <n>` has opcode 0xBEnn. If we see see that pattern, advance the $PC over the
-      // breakpoint. (If we are not stopped on a BKPT then the FPB or DWT fired on the $PC and
+      // breakpoint. (If we are not stopped on a BKPT then the FPB fired on the $PC and
       // we don't want to skip the instruction.)
       if (ARM_BKPT_OP == (*((uint16_t*)((CortexM_IRQ_Frame*)(framePtr))->PC) & ARM_BKPT_MASK)) {
         ((CortexM_IRQ_Frame*)(framePtr))->PC += 2;

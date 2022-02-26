@@ -356,14 +356,22 @@ class BreakpointCommands(object):
         """
         List known breakpoints
 
-            Syntax: breakpoint list
+            Syntax: breakpoint list [extended]
 
         Breakpoints are catalogued as they are encountered in the running program and
         assigned sequentially increasing id numbers in the debugger. You can toggle these
         breakpoints on and off with the `breakpoint enable` and `breakpoint disable`
         commands.
+
+        If 'extended' is specified, also displays hardware breakpoint register allocation.
         """
         self._repl.debugger().msg_q(MsgLevel.INFO, self._repl.debugger().breakpoints())
+        if len(args) > 0 and args[0] == 'extended':
+            scheduler = self._repl.debugger().arch_iface.breakpoint_scheduler()
+            if scheduler is None:
+                self._repl.debugger().msg_q(MsgLevel.INFO, '\n(Hardware breakpoints not supported)')
+            else:
+                self._repl.debugger().msg_q(MsgLevel.INFO, f'\n{scheduler}')
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['delete', 'rm'], cls='BreakpointCommands')
     def delete(self, args):

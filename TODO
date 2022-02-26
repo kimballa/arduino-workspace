@@ -11,9 +11,12 @@ Debugger:
 On-device service capabilities:
 
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
-  * Watchpoint unit support
-  * Enable DWT for BP usage.
-  * Allow watching on mem addrs / var symbols.
+  * Watchpoint unit support - allow watching on mem addrs / var symbols.
+
+  * If we delete/disable a bp in the FPB, and we have bp's defined in the DWT, move it into
+    the FPB for higher-fidelity breakpointing.
+
+  * Add `breakpoint download` command to sync the true register state *down* to our debugger.
 
   ARMv7 arch ref manual: pg C1-752 - a BKPT in an IRQ w/ higher priority than debugmon will
   trigger a HardFault.
@@ -44,12 +47,9 @@ On-device service capabilities:
 
 Client:
 
-  * Use `arduino-cli board list` to autodetect the attached board for the specified serial port.
-
   * breakpoint.Breakpoint() needs ability to register a hw addr as discovered in
-    __acknowledge_pause(). nb that the literal BKPT instruction inside __dbg_break() is not
-    helpful; we need the 'real' $PC from entering the breakpoint method in order to register
-    break sites.
+    __acknowledge_pause(). (In case we restart debugger and it needs to rediscover live
+    breakpoints.)
 
   * Add watchpoint command.
 

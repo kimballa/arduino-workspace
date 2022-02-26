@@ -81,6 +81,40 @@ class BreakpointNotEnabledError(Exception):
     pass
 
 
+class BreakpointScheduler(object):
+    """
+    Abstract class interface where implementations contain logic to map logical breakpoint
+    definitions to specific hardware breakpoint comparator registers on the target system.
+    """
+
+    def schedule_bp(breakpoint):
+        """
+        Map a breakpoint into one of the breakpoint-compatible comparators.
+
+        This may move other breakpoints into different breakpoint registers as required,
+        although it may not disable another breakpoint to make room for this one.
+        """
+        raise Exception("Unimplemented")
+
+    def deschedule_bp(breakpoint):
+        """
+        Remove a breakpoint from the running system.
+
+        This may move other breakpoints into more advantageous registers if the descheduling
+        operation frees up such an advantageous location.
+        """
+        raise Exception("Unimplemented")
+
+    def sync(self):
+        """ Ensure hardware bp registers on device match our understanding of the state """
+        raise Exception("Unimplemented")
+
+    def get_num_hardware_breakpoints_used(self):
+        return 0
+
+
+
+
 class ArchInterface(object):
     """
     A module to hold various methods invoked by the debugger that need to perform
@@ -307,6 +341,13 @@ class ArchInterface(object):
         Ensure hardware breakpoint reigsters match locally-tracked definitions for state.
         """
         pass  # By default there is nothing to do to sync as this base impl doesn't track hw breakpoints.
+
+    def breakpoint_scheduler(self):
+        """
+        Return the active breakpoint scheduler for this device, or None if hardware breakpoints
+        are not supported.
+        """
+        return None
 
     def print_cpu_stats(self):
         """
