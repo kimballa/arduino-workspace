@@ -426,5 +426,50 @@ class TestCortexHardwareBreakpoints(DbgTestCase):
         self.assertTrue(bp in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
 
 
+    def test_compact_dwt_to_fpb(self):
+        """ Test that freeing a slot in the FPB pulls a breakpoint out of DWT """
+        specs = self.getArchSpecs()
+        self.debugger.arch_iface.provide_arch_specs(specs)
+        self.assertEqual(specs['fpb_code_addrs'], 2)
+        self.assertEqual(specs['dwt_num_comparators'], 2)
+
+        addr1 = 0x4000
+        sig1 = breakpoint.Breakpoint.make_hw_signature(addr1)
+        bp1 = self.breakpoint_db.register_bp(addr1, sig1, True)
+        bp1.enable()
+        self.assertTrue(bp1.enabled)
+        self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 1)
+
+        addr2 = 0x5500
+        sig2 = breakpoint.Breakpoint.make_hw_signature(addr2)
+        bp2 = self.breakpoint_db.register_bp(addr2, sig2, True)
+        bp2.enable()
+        self.assertTrue(bp2.enabled)
+        self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 2)
+
+        # Both breakpoints should be in the FPB.
+        self.assertTrue(bp1 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertTrue(bp2 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+
+        # Add a 3rd BP and verify it's in the DWT.
+        addr3 = 0x6000
+        sig3 = breakpoint.Breakpoint.make_hw_signature(addr3)
+        bp3 = self.breakpoint_db.register_bp(addr3, sig3, True)
+        bp3.enable()
+        self.assertTrue(bp3.enabled)
+        self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 3)
+        self.assertTrue(bp3 in self.debugger.arch_iface.breakpoint_scheduler().dwt_comparators)
+
+        # Disable BP #2 and verify this promotes BP #3 out of the DWT and into the FPB.
+        bp2.disable()
+        self.assertFalse(bp2.enabled)
+        self.assertTrue(bp3.enabled)  # This is still enabled.
+        self.assertEqual(self.debugger.arch_iface.get_num_hardware_breakpoints_used(), 2)
+        # Verify bp3 has moved register banks
+        self.assertFalse(bp3 in self.debugger.arch_iface.breakpoint_scheduler().dwt_comparators)
+        self.assertTrue(bp3 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+        self.assertFalse(bp2 in self.debugger.arch_iface.breakpoint_scheduler().fpb_comparators)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

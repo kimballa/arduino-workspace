@@ -54,8 +54,8 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         else:
             fpb_cnt = len(self.fpb_comparators)
             dwt_cnt = len(self.dwt_comparators)
-            fpb_used = len(list(filter(lambda x: x is not None, self.fpb_comparators)))
-            dwt_used = len(list(filter(lambda x: x is not None, self.dwt_comparators)))
+            fpb_used = self._num_fpb_in_use()
+            dwt_used = self._num_dwt_in_use()
             strs.append(f'Registers: FPB={fpb_used}/{fpb_cnt}; DWT={dwt_used}/{dwt_cnt}')
             strs.append('')
 
@@ -76,6 +76,13 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
 
         return '\n'.join(strs)
 
+    def _num_fpb_in_use(self):
+        """ Return number of FPB registers in use. """
+        return len(list(filter(lambda x: x is not None, self.fpb_comparators)))
+
+    def _num_dwt_in_use(self):
+        """ Return number of DWT registers in use. """
+        return len(list(filter(lambda x: x is not None, self.dwt_comparators)))
 
     def _load_params(self):
         """
@@ -131,6 +138,7 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         self._load_params()
 
         addr = breakpoint.pc
+        assert addr != 0x0
 
         # Don't double-enable an address; reject addresses we are already watching.
 
@@ -178,7 +186,17 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         if breakpoint in self.fpb_comparators:
             fpb_slot = self.fpb_comparators.index(breakpoint)
             self.fpb_comparators[fpb_slot] = None
-            self._program_fpb_breakpoint(False, fpb_slot, None)
+            self._program_fpb_breakpoint(False, fpb_slot, None)  # null-out this FPB register value.
+
+            if self._num_dwt_in_use() > 0:
+                # Now that we have a free FPB slot, promote a DWT breakpoint to the more precise
+                # FPB breakpoint registers. DWT registers trigger async breakpoints after the
+                # specified instruction.
+                for i in range(0, len(self.dwt_comparators)):
+                    if self.dwt_comparators[i] is not None:
+                        self._promote_dwt_to_fpb(i, fpb_slot)
+                        break
+
             return
 
         # Not in FPB. Try to locate the breakpoint in the DWT.
@@ -217,6 +235,32 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         lst.extend(self.fpb_comparators)
         lst.extend(self.dwt_comparators)
         return len(list(filter(lambda v: v is not None, lst)))
+
+
+    def _promote_dwt_to_fpb(self, dwt_slot, fpb_slot):
+        """
+        Move a breakpoint definition from the DWT to the FPB.
+
+        Since DWT registers trigger async breakpoints and FPB is synchronous, we prefer to bunch up
+        our breakpoints in the FPB if slots are available. This can be used to "compact" our
+        breakpoints after FPB slots are opened up.
+
+        Helper method typically invoked by deschedule_bp() to rebalance registers.
+        """
+
+        dwt_bp = self.dwt_comparators[dwt_slot]
+        assert dwt_bp is not None
+        assert dwt_bp.pc != 0x0
+        addr = dwt_bp.pc
+
+        self._program_fpb_breakpoint(True, fpb_slot, addr)
+        self._program_dwt_breakpoint(False, dwt_slot, None)
+
+        self.fpb_comparators[fpb_slot] = dwt_bp
+        self.dwt_comparators[dwt_slot] = None
+
+        self.debugger.msg_q(MsgLevel.LOW,
+                            f'Promoted breakpoint at $PC 0x{addr:08x} to precise bp register.')
 
 
     def _program_fpb_breakpoint(self, is_enable, reg_id, pc_addr):
@@ -300,6 +344,15 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
             # Set pre-masked 4-byte comparator reg.
             self.debugger.verboseprint(
                 f'Setting DWT breakpoint {reg_id} @COMP=0x{comp_reg_addr:x}: $PC=0x{pc_addr:x}')
+            self.debugger.msg_q(
+                MsgLevel.WARN,
+                f'Hardware breakpoint for 0x{pc_addr:x} will halt a few cycles after '
+                f'instruction execution,\n'
+                f'via async interrupt driven by DWT.'
+                f'\n\n'
+                f'For more precise breakpoint behavior, disable a breakpoint in the FPB.\n'
+                f'FPB breakpoints can be viewed with `breakpoint list extended`.')
+
             self.debugger.set_sram(comp_reg_addr, pc_addr & 0xFFFFFFFE, 4)
             self.debugger.set_sram(mask_reg_addr, 0x1, 4)  # Set mask to ignore LSB of $PC.
             self.debugger.set_sram(func_reg_addr, 0x4, 4)  # Set FUNC=b0100, Iaddr watchpoint dbg event.

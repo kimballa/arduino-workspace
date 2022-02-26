@@ -124,7 +124,8 @@ class MsgLevel(object):
     DEVICE      = 1         # Message from the device (dbgprint(), etc)
     WARN        = 2         # Warnings
     ERR         = 3         # Errors
-    DEBUG       = 4         # verboseprint() info from Debugger.
+    DEBUG       = 4         # verboseprint() info from Debugger or other low-priority msgs.
+    LOW         = 4         # (Alias for 'DEBUG')
     SUCCESS     = 5         # Successful.
 
     @staticmethod
