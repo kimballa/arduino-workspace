@@ -81,9 +81,16 @@ static inline void _set_dbg_status(dbg_status_t new_status) {
 }
 
 static constexpr dbg_status_t DBG_STATUS_IN_BREAK     = 0x1; // True if we are inside the debugger service.
-static constexpr dbg_status_t DBG_STATUS_HARD_BKPT    = 0x2; // Hardware BKPT triggered dbg service.
+static constexpr dbg_status_t DBG_STATUS_OP_BKPT      = 0x2; // BKPT opcode triggered dbg service.
 static constexpr dbg_status_t DBG_STATUS_DEBUG_MON_EN = 0x4; // Onboard debug monitor enabled (SAMD51).
 static constexpr dbg_status_t DBG_STATUS_STEP_BKPT    = 0x8; // True if a single-step triggered debugging.
+#if defined (ARDUINO_ARCH_SAMD)
+  static constexpr dbg_status_t DBG_STATUS_HW_BKPT    = 0x10000; // Hardware breakpoint register match
+  static constexpr dbg_status_t DBG_STATUS_WATCH      = 0x20000; // Watchpoint register match
+  static constexpr dbg_status_t DBG_STATUS_STEP2CONT  = 0x40000; // We want to 'continue' after HW BP;
+                                                                 // 1st we need to step past bp addr,
+                                                                 // then do the continue.
+#endif /* ARCH_SAMD */
 
 #if defined (ARDUINO_ARCH_SAMD)
   // This device supports monitor-mode debugging of hardware breakpoints.
@@ -133,7 +140,6 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 #define DBG_END_LIST '$'    // list-based commands end responds with a '$' on a line by itself.
 
 /** System reset capability **/
-
 #if defined(__AVR_ARCH__)
   /**
    * Method called pre-init to disable watchdog.
@@ -163,10 +169,9 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 
 #endif /* architecture select */
 
+
 /** Helpers for timer IRQ definition **/
-
 #if defined(ARDUINO_ARCH_SAMD)
-
   // Helper fn for timer setup on SAMD architecture.
   // Wait for register changes to sync to underlying device register.
   static inline void TC4_wait_for_sync() {
@@ -180,8 +185,27 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
   // within the debugger service. Meaning that we run at the *lowest* priority.
   #define TC4_IRQ_PRIORITY (255)
   #define DebugMon_IRQ_PRIORITY (255)
-
 #endif /* ARDUINO_ARCH_SAMD */
+
+
+/** Helpers for enabling/disabling hardware breakpoint capabilities. */
+#if defined(ARDUINO_ARCH_SAMD)
+  /** Enable the flashpatch & breakpoint (FPB) unit for hardware breakpoint support. */
+  static inline void samd_enable_fpb() {
+    uint32_t fp_ctrl_val = *FP_CTRL_REG;
+    fp_ctrl_val |= FP_CTRL_FLAG_EN | FP_CTRL_FLAG_KEY;  // Set EN and KEY bits high together.
+    *FP_CTRL_REG = fp_ctrl_val; // Write back to FP_CTRL register.
+  }
+
+  /** Disable the flashpatch & breakpoint (FPB) unit for hardware breakpoint support. */
+  static inline void samd_disable_fpb() {
+    uint32_t fp_ctrl_val = *FP_CTRL_REG;
+    fp_ctrl_val |= FP_CTRL_FLAG_KEY;  // Set KEY bit high to enable change
+    fp_ctrl_val &= ~FP_CTRL_FLAG_EN;  // Set EN flag low.
+    *FP_CTRL_REG = fp_ctrl_val; // Write back to FP_CTRL register.
+  }
+#endif /* ARDUINO_ARCH_SAMD */
+
 
 /**
  * Setup function for debugger; called before user's setup function.
@@ -287,13 +311,11 @@ void __dbg_setup() {
       _set_dbg_status(debug_status | DBG_STATUS_DEBUG_MON_EN);
     }
 
-    // Enable the flashpatch & breakpoint (FPB) unit for hardware breakpoint support.
-    uint32_t fp_ctrl_val = *FP_CTRL_REG;
-    fp_ctrl_val |= FP_CTRL_FLAG_EN | FP_CTRL_FLAG_KEY;  // Set EN and KEY bits high together.
-    *FP_CTRL_REG = fp_ctrl_val; // Write back to FP_CTRL register.
+    samd_enable_fpb();
+    // TODO(aaron): Enable DWT.
 
   #else
-    // Mystery architecture!
+    // Mystery architecture! This will surely end well.
     cpu_signature.cpu_dword = INVALID_CPU_SIGNATURE;
 
   #endif /* (architecture select) */
@@ -336,6 +358,19 @@ static inline void _eat_remaining_input() {
   }
 }
 
+#ifdef ARDUINO_ARCH_SAMD
+  /** Clear bits that are set when entering DebugMon_Handler by various means. */
+  static inline void samd_clear_dfsr_and_scb() {
+    // Clear Debug Fault Status Register (DFSR) bits in System Control Block (SCB).
+    static constexpr uint32_t DFSR_TRAP_BITS =
+        SCB_DFSR_HALTED_Msk | SCB_DFSR_BKPT_Msk | SCB_DFSR_DWTTRAP_Msk;
+    SCB->DFSR |= DFSR_TRAP_BITS;  // Clear DWTTRAP, BKPT, HALTED bits by writing a '1' to each of them.
+    // If we ran a single-step instruction, clear the MON_STEP and MON_PEND bits of DEMCR.
+    CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_STEP_Pos);
+    CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_PEND_Pos);
+  }
+#endif /* SAMD */
+
 /**
  * Called at breakpoint in user code (or via ISR if serial traffic arrives). Starts a service
  * that communicates over DBG_SERIAL about the state of the CPU until released to continue by
@@ -360,13 +395,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
   __dbg_report_pause(bp_num, breakpoint_flags, hw_addr);
 
   #ifdef ARDUINO_ARCH_SAMD
-    // Clear Debug Fault Status Register (DFSR) bits in System Control Block (SCB).
-    static constexpr uint32_t DFSR_TRAP_BITS =
-        SCB_DFSR_HALTED_Msk | SCB_DFSR_BKPT_Msk | SCB_DFSR_DWTTRAP_Msk;
-    SCB->DFSR |= DFSR_TRAP_BITS;  // Clear DWTTRAP, BKPT, HALTED bits by writing a '1' to each of them.
-    // If we ran a single-step instruction, clear the MON_STEP and MON_PEND bits of DEMCR.
-    CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_STEP_Pos);
-    CoreDebug->DEMCR &= ~(1 << CoreDebug_DEMCR_MON_PEND_Pos);
+    samd_clear_dfsr_and_scb();
   #endif /* SAMD */
 
   while (true) {
@@ -602,6 +631,8 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
           // SAMD51: Set MON_STEP bit in DEMCR register to activate single-step after this IRQ
           // returns.
           CoreDebug->DEMCR |= 1 << CoreDebug_DEMCR_MON_STEP_Pos;
+          // Disable FPB so that if the $PC is sitting on a hardware breakpoint we can proceed.
+          samd_disable_fpb();
           _eat_remaining_input();
           goto exit_loop; // Leave dbg service; allow instruction execution to occur.
         }
@@ -614,6 +645,16 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
     case DBG_OP_CONTINUE: // Continue main program execution; exit debugger.
       _eat_remaining_input();
       DBG_SERIAL.println(F("Continuing")); // client expects this exact string
+      #ifdef ARDUINO_ARCH_SAMD
+        if (debug_status & DBG_STATUS_HW_BKPT) {
+          // The $PC is on a hardware breakpoint. If we attempt to continue, we'll insta-break.
+          // We need to disable the FPB, take a single step, and use DebugMon_Handler to re-enable
+          // FPB for matching $PC against future breakpoints.
+          samd_disable_fpb();
+          CoreDebug->DEMCR |= 1 << CoreDebug_DEMCR_MON_STEP_Pos; // Set up single-step.
+          _set_dbg_status(debug_status | DBG_STATUS_STEP2CONT); // next DebugMon will just continue.
+        }
+      #endif /* ARCH_SAMD */
       goto exit_loop;
       break;
     default: // Unknown command or unconsumed trailing junk from prior command.
@@ -836,6 +877,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // Breakpoint is disabled by debugger.
     return;
   }
+
   // Mark debugger as started so we don't recursively re-enter.
   _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK);
   DBG_SERIAL.print(DBG_RET_PRINT);
@@ -845,7 +887,27 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  __dbg_service(flag_num, flags, 0);
+  if (_hw_bkpt_supported && debug_status & DBG_STATUS_DEBUG_MON_EN) {
+    // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
+    // to shift into the debug monitor irq (and from there to the dbg service).
+    // This enables us to enter single-step mode cleanly if desired by the user.
+    asm volatile (
+      "mov r0, %[flag_num]  \n\t" // flag_num and flags_addr identify soft bp; pass to DebugMon_Handler
+      "mov r1, %[flags_addr]\n\t" // to forward to dbg_service() via registers r0 & r1.
+      "mov r2, %[magic_key] \n\t" // "magic key" tells DebugMon_Handler() that r0 and r1 are valid.
+      "bkpt                 \n\t"
+      "and r2, r2, #0       \n\t" // Wipe magic key so we don't misinterpret register values if we
+                                  // reenter DebugMon_Handler() again soon.
+    :
+    : [flag_num] "h" (flag_num),
+      [flags_addr] "h" (flags),
+      [magic_key] "h" (BKPT_FLAGS_KEY)
+    : "r0", "r1", "r2"
+    );
+  } else {
+    // Invoke __dbg_service() directly on the thread-mode call stack.
+    __dbg_service(flag_num, flags, 0);
+  }
 }
 
 
@@ -866,6 +928,9 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   }
 
 #elif defined(ARDUINO_ARCH_SAMD)
+
+  static constexpr uint16_t ARM_BKPT_OP = 0xBE00;  // BKPT is 0xBEnn
+  static constexpr uint16_t ARM_BKPT_MASK = 0xFF00; // Only read the high byte. lo-byte is user def'd
 
 	// Immediately before IRQ entry, the following register state is pushed
 	// to the stack by hardware.
@@ -894,7 +959,8 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     }
   }
 
-  extern "C" void DebugMon_Handler(void) __attribute__((naked, interrupt, used, no_instrument_function));
+  extern "C" void DebugMon_Handler(void)
+      __attribute__((naked, interrupt, used, no_instrument_function, optimize("no-reorder-blocks")));
   extern "C" void DebugMon_Handler(void) {
     // Handler fired when a debug event occurs (BKPT instruction, or hardware breakpoint/watchpoint)
 
@@ -904,7 +970,7 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     // method; since gcc does not generate a frame pointer, we set up our own. We are
     // conservative about what we push in here to avoid destroying normal-thread state.
     //
-    // We may also have soft breakpoint handle details passed in registers:
+    // We may also have soft breakpoint handle details passed in (stacked) registers:
     // r0 -- flag_num
     // r1 -- flags_addr
     // r2 -- magic key (BKPT_FLAGS_KEY) indicating that r0 and r1 are valid
@@ -941,38 +1007,71 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
     uint8_t flag_num = 0;
     uint16_t *flags = NULL;
     uint32_t magic_key = ((CortexM_IRQ_Frame*)(framePtr))->r2;
-    if (SCB->DFSR & (1 << SCB_DFSR_HALTED_Pos)) {
+
+    // If FPB was disabled (e.g. by 'step') ensure it's enabled again.
+    samd_enable_fpb();
+    if (debug_status & DBG_STATUS_STEP2CONT) {
+      // We did a 'step' to execute an instr w/ a hardware bp sitting on it (with the FPB disabled).
+      // Now that we have done that and re-enabled FPB, we should do a full 'continue' without
+      // entering the debug service.
+      samd_clear_dfsr_and_scb(); // Clear trap info bits.
+      _set_dbg_status(debug_status & ~DBG_STATUS_STEP2CONT); // Clear STEP2CONT flag.
+
+      goto debug_mon_epilogue; // Immediate 'return'. Do not enter __dbg_service(). Drop out to epilogue.
+    } if (SCB->DFSR & (1 << SCB_DFSR_HALTED_Pos)) {
       // This was triggered by single-stepping.
       _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_STEP_BKPT);
+    } else if (SCB->DFSR & (1 << SCB_DFSR_DWTTRAP_Pos)) {
+      // This breakpoint was triggered by the DWT (watchpoint) on a memory addr or on the $PC.
+      // If on the $PC, this instruction has actually already executed.
+
+      // Record that we are in watchpoint-break status.
+      _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_WATCH);
     } else {
       // We entered this method because of a BKPT instruction (as opposed to after a single-step..)
+      // or because of a hardware breakpoint register match in the FPB.
       //
       // Somewhat uniquely, on entry to this IRQ, BKPT instructions will stack the $pc of
       // the BKPT instruction itself rather than the next $PC. Meaning when we exit this handler,
       // we'll resume execution... right on top of the breakpoint (infinite loop back to here).
       // We need to advance the $PC ourselves.
-      ((CortexM_IRQ_Frame*)(framePtr))->PC += 2;
 
-      if (magic_key == BKPT_FLAGS_KEY) {
-        // We hit a software BKPT and it was initialized with flags ptr and flag_num from __dbg_break().
-        // These were put in registers that were stacked on IRQ entry; read back here:
-        flag_num = (uint8_t)(((CortexM_IRQ_Frame*)(framePtr))->r0);
-        flags = (uint16_t *)(((CortexM_IRQ_Frame*)(framePtr))->r1);
-        return_pc = 0; // Don't pass literal $PC back to debugger, since it's the addr of the BKPT
-                       // within __dbg_break() that isn't unique to this logical breakpoint
-                       // location. Let the debugger walk up stack to the caller of __dbg_break().
+      // `BKPT <n>` has opcode 0xBEnn. If we see see that pattern, advance the $PC over the
+      // breakpoint. (If we are not stopped on a BKPT then the FPB or DWT fired on the $PC and
+      // we don't want to skip the instruction.)
+      if (ARM_BKPT_OP == (*((uint16_t*)((CortexM_IRQ_Frame*)(framePtr))->PC) & ARM_BKPT_MASK)) {
+        ((CortexM_IRQ_Frame*)(framePtr))->PC += 2;
+
+        if (magic_key == BKPT_FLAGS_KEY) {
+          // We hit a software BKPT and it was initialized with flags ptr and flag_num from __dbg_break().
+          // These were put in registers that were stacked on IRQ entry; read back here:
+          flag_num = (uint8_t)(((CortexM_IRQ_Frame*)(framePtr))->r0);
+          flags = (uint16_t *)(((CortexM_IRQ_Frame*)(framePtr))->r1);
+          return_pc = 0; // Don't pass literal $PC back to debugger, since it's the addr of the BKPT
+                         // within __dbg_break() that isn't unique to this logical breakpoint
+                         // location. Let the debugger walk up stack to the caller of __dbg_break().
+        }
+
+        // Record that we are in BKPT opcode-break status.
+        _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_OP_BKPT);
+      } else {
+        // Triggered FPB: Record that we matched a hardware breakpoint as we entered break status.
+        _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HW_BKPT);
       }
-
-      // Record that we are in hardware-break status.
-      _set_dbg_status(debug_status | DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT);
     }
 
     // Invoke __dbg_service() with the return addr from the triggering breakpoint.
     __dbg_service(flag_num, flags, return_pc);
 
-    // Withdraw from hardware-break status.
-    _set_dbg_status(debug_status & ~(DBG_STATUS_IN_BREAK | DBG_STATUS_HARD_BKPT | DBG_STATUS_STEP_BKPT));
+    // Withdraw from hardware-break status. Create a mask for all flags applied in this method.
+    static constexpr dbg_status_t all_flags = DBG_STATUS_IN_BREAK
+                                            | DBG_STATUS_OP_BKPT
+                                            | DBG_STATUS_STEP_BKPT
+                                            | DBG_STATUS_HW_BKPT
+                                            | DBG_STATUS_WATCH;
+    _set_dbg_status(debug_status & ~all_flags);
 
+debug_mon_epilogue:
     // Hard-coded ISR epilogue.
     asm volatile (
         "ldmia.w sp!, {r4, r5, r6, r7, r8, r9, r10, fp, r12, lr} \n\t"

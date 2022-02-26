@@ -12,6 +12,8 @@ On-device service capabilities:
 
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
   * Watchpoint unit support
+  * Enable DWT for BP usage.
+  * Allow watching on mem addrs / var symbols.
 
   ARMv7 arch ref manual: pg C1-752 - a BKPT in an IRQ w/ higher priority than debugmon will
   trigger a HardFault.

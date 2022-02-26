@@ -164,19 +164,19 @@ class CortexBreakpointScheduler(object):
 
         # Ensure FPB registers match local defs for FPB-tracked breakpoints
         for i in range(0, len(self.fpb_comparators)):
-            fpb_addr = self.fpb_comparators[i]
-            if fpb_addr is None:
+            fpb_bp = self.fpb_comparators[i]
+            if fpb_bp is None:
                 self._program_fpb_breakpoint(False, i, None)
             else:
-                self._program_fpb_breakpoint(True, i, fpb_addr)
+                self._program_fpb_breakpoint(True, i, fpb_bp.pc)
 
         # Ensure DWT registers match local defs for DWT-tracked breakpoints
         for i in range(0, len(self.dwt_comparators)):
-            dwt_addr = self.dwt_comparators[i]
-            if dwt_addr is None:
+            dwt_bp = self.dwt_comparators[i]
+            if dwt_bp is None:
                 self._program_dwt_breakpoint(False, i, None)
             else:
-                self._program_dwt_breakpoint(True, i, dwt_addr)
+                self._program_dwt_breakpoint(True, i, dwt_bp.pc)
 
     def get_num_hardware_breakpoints_used(self):
         self._load_params()

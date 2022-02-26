@@ -24,7 +24,7 @@ from arduino_dbg.repl_command import CompoundCommand, CompoundHost
 from arduino_dbg.term import MsgLevel
 
 
-class SoftwareBreakpointError(object):
+class SoftwareBreakpointError(Exception):
     """ Raised when an operation cannot be performed on a software breakpoint """
     pass
 
