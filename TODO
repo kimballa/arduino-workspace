@@ -13,8 +13,6 @@ On-device service capabilities:
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
   * Watchpoint unit support - allow watching on mem addrs / var symbols.
 
-  * Add `breakpoint download` command to sync the true register state *down* to our debugger.
-
   ARMv7 arch ref manual: pg C1-752 - a BKPT in an IRQ w/ higher priority than debugmon will
   trigger a HardFault.
 
@@ -23,7 +21,7 @@ On-device service capabilities:
 
     A consequence is that we cannot single-step (or inspect state while halted) within IRQs.
 
-    watchpoints are ignored in hgher-prio IRQs. Document this.
+    watchpoints are ignored in higher-prio IRQs. Document this.
     FPB breakpoints may be ignored or HardFaulted; impl.defined. Test. Document.
 
   * Add a `next` command that will 'step' until filename:lineno changes.
@@ -44,11 +42,7 @@ On-device service capabilities:
 
 Client:
 
-  * breakpoint.Breakpoint() needs ability to register a hw addr as discovered in
-    __acknowledge_pause(). (In case we restart debugger and it needs to rediscover live
-    breakpoints.)
-
-  * Add watchpoint command.
+  * Add watchpoint commands.
 
   --------
 
