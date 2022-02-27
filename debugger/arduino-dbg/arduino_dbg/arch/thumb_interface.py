@@ -5,6 +5,7 @@ ARM Thumb-specific architecture interface.
 """
 
 import arduino_dbg.arch as arch
+import arduino_dbg.breakpoint as breakpoint
 import arduino_dbg.debugger as dbg
 import arduino_dbg.memory_map as mmap
 from arduino_dbg.term import MsgLevel
@@ -111,7 +112,7 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         self.loaded_params = True
 
 
-    def schedule_bp(self, breakpoint):
+    def schedule_bp(self, bp):
         """
         Map a breakpoint into one of the breakpoint-compatible comparators.
 
@@ -141,10 +142,10 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         """
         CODE_MAX = 0x1FFFFFFF
 
-        assert breakpoint.is_dynamic
+        assert bp.is_dynamic
         self._load_params()
 
-        addr = breakpoint.pc
+        addr = bp.pc
         assert addr != 0x0
 
         # Don't double-enable an address; reject addresses we are already watching.
@@ -152,7 +153,7 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         for maybe_bp in self.fpb_comparators + self.dwt_comparators:
             if maybe_bp is None:
                 continue
-            elif maybe_bp is breakpoint:
+            elif maybe_bp is bp:
                 # Literally the same breakpoint as one we've already got.
                 # Just do nothing.
                 return
@@ -164,7 +165,7 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
             # Address can be tracked in FPB. Try using these hw bp's first.
             try:
                 fpb_slot = self.fpb_comparators.index(None)
-                self.fpb_comparators[fpb_slot] = breakpoint
+                self.fpb_comparators[fpb_slot] = bp
                 self._program_fpb_breakpoint(True, fpb_slot, addr)
                 return
             except ValueError:
@@ -175,23 +176,23 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
         # $PC in .code or .data can be tracked in DWT.
         try:
             dwt_slot = self.dwt_comparators.index(None)
-            self.dwt_comparators[dwt_slot] = breakpoint
+            self.dwt_comparators[dwt_slot] = bp
             self._program_dwt_breakpoint(True, dwt_slot, addr)
         except ValueError:
             # DWT does not have a free slot.
             raise arch.HWBreakpointsFullError("No hardware breakpoint slot available")
 
 
-    def deschedule_bp(self, breakpoint):
+    def deschedule_bp(self, bp):
         """
         Remove a breakpoint from the running system.
         """
-        assert breakpoint.is_dynamic
+        assert bp.is_dynamic
         self._load_params()
 
         # Check if it's in FPB:
-        if breakpoint in self.fpb_comparators:
-            fpb_slot = self.fpb_comparators.index(breakpoint)
+        if bp in self.fpb_comparators:
+            fpb_slot = self.fpb_comparators.index(bp)
             self.fpb_comparators[fpb_slot] = None
             self._program_fpb_breakpoint(False, fpb_slot, None)  # null-out this FPB register value.
 
@@ -207,11 +208,11 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
             return
 
         # Not in FPB. Try to locate the breakpoint in the DWT.
-        if breakpoint not in self.dwt_comparators:
+        if bp not in self.dwt_comparators:
             # Not there either. What?
             raise arch.BreakpointNotEnabledError()
 
-        dwt_slot = self.dwt_comparators.index(breakpoint)
+        dwt_slot = self.dwt_comparators.index(bp)
         self.dwt_comparators[dwt_slot] = None
         self._program_dwt_breakpoint(False, dwt_slot, None)
 
@@ -233,6 +234,46 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
                 self._program_dwt_breakpoint(False, i, None)
             else:
                 self._program_dwt_breakpoint(True, i, dwt_bp.pc)
+
+    def download_breakpoints(self):
+        """
+        Make our hardware breakpoint state match the device's.
+
+        * Poll all hardware bp registers
+        * Add hw breakpoints for any $PC values not seen locally as bp definitions.
+        * All other hw breakpoints defined locally marked as disabled.
+        """
+        self._load_params()
+
+        breakpoint_db = self.debugger.breakpoints()
+        breakpoint_lst = breakpoint_db.breakpoints()
+        # Start by disabling all local HW bp definitions.
+        for bp in breakpoint_lst:
+            if bp.is_dynamic:
+                bp.enabled = False
+
+        def sweep_reg_array(reg_array, retrieve_fn):
+            for i in range(0, len(reg_array)):
+                pc = retrieve_fn(i)
+                if pc == 0 or pc is None:
+                    reg_array[i] = None  # Empty register.
+                    continue
+
+                bp = breakpoint_db.get_bp_for_pc(pc)
+                if bp is not None:
+                    bp.enabled = True  # This bp is live.
+                else:
+                    # Create a new local definition
+                    self.debugger.msg_q(MsgLevel.INFO, f'Identified breakpoint at 0x{pc:08x}')
+                    sig = breakpoint.Breakpoint.make_hw_signature(pc)
+                    bp = breakpoint_db.register_bp(pc, sig, True)
+                    bp.enabled = True
+
+                reg_array[i] = bp
+
+        sweep_reg_array(self.fpb_comparators, self._retrieve_fpb_breakpoint_pc)
+        sweep_reg_array(self.dwt_comparators, self._retrieve_dwt_breakpoint_pc)
+
 
     def get_num_hardware_breakpoints_used(self):
         self._load_params()
@@ -364,6 +405,68 @@ class CortexBreakpointScheduler(arch.BreakpointScheduler):
             self.debugger.set_sram(mask_reg_addr, 0x1, 4)  # Set mask to ignore LSB of $PC.
             self.debugger.set_sram(func_reg_addr, 0x4, 4)  # Set FUNC=b0100, Iaddr watchpoint dbg event.
                                                            # Other fields (DATAVMATCH, CYCMATCH..) = 0.
+
+
+    def _retrieve_fpb_breakpoint_pc(self, reg_id):
+        """
+        Retrieve the $PC in the specified FPB register. Returns zero if disabled.
+        """
+        reg_addr = FP_COMP0_addr + (4 * reg_id)  # register addr is array index starting from FP_COMP0.
+        reg_word = self.debugger.get_sram(reg_addr, 4)
+        return self._decode_fpb_breakpoint_pc(reg_word)
+
+    def _decode_fpb_breakpoint_pc(self, reg_word):
+        """ Return the $PC encoded as reg_word in the FPB register. """
+        fpb_version = self.arch_iface.arch_specs['fpb_version']
+        if fpb_version == 1:
+            # Register layout:
+            # 31:30 -- 2-bit REPLACE flags
+            #    29 -- Reserved
+            # 28: 2 -- PC_ADDR[28:2]
+            #     1 -- Reserved
+            #     0 -- ENABLE
+            if (reg_word & 0x1) == 0x0:
+                return 0  # Disabled.
+
+            pc_addr = reg_word & 0x1FFFFFFC  # Mask off bits 28:2
+            if reg_word & 0xC0000000 == 0xC0000000:
+                # TODO(aaron): Match both PC addrs. Need to return multiple PC values.
+                raise Exception("Unsupported dual-bp flags in FPB")
+            elif reg_word & 0x80000000:
+                pc_addr |= 0x2
+            elif reg_word & 0x40000000:
+                pc_addr |= 0x0
+            else:
+                raise Exception("Unknown state: REPLACE flags both low")
+
+            return pc_addr
+        elif fpb_version == 2:
+            # In all cases where a breakpoint is enabled, 31:1 are PC_ADDR and
+            # lsb is '1' for BP_Enabled.
+            if (reg_word & 0x1) == 0x0:
+                return 0  # Disabled.
+
+            return reg_word & 0xFFFFFFFE
+
+    def _retrieve_dwt_breakpoint_pc(self, reg_id):
+        """
+        Retrieve the $PC in the specified DWT register. Returns zero if disabled.
+        """
+        comp_reg_addr = DWT_COMP0_addr + (reg_id * DWT_struct_size)
+        func_reg_addr = comp_reg_addr + DWT_FUNC_offset
+
+        func_reg_word = self.debugger.get_sram(func_reg_addr, 4)
+        if func_reg_word & 0xF == 0x4:  # Iaddr watchpoing dbg event.
+            # TODO(aaron): Check DATAVMATCH or CYCMATCH bits too, to understand actual DWT fn used.
+            comp_reg_word = self.debugger.get_sram(comp_reg_addr, 4)
+            return self._decode_dwt_breakpoint_pc(comp_reg_word)
+        else:
+            return 0  # Disabled (or unrecognized format).
+
+    def _decode_dwt_breakpoint_pc(self, reg_word):
+        """ Return the $PC encoded as reg_word in the DWT register. """
+        # TODO(aaron): Take MASK into account?
+        return reg_word  # DWT match addr is stored as-is in the comparator register.
 
 
 @arch.iface
@@ -641,17 +744,23 @@ class ArmThumbArchInterface(arch.ArchInterface):
 
         return self._breakpoint_scheduler.get_num_hardware_breakpoints_used()
 
-    def create_hw_breakpoint(self, breakpoint):
+    def create_hw_breakpoint(self, bp):
         if self.arch_specs is None:
             self._get_arch_specs()
 
-        self._breakpoint_scheduler.schedule_bp(breakpoint)
+        self._breakpoint_scheduler.schedule_bp(bp)
 
-    def remove_hw_breakpoint(self, breakpoint):
+    def remove_hw_breakpoint(self, bp):
         if self.arch_specs is None:
             self._get_arch_specs()
 
-        self._breakpoint_scheduler.deschedule_bp(breakpoint)
+        self._breakpoint_scheduler.deschedule_bp(bp)
+
+    def download_hw_breakpoints(self):
+        if self.arch_specs is None:
+            self._get_arch_specs()
+
+        self._breakpoint_scheduler.download_breakpoints()
 
     def sync_hw_breakpoints(self):
         if self.arch_specs is None:

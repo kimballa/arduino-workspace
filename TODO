@@ -13,9 +13,6 @@ On-device service capabilities:
   SAM D51 support: (See Cortex-M4 Technical Reference Manual)
   * Watchpoint unit support - allow watching on mem addrs / var symbols.
 
-  * If we delete/disable a bp in the FPB, and we have bp's defined in the DWT, move it into
-    the FPB for higher-fidelity breakpointing.
-
   * Add `breakpoint download` command to sync the true register state *down* to our debugger.
 
   ARMv7 arch ref manual: pg C1-752 - a BKPT in an IRQ w/ higher priority than debugmon will

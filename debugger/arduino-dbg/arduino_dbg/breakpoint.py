@@ -414,6 +414,9 @@ class BreakpointCommands(object):
         Software breakpoint disable flags are cleared after resetting the device; this will
         restore their state to that known by the debugger. You should run `breakpoint sync`
         from a connected debugger after resetting your Arduino device.
+
+        The inverse command (download breakpoints from device to debugger) is
+        `breakpoint download`.
         """
         debugger = self._repl.debugger()
         breakpoint_list = debugger.breakpoints().breakpoints()
@@ -433,6 +436,28 @@ class BreakpointCommands(object):
         # Hardware breakpoints are synchronized by the global hardware breakpoint mgr,
         # as the Breakpoint objects don't actually correspond 1:1 to hardware bp registers.
         debugger.arch_iface.sync_hw_breakpoints()
+
+
+    @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['download'], cls='BreakpointCommands')
+    def download(self, args):
+        """
+        Download hardware breakpoints from device
+
+            Syntax: breakpoint download
+
+        Updates debugger's awareness of defined breakpoints to include all enabled on the
+        device, by downloading the current breakpoint register contents.
+
+        If you close the debugger while a sketch is running and then reattach the debugger
+        to the device, you can recover knowledge of previously-defined breakpoints with this
+        command.
+
+        This is effectively the inverse of `breakpoint sync`.
+        """
+        try:
+            self._repl.debugger().arch_iface.download_hw_breakpoints()
+        except arch.ArchNotSupportedError:
+            self._repl.debugger().msg_q(MsgLevel.ERR, 'Hardware breakpoints not supported')
 
 
     @CompoundCommand(kw1=['breakpoint', 'bp'], kw2=['create', 'new'], cls='BreakpointCommands')

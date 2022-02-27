@@ -332,19 +332,25 @@ class ArchInterface(object):
         """
         Create a hardware breakpoint on the specified address.
         """
-        raise Exception("Hardware breakpoints not supported")
+        raise ArchNotSupportedError()
 
     def remove_hw_breakpoint(self, breakpoint):
         """
         Remove the hardware breakpoint for the specified address.
         """
-        raise Exception("Hardware breakpoints not supported")
+        raise ArchNotSupportedError()
 
     def sync_hw_breakpoints(self):
         """
-        Ensure hardware breakpoint reigsters match locally-tracked definitions for state.
+        Ensure hardware breakpoint registers match locally-tracked definitions for state.
         """
         pass  # By default there is nothing to do to sync as this base impl doesn't track hw breakpoints.
+
+    def download_hw_breakpoints(self):
+        """
+        Download hardware breakpoint register contents; set our breakpoints to match.
+        """
+        raise ArchNotSupportedError()
 
     def breakpoint_scheduler(self):
         """
