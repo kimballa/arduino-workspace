@@ -1,10 +1,39 @@
+// dbg.h - Add debugger support to your Arduino sketch.
+// For use with the arduino-dbg python Arduino debugger.
+//
 // (c) Copyright 2021 Aaron Kimball
 //
-// dbg.h - Add debugger support to your Arduino sketch
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+//
+//   1. Redistributions of source code must retain the above copyright notice, this list of
+//      conditions and the following disclaimer.
+//   2. Redistributions in binary form must reproduce the above copyright notice, this list
+//      of conditions and the following disclaimer in the documentation and/or other materials
+//      provided with the distribution.
+//   3. Neither the name of the copyright holder nor the names of its contributors may be
+//      used to endorse or promote products derived from this software without specific prior
+//      written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+// TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+//
+// ** Setup:
 //
 // To enable the debugging system, use the following steps:
 //
-// 1) include `dbg` in your  Makefile's `libs` list variable.
+// 1) Include the "PyArduinoDebug" library from the Arduino IDE library manager,
+//    or for arduino.mk makefile projects, include `dbg` in your  Makefile's `libs`
+//    list variable.
+//
 // 2) #include <dbg.h> in any files where you want to use the debug API macros,
 //    but most importantly in the file containing your `setup()` method:
 //
@@ -15,12 +44,20 @@
 //        /* your setup function. */
 //      }
 //
-//    Your `setup()` function will be renamed to `__user_setup()` and invoked by a
-//    setup() function that first injects debugger handling into the environment.
+//    You must define a setup() { ... } method, even if its body is empty.
+//
+//    Under the hood, your `setup()` function will be renamed to `__user_setup()` and
+//    invoked by a setup() function that first injects debugger handling into the
+//    environment.
+//
+// ** Timers:
+//
+// * On AVR, this will use the Timer1 IRQ to listen for debugger interrupts.
+// * On SAMD, this will use Timer4.
 //
 // ** API:
 //
-// The API is defined as a set of macros; do not call the functions directly.
+// The API is defined as a set of macros; do not call internal `__dbg` functions directly.
 // The debugger enable-control (see below) will cleanly no-op the macros when debug mode
 // is disabled. Moreover, the macros make possible some things like breakpoint disabling.
 //

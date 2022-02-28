@@ -33,6 +33,7 @@
   // "magic key" stored in r2 that hints to our DebugMon_Handler that r0 and r1
   // are valid flag num and flag data addr.
   static constexpr uint32_t BKPT_FLAGS_KEY = 0xADB0EEEE;
+
 #endif /* SAMD */
 
 
@@ -60,14 +61,17 @@ dbg_cpu_id_t cpu_signature; // runtime-detected fingerprint to identify CPU arch
 static constexpr uint32_t INVALID_CPU_SIGNATURE = 0xFFFFFFFF;
 
 
-/** Debugger status bits **/
+/** Debugger status bits and typedefs **/
 #if defined (__AVR_ARCH__)
   typedef uint8_t dbg_status_t;
+  typedef uint16_t dbg_stackptr_t; // Assumes we have SPH & SPL.
 #elif defined (ARDUINO_ARCH_SAMD)
   typedef uint32_t dbg_status_t;
+  typedef uint32_t dbg_stackptr_t;
 #else
   // Fallback case / unknown architecture only uses low-order bits.
   typedef uint8_t dbg_status_t;
+  typedef uint16_t dbg_stackptr_t; // Assumes 16 bit stack ptr.
 #endif /* Architecture select */
 volatile dbg_status_t debug_status = 0;
 
@@ -214,7 +218,6 @@ static constexpr uint8_t DBG_PROTOCOL_VER = 1;
 void __dbg_setup() {
   DBG_SERIAL.begin(DBG_SERIAL_SPEED);
 
-  // Set up timer IRQ: 4Hz
   noInterrupts();
   #if defined(__AVR_ARCH__)
 
@@ -225,7 +228,7 @@ void __dbg_setup() {
     cpu_signature.cpu_bytes[2] = boot_signature_byte_get(0x4);
     cpu_signature.cpu_bytes[3] = 0x0; // Only 3 sig bytes for AVR. Keep MSB at zero.
 
-    // Set up IRQ on AVR Timer1
+    // Set up IRQ on AVR Timer1 (4 Hz)
     // (see https://www.instructables.com/Arduino-Timer-Interrupts/)
     TCCR1A = 0; // set entire TCCR1A register to 0
     TCCR1B = 0; // same for TCCR1B
@@ -311,6 +314,7 @@ void __dbg_setup() {
       _set_dbg_status(debug_status | DBG_STATUS_DEBUG_MON_EN);
     }
 
+    // Enable hardware breakpoints.
     samd_enable_fpb();
 
   #else
@@ -411,7 +415,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
     int offset = 0;
     uint8_t b = 0;
 
-    volatile register uint32_t SP asm("sp");
+    volatile register dbg_stackptr_t SP asm("sp");
     switch(cmd) {
     case DBG_OP_BREAK:
       __dbg_report_pause(bp_num, breakpoint_flags, hw_addr);
@@ -517,7 +521,7 @@ static void __dbg_service(const uint8_t bp_num, uint16_t *breakpoint_flags, uint
           DBG_SERIAL.println(*((uint8_t*)addr), HEX);
         }
         // Special registers: SP (AVR note: 16 bit), SREG
-        DBG_SERIAL.println((uint16_t)SP, HEX);
+        DBG_SERIAL.println(SP, HEX);
         DBG_SERIAL.println((uint8_t)SREG, HEX);
         // PC can only be read by pushing it to the stack via a 'method call'.
         asm volatile (
@@ -846,27 +850,34 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  if (_hw_bkpt_supported && debug_status & DBG_STATUS_DEBUG_MON_EN) {
-    // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
-    // to shift into the debug monitor irq (and from there to the dbg service).
-    // This enables us to enter single-step mode cleanly if desired by the user.
-    asm volatile (
-      "mov r0, %[flag_num]  \n\t" // flag_num and flags_addr identify soft bp; pass to DebugMon_Handler
-      "mov r1, %[flags_addr]\n\t" // to forward to dbg_service() via registers r0 & r1.
-      "mov r2, %[magic_key] \n\t" // "magic key" tells DebugMon_Handler() that r0 and r1 are valid.
-      "bkpt                 \n\t"
-      "and r2, r2, #0       \n\t" // Wipe magic key so we don't misinterpret register values if we
-                                  // reenter DebugMon_Handler() again soon.
-    :
-    : [flag_num] "h" (flag_num),
-      [flags_addr] "h" (flags),
-      [magic_key] "h" (BKPT_FLAGS_KEY)
-    : "r0", "r1", "r2"
-    );
-  } else {
-    // Invoke __dbg_service() directly on the thread-mode call stack.
+  #if defined(__AVR_ARCH__)
     __dbg_service(flag_num, flags, 0);
-  }
+  #elif defined(ARDUINO_ARCH_SAMD)
+    if (_hw_bkpt_supported && debug_status & DBG_STATUS_DEBUG_MON_EN) {
+      // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
+      // to shift into the debug monitor irq (and from there to the dbg service).
+      // This enables us to enter single-step mode cleanly if desired by the user.
+      asm volatile (
+        "mov r0, %[flag_num]  \n\t" // flag_num and flags_addr identify soft bp; pass to DebugMon_Handler
+        "mov r1, %[flags_addr]\n\t" // to forward to dbg_service() via registers r0 & r1.
+        "mov r2, %[magic_key] \n\t" // "magic key" tells DebugMon_Handler() that r0 and r1 are valid.
+        "bkpt                 \n\t"
+        "and r2, r2, #0       \n\t" // Wipe magic key so we don't misinterpret register values if we
+                                    // reenter DebugMon_Handler() again soon.
+      :
+      : [flag_num] "h" (flag_num),
+        [flags_addr] "h" (flags),
+        [magic_key] "h" (BKPT_FLAGS_KEY)
+      : "r0", "r1", "r2"
+      );
+    } else {
+      // Invoke __dbg_service() directly on the thread-mode call stack.
+      __dbg_service(flag_num, flags, 0);
+    }
+  #else
+    // default for unknown arch
+    __dbg_service(flag_num, flags, 0);
+  #endif /* Architecture select */
 }
 
 void __dbg_break(const uint8_t flag_num, uint16_t* flags,
@@ -886,27 +897,34 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   DBG_SERIAL.print(' ');
   DBG_SERIAL.println(lineno, DEC);
 
-  if (_hw_bkpt_supported && debug_status & DBG_STATUS_DEBUG_MON_EN) {
-    // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
-    // to shift into the debug monitor irq (and from there to the dbg service).
-    // This enables us to enter single-step mode cleanly if desired by the user.
-    asm volatile (
-      "mov r0, %[flag_num]  \n\t" // flag_num and flags_addr identify soft bp; pass to DebugMon_Handler
-      "mov r1, %[flags_addr]\n\t" // to forward to dbg_service() via registers r0 & r1.
-      "mov r2, %[magic_key] \n\t" // "magic key" tells DebugMon_Handler() that r0 and r1 are valid.
-      "bkpt                 \n\t"
-      "and r2, r2, #0       \n\t" // Wipe magic key so we don't misinterpret register values if we
-                                  // reenter DebugMon_Handler() again soon.
-    :
-    : [flag_num] "h" (flag_num),
-      [flags_addr] "h" (flags),
-      [magic_key] "h" (BKPT_FLAGS_KEY)
-    : "r0", "r1", "r2"
-    );
-  } else {
-    // Invoke __dbg_service() directly on the thread-mode call stack.
+  #if defined(__AVR_ARCH__)
     __dbg_service(flag_num, flags, 0);
-  }
+  #elif defined(ARDUINO_ARCH_SAMD)
+    if (_hw_bkpt_supported && debug_status & DBG_STATUS_DEBUG_MON_EN) {
+      // We have monitor-mode debugging enabled. Use a "real" breakpoint opcode
+      // to shift into the debug monitor irq (and from there to the dbg service).
+      // This enables us to enter single-step mode cleanly if desired by the user.
+      asm volatile (
+        "mov r0, %[flag_num]  \n\t" // flag_num and flags_addr identify soft bp; pass to DebugMon_Handler
+        "mov r1, %[flags_addr]\n\t" // to forward to dbg_service() via registers r0 & r1.
+        "mov r2, %[magic_key] \n\t" // "magic key" tells DebugMon_Handler() that r0 and r1 are valid.
+        "bkpt                 \n\t"
+        "and r2, r2, #0       \n\t" // Wipe magic key so we don't misinterpret register values if we
+                                    // reenter DebugMon_Handler() again soon.
+      :
+      : [flag_num] "h" (flag_num),
+        [flags_addr] "h" (flags),
+        [magic_key] "h" (BKPT_FLAGS_KEY)
+      : "r0", "r1", "r2"
+      );
+    } else {
+      // Invoke __dbg_service() directly on the thread-mode call stack.
+      __dbg_service(flag_num, flags, 0);
+    }
+  #else
+    // default for unknown arch
+    __dbg_service(flag_num, flags, 0);
+  #endif /* Architecture select */
 }
 
 
@@ -931,18 +949,18 @@ void __dbg_break(const uint8_t flag_num, uint16_t* flags,
   static constexpr uint16_t ARM_BKPT_OP = 0xBE00;  // BKPT is 0xBEnn
   static constexpr uint16_t ARM_BKPT_MASK = 0xFF00; // Only read the high byte. lo-byte is user def'd
 
-	// Immediately before IRQ entry, the following register state is pushed
-	// to the stack by hardware.
-	typedef struct __attribute__((packed)) _CortexM_IRQ_Frame_s {
-		uint32_t r0;
-		uint32_t r1;
-		uint32_t r2;
-		uint32_t r3;
-		uint32_t r12;
-		uint32_t LR;
-		uint32_t PC;
-		uint32_t xPSR;
-	} CortexM_IRQ_Frame;
+  // Immediately before IRQ entry, the following register state is pushed
+  // to the stack by hardware.
+  typedef struct __attribute__((packed)) _CortexM_IRQ_Frame_s {
+    uint32_t r0;
+    uint32_t r1;
+    uint32_t r2;
+    uint32_t r3;
+    uint32_t r12;
+    uint32_t LR;
+    uint32_t PC;
+    uint32_t xPSR;
+  } CortexM_IRQ_Frame;
 
   extern "C" void TC4_Handler(void) __attribute__((interrupt, used, no_instrument_function));
   extern "C" void TC4_Handler(void) {
