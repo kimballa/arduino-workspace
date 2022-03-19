@@ -1,7 +1,0 @@
-recursive-include arduino_dbg *.conf
-include test/all.py
-include test/dbg_testcase.py
-recursive-include test/fixtures *
-global-exclude *.py[cod]
-global-exclude *.swp
-global-exclude *~
